@@ -9,9 +9,13 @@ StartLimitBurst=5
 Type=simple
 User=hailo-services
 Group=hailo-services
-WorkingDirectory=/opt/hailo-10h-services
+StateDirectory=hailo-10h-services
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/hailo-10h-services
 EnvironmentFile=/etc/hailo-10h-services.env
 Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/var/lib/hailo-10h-services
+ExecStartPre=/opt/hailo-10h-services/venv/bin/python -m hailo_services.preflight
 ExecStart=/opt/hailo-10h-services/venv/bin/hailo-10h-services
 Restart=on-failure
 RestartSec=15
@@ -21,6 +25,8 @@ KillSignal=SIGTERM
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
+# ProtectSystem also covers /usr/local; ACLs alone cannot permit downloads there.
+ReadWritePaths=/usr/local/hailo/resources/models/hailo10h
 ProtectHome=true
 UMask=0022
 

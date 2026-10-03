@@ -6,6 +6,7 @@ if [[ ${EUID} -ne 0 ]]; then
 fi
 SOURCE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 SERVICE_DIR=/opt/hailo-10h-services
+SERVICE_STATE=/var/lib/hailo-10h-services
 # Select the Python that can already import your vendor HailoRT wheel.
 SERVICE_PYTHON=${HAILO_PYTHON:-python3}
 TOOLS_REVISION=891ce701c2ebe239a5d277759eb75a30f76678a9
@@ -20,10 +21,14 @@ PY
 # Do not replace the kernel driver, firmware or vendor HailoRT installation.
 apt-get update
 apt-get install -y python3-venv git libsndfile1 acl
-if systemctl is-active --quiet hailo-10h-services.service; then
+if systemctl cat hailo-10h-services.service >/dev/null 2>&1; then
   systemctl stop hailo-10h-services.service
 fi
-id hailo-services >/dev/null 2>&1 || useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin hailo-services
+id hailo-services >/dev/null 2>&1 || useradd --system --user-group --home-dir "${SERVICE_STATE}" --shell /usr/sbin/nologin hailo-services
+# Migrate users created by the original installer with /nonexistent as home.
+usermod --home "${SERVICE_STATE}" hailo-services
+install -d -o hailo-services -g hailo-services -m 0750 "${SERVICE_STATE}"
+install -d -o hailo-services -g hailo-services -m 0750 "${SERVICE_STATE}/.hailo"
 for DEVICE_GROUP in hailo video render; do
   if getent group "${DEVICE_GROUP}" >/dev/null; then
     usermod -aG "${DEVICE_GROUP}" hailo-services
@@ -74,15 +79,20 @@ if [[ ! -f /etc/hailo-10h-services.env ]]; then
 fi
 # Root reads the env file on behalf of the service; secrets need not be user-readable.
 install -m 0644 "${SOURCE_DIR}/deploy/hailo-10h-services.service" /etc/systemd/system/hailo-10h-services.service
-runuser -u hailo-services -- "${SERVICE_DIR}/venv/bin/python" - <<'PY'
+# Native Hailo logging can use both HOME/.hailo and the process cwd.
+cd -- "${SERVICE_STATE}"
+runuser -u hailo-services -- env HOME="${SERVICE_STATE}" "${SERVICE_DIR}/venv/bin/python" - <<'PY'
 from hailo_platform import VDevice
 from hailo_platform.genai import VLM, Speech2Text
 from hailo_apps.python.core.common.core import resolve_hef_path
 from hailo_apps.installation.download_resources import download_resources
 from hailo_services.app import create_app
+from hailo_services.preflight import main
+main()
 print('Service user imports and resource downloader OK')
 PY
 systemctl daemon-reload
+systemctl reset-failed hailo-10h-services.service || true
 systemctl enable --now hailo-10h-services.service
 echo 'Installed. Follow startup/downloads with: journalctl -u hailo-10h-services -f'
 echo 'Configuration and API key: /etc/hailo-10h-services.env'

@@ -75,7 +75,14 @@ paths are not visible to the systemd service; keep vendor environments under
 `/opt` or install the matching vendor wheel directly into the service venv.
 
 First installation generates an API key in `/etc/hailo-10h-services.env`.
-Configuration is preserved on reinstall. Read/edit this file as root, then:
+Configuration is preserved on reinstall. The account's home and working directory
+are `/var/lib/hailo-10h-services`, managed by systemd `StateDirectory`. Hailo can
+write `$HOME/.hailo` and cwd log files there. `ProtectSystem=full` stays enabled
+with a `ReadWritePaths` exception for the shared model directory. ACLs grant the
+service user access to that exception. A startup preflight checks real temporary
+file creation and rename in these locations inside the systemd sandbox. Reinstall
+also migrates the original `/nonexistent` account home and clears failed-start
+rate limiting. Read/edit this file as root, then:
 
 ```bash
 sudo systemctl restart hailo-10h-services
