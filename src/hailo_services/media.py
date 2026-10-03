@@ -32,7 +32,9 @@ def image_frame(value: str, limit: int) -> np.ndarray:
         with Image.open(io.BytesIO(decode_base64(value, limit))) as image:
             if image.width * image.height > Image.MAX_IMAGE_PIXELS:
                 raise ValueError("Image has too many pixels")
-            return np.asarray(image.convert("RGB").resize((336, 336)), dtype=np.uint8)
+            # Pillow's buffer-backed ndarray is read-only; Hailo GenAI requires
+            # writable, contiguous frame storage at the native API boundary.
+            return np.array(image.convert("RGB").resize((336, 336)), dtype=np.uint8, copy=True)
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
         raise ValueError("Invalid or oversized image") from exc
 

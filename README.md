@@ -52,6 +52,70 @@ sudo /opt/hailo-10h-services/venv/bin/pip install --no-deps --force-reinstall .
 sudo systemctl restart hailo-10h-services
 ```
 
+## HTTPS with a local self-signed CA
+
+On an existing installation, enable the additional HTTPS listener with:
+
+```bash
+cd ~/hailo-10h-services
+git switch main
+git pull --ff-only
+sudo /opt/hailo-10h-services/venv/bin/pip install --no-deps --force-reinstall .
+sudo systemctl restart hailo-10h-services
+sudo bash scripts/enable-https.sh
+```
+
+Open **`https://<cm5-IP>:8443/`**. HTTP on port 8090 remains available for existing
+clients. nginx terminates TLS and forwards requests to the same resident service;
+it does not start another Hailo process. The setup installs nginx/OpenSSL if needed,
+adds one nginx server block and preserves existing sites. SSE is unbuffered and
+WebSocket upgrades are forwarded. API authentication and limits remain enforced.
+
+Certificates are generated under `/etc/hailo-10h-services/tls`. A self-signed local
+root CA signs a 365-day server certificate with Subject Alternative Names for
+localhost, the machine hostname, its `.local` name and detected interface IPs.
+Add other names or addresses, or choose port 443, explicitly:
+
+```bash
+sudo bash scripts/enable-https.sh --dns cm5.example.lan --ip 192.168.1.42 --port 443
+```
+
+Re-running the script reuses the CA and valid matching certificates. It renews
+the server certificate when names/IPs change or less than 30 days remain; there
+is no automatic renewal timer. Keep the CA private key on the server. Both private
+keys are root-readable only. The public CA can be downloaded from
+`https://<cm5-IP>:8443/hailo-ca.crt`; its SHA-256 fingerprint is printed during setup.
+
+**Trust is required for reliable microphone capture.** A browser warning is
+expected until the local CA is installed and trusted. Simply clicking through a
+certificate warning may still prevent microphone access.
+
+For an iPhone/iPad:
+
+1. In Safari open `https://<cm5-IP>:8443/hailo-ca.mobileconfig` and download the
+   certificate profile (initially acknowledge the certificate warning).
+2. Install **Hailo-10H Local CA** via Settings → General → VPN & Device Management
+   (or the **Profile Downloaded** entry).
+3. Under Settings → General → About → Certificate Trust Settings, enable full
+   trust for **Hailo-10H Local CA**. Compare the certificate fingerprint with the
+   value printed on your server before trusting it.
+4. Reload the HTTPS page in Safari and allow microphone access.
+
+On a desktop, import `hailo-ca.crt` into the trusted root certificate store used
+by the browser. Remove this trust/profile when the local CA is no longer needed.
+See [Apple's manual certificate-trust instructions](https://support.apple.com/102390).
+
+Verify from the server without bypassing certificate validation:
+
+```bash
+curl --cacert /etc/hailo-10h-services/tls/hailo-ca.crt https://localhost:8443/health
+sudo nginx -t
+systemctl status nginx
+```
+
+If a firewall is enabled, allow the chosen HTTPS port on the local network. After
+an IP change, run setup again and use a name/address included in the certificate.
+
 ## Behavior and architecture
 
 One systemd service, one process, one native owner thread, one SHARED VDevice,

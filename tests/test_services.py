@@ -181,7 +181,10 @@ def test_playground_config_without_key():
 
 
 def test_media_validation():
-    assert image_frame(snapshot(), 4096).shape == (336, 336, 3)
+    frame = image_frame(snapshot(), 4096)
+    assert frame.shape == (336, 336, 3)
+    assert frame.dtype == np.uint8 and frame.flags.c_contiguous and frame.flags.writeable
+    frame[0, 0] = [0, 1, 2]  # The native binding may request writable buffer access.
     with pytest.raises(ValueError):
         image_frame("http://localhost/private", 4096)
     with pytest.raises(ValueError):
@@ -451,6 +454,7 @@ def test_vlm_preprocessing_context_cleanup_and_native_streaming():
     assert backend.vlm.clears == 2
     frame = backend.vlm.request["frames"][0]
     assert frame.shape == (336, 336, 3) and frame.dtype == np.uint8
+    assert not memoryview(frame).readonly and frame.flags.c_contiguous
     assert frame[0, 0].tolist() == [255, 0, 0]
     assert backend.vlm.request["prompt"][0]["content"][1] == {"type": "image"}
 
