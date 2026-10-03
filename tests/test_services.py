@@ -2,6 +2,7 @@ import asyncio
 import base64
 import io
 import json
+import logging
 import struct
 import sys
 import threading
@@ -108,6 +109,35 @@ def test_http_ws_audio_and_resident_owner():
             assert ws.receive_json()["ok"] is False
         assert not backend.closed
     assert backend.closed and len(set(backend.threads)) == 1
+
+
+def test_optional_http_whisper_debug_logs_protocol_and_audio_metadata(caplog):
+    backend = FakeBackend()
+    with caplog.at_level(logging.DEBUG, logger="hailo_services.app"):
+        with TestClient(create_app(settings(api_key="secret", debug_log=True), backend)) as client:
+            response = client.post(
+                "/v1/audio/transcriptions",
+                files={"file": ("voice.wav", wav(48000, 2))},
+                data={"language": "de"},
+                headers={"Authorization": "Bearer secret"},
+            )
+            assert response.status_code == 200
+    logs = caplog.text
+    assert "protocol=http event=request_start" in logs
+    assert "protocol=http operation=whisper_transcribe" in logs
+    assert "model=whisper-base language=de" in logs
+    assert "'container': 'WAV'" in logs and "'codec': 'PCM_16'" in logs
+    assert "'sample_rate_hz': 48000" in logs and "'channels': 2" in logs
+    assert "'duration_seconds': 0.1" in logs
+    assert "protocol=http event=request_end" in logs and "status=200" in logs
+    assert "Hallo Welt" not in logs and "secret" not in logs
+
+
+def test_debug_logging_can_be_configured_from_environment(monkeypatch):
+    monkeypatch.setenv("HAILO_DEBUG_LOG", "true")
+    assert Settings.from_env().debug_log is True
+    monkeypatch.setenv("HAILO_DEBUG_LOG", "false")
+    assert Settings.from_env().debug_log is False
 
 
 def test_auth_limits_and_unsupported_parameters():
@@ -263,9 +293,9 @@ def test_cancel_retains_queue_slot():
     asyncio.run(run())
 
 
-def test_real_wyoming_wire_protocol():
+def test_real_wyoming_wire_protocol(caplog):
     async def run():
-        config = settings()
+        config = settings(debug_log=True)
         runtime = Runtime(config, FakeBackend())
         await runtime.start()
         server = WyomingServer(runtime, config)
@@ -298,7 +328,12 @@ def test_real_wyoming_wire_protocol():
             await server.close()
             await runtime.close()
 
-    asyncio.run(run())
+    with caplog.at_level(logging.DEBUG, logger="hailo_services.protocols"):
+        asyncio.run(run())
+    assert "protocol=wyoming event=transcribe_start" in caplog.text
+    assert "encoding=pcm_s16le sample_rate_hz=16000 channels=1" in caplog.text
+    assert "input_sample_rate_hz=48000 channels=2 duration_seconds=0.100" in caplog.text
+    assert "protocol=wyoming event=transcribe_complete" in caplog.text
 
 
 def test_wyoming_rejects_huge_payload_before_allocation():

@@ -19,6 +19,7 @@ class Settings:
     request_timeout: float = 180
     max_body: int = 16 * 1024 * 1024
     max_audio_seconds: int = 120
+    debug_log: bool = False
     mqtt_host: str = ""
     mqtt_port: int = 1883
     mqtt_username: str = ""

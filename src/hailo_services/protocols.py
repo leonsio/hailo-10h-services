@@ -3,6 +3,8 @@ import json
 import logging
 import re
 import ssl
+import time
+import uuid
 from contextlib import suppress
 
 import aiomqtt
@@ -14,11 +16,16 @@ from wyoming.event import Event, async_write_event
 from wyoming.info import AsrModel, AsrProgram, Attribution, Describe, Info
 
 from .config import STT_MODEL
-from .media import audio_file, decode_base64, normalize_audio
+from .media import audio_file, audio_metadata, decode_base64, normalize_audio
 from .schemas import ChatRequest, TranscribeRequest
 
 _LOG = logging.getLogger(__name__)
 LANGUAGES = ["de", "en", "fr", "es", "it", "nl", "pt", "pl", "ru", "uk", "tr", "zh", "ja", "ko"]
+
+
+def _debug(settings, message, *args):
+    if settings.debug_log:
+        _LOG.debug(message, *args)
 
 
 def wyoming_info():
@@ -92,6 +99,8 @@ class WyomingServer:
     async def handle(self, reader, writer):
         task = asyncio.current_task()
         self.connections.add(task)
+        peer = writer.get_extra_info("peername") or ("unknown", 0)
+        request_id = uuid.uuid4().hex[:12]
         language = self.settings.language
         audio, fmt = bytearray(), None
         try:
@@ -102,6 +111,9 @@ class WyomingServer:
                 if event is None:
                     break
                 if Describe.is_type(event.type):
+                    _debug(self.settings,
+                           "protocol=wyoming event=describe request_id=%s peer=%s",
+                           request_id, peer[0])
                     await async_write_event(wyoming_info().event(), writer)
                 elif Transcribe.is_type(event.type):
                     request = Transcribe.from_event(event)
@@ -111,6 +123,10 @@ class WyomingServer:
                     if not re.fullmatch(r"[a-z]{2}", language):
                         raise ValueError("Language must be a two-letter code")
                     audio, fmt = bytearray(), None
+                    request_id = uuid.uuid4().hex[:12]
+                    _debug(self.settings,
+                           "protocol=wyoming event=transcribe_start request_id=%s peer=%s model=%s language=%s",
+                           request_id, peer[0], request.name or STT_MODEL, language)
                 elif AudioStart.is_type(event.type):
                     start = AudioStart.from_event(event)
                     if (
@@ -123,6 +139,9 @@ class WyomingServer:
                         )
                     fmt = (start.rate, start.width, start.channels)
                     audio.clear()
+                    _debug(self.settings,
+                           "protocol=wyoming event=audio_start request_id=%s encoding=pcm_s16le sample_rate_hz=%d channels=%d",
+                           request_id, start.rate, start.channels)
                 elif AudioChunk.is_type(event.type):
                     chunk = AudioChunk.from_event(event)
                     if fmt != (chunk.rate, chunk.width, chunk.channels):
@@ -144,7 +163,15 @@ class WyomingServer:
                         / 32768
                     )
                     normalized = normalize_audio(samples, fmt[0], self.settings.max_audio_seconds)
+                    started = time.perf_counter()
+                    _debug(self.settings,
+                           "protocol=wyoming event=transcribe_inference request_id=%s input_sample_rate_hz=%d channels=%d duration_seconds=%.3f bytes=%d language=%s",
+                           request_id, fmt[0], fmt[2], len(audio) / (fmt[0] * fmt[1] * fmt[2]),
+                           len(audio), language)
                     text = await self.runtime.transcribe(normalized, language)
+                    _debug(self.settings,
+                           "protocol=wyoming event=transcribe_complete request_id=%s inference_ms=%.1f transcript_chars=%d",
+                           request_id, (time.perf_counter() - started) * 1000, len(text))
                     await async_write_event(
                         Transcript(text=text, language=language).event(), writer
                     )
@@ -174,6 +201,9 @@ async def dispatch(runtime, settings, operation, payload):
     if operation == "transcribe":
         request = TranscribeRequest.model_validate(payload)
         data = decode_base64(request.audio_base64, settings.max_body)
+        _debug(settings,
+               "operation=whisper_transcribe model=%s language=%s audio=%s bytes=%d",
+               STT_MODEL, request.language or settings.language, audio_metadata(data), len(data))
         audio = audio_file(data, settings.max_audio_seconds)
         return {"text": await runtime.transcribe(audio, request.language)}
     if operation == "health":
@@ -201,6 +231,9 @@ class MQTTBridge:
                     max_queued_incoming_messages=self.settings.queue_size,
                 ) as client:
                     self.connected = True
+                    _debug(self.settings,
+                           "protocol=mqtt event=connected broker=%s port=%d topic_prefix=%s",
+                           self.settings.mqtt_host, self.settings.mqtt_port, prefix)
                     await client.subscribe(f"{prefix}/request/+", qos=0)
                     await client.publish(f"{prefix}/status", "online", retain=True, qos=1)
                     # QoS 0 avoids replaying old inference requests on reconnect.
@@ -221,11 +254,21 @@ class MQTTBridge:
                                     "id must be 1..64 alphanumeric, underscore or hyphen characters"
                                 )
                             operation = str(message.topic).rsplit("/", 1)[-1]
+                            started = time.perf_counter()
+                            _debug(self.settings,
+                                   "protocol=mqtt event=request_start request_id=%s operation=%s topic=%s",
+                                   identifier, operation, message.topic)
                             result = await dispatch(
                                 self.runtime, self.settings, operation, envelope["payload"]
                             )
                             response = {"id": identifier, "ok": True, "result": result}
+                            _debug(self.settings,
+                                   "protocol=mqtt event=request_end request_id=%s operation=%s duration_ms=%.1f ok=true",
+                                   identifier, operation, (time.perf_counter() - started) * 1000)
                         except Exception as exc:
+                            _debug(self.settings,
+                                   "protocol=mqtt event=request_error request_id=%s operation=%s error_type=%s",
+                                   identifier, locals().get("operation", "unknown"), type(exc).__name__)
                             response = {"id": identifier, "ok": False, "error": str(exc)}
                         if isinstance(identifier, str) and re.fullmatch(
                             r"[A-Za-z0-9_-]{1,64}", identifier
@@ -240,4 +283,6 @@ class MQTTBridge:
                 _LOG.warning("MQTT disconnected: %s; retrying in 5s", exc)
                 await asyncio.sleep(5)
             finally:
+                if self.connected:
+                    _debug(self.settings, "protocol=mqtt event=disconnected broker=%s", self.settings.mqtt_host)
                 self.connected = False

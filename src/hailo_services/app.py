@@ -8,13 +8,22 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .config import STT_MODEL, VLM_MODEL, Settings
-from .media import audio_file, decode_base64
+from .media import audio_file, audio_metadata, decode_base64
 from .protocols import MQTTBridge, WyomingServer, dispatch
 from .runtime import BusyError, Runtime
 from .schemas import ChatRequest, TranscribeRequest
@@ -29,6 +38,11 @@ _WEB_FILES = {
 }
 
 
+def _debug(settings, message, *args):
+    if settings.debug_log:
+        _LOG.debug(message, *args)
+
+
 class AccessAndSizeLimit:
     def __init__(self, app, settings):
         self.app, self.settings = app, settings
@@ -36,7 +50,42 @@ class AccessAndSizeLimit:
     async def __call__(self, scope, receive, send):
         if scope["type"] not in {"http", "websocket"}:
             return await self.app(scope, receive, send)
+        request_id = uuid.uuid4().hex[:12]
+        scope.setdefault("state", {})["request_id"] = request_id
+        started = time.perf_counter()
         headers = dict(scope.get("headers", []))
+        path = scope.get("path", "-")
+        method = scope.get("method", "WEBSOCKET")
+        peer = scope.get("client") or ("unknown", 0)
+        is_websocket = scope["type"] == "websocket"
+        protocol = (
+            "websocket" if is_websocket else
+            "mcp" if path == "/mcp" or path.startswith("/mcp/") else "http"
+        )
+        transport = "websocket" if is_websocket else "http"
+        _debug(self.settings,
+               "protocol=%s transport=%s event=request_start request_id=%s method=%s path=%s peer=%s content_type=%s content_length=%s",
+               protocol, transport, request_id,
+               method, path, peer[0], headers.get(b"content-type", b"-").decode("latin1"),
+               headers.get(b"content-length", b"-").decode("latin1"))
+        response_status = "accepted"
+
+        async def debug_send(message):
+            nonlocal response_status
+            if message["type"] == "http.response.start":
+                response_status = message["status"]
+            elif message["type"] == "websocket.close":
+                response_status = "closed:" + str(message.get("code", ""))
+            await send(message)
+
+        async def call_app(current_scope, current_receive):
+            try:
+                await self.app(current_scope, current_receive, debug_send)
+            finally:
+                _debug(self.settings,
+                       "protocol=%s transport=%s event=request_end request_id=%s method=%s path=%s status=%s duration_ms=%.1f",
+                       protocol, transport, request_id, method, path, response_status,
+                       (time.perf_counter() - started) * 1000)
         expected = f"Bearer {self.settings.api_key}".encode()
         public = scope["path"] == "/health" or (
             scope["type"] == "http"
@@ -49,11 +98,11 @@ class AccessAndSizeLimit:
                     await send({"type": "websocket.close", "code": 1008})
                 else:
                     await JSONResponse({"error": "Unauthorized"}, status_code=401)(
-                        scope, receive, send
+                        scope, receive, debug_send
                     )
                 return
         if scope["type"] == "websocket":
-            return await self.app(scope, receive, send)
+            return await call_app(scope, receive)
         # Buffer bounded bodies before handing them to multipart/MCP/JSON parsers.
         body = bytearray()
         while True:
@@ -63,7 +112,7 @@ class AccessAndSizeLimit:
             body.extend(message.get("body", b""))
             if len(body) > self.settings.max_body:
                 await JSONResponse({"error": "Request body too large"}, status_code=413)(
-                    scope, receive, send
+                    scope, receive, debug_send
                 )
                 return
             if not message.get("more_body", False):
@@ -77,7 +126,7 @@ class AccessAndSizeLimit:
                 return {"type": "http.request", "body": bytes(body), "more_body": False}
             return await receive()
 
-        await self.app(scope, bounded_receive, send)
+        await call_app(scope, bounded_receive)
 
 
 def completion(text, identifier, created):
@@ -121,6 +170,10 @@ def create_app(settings=None, backend=None):
         """Transcribe a base64 WAV/FLAC/OGG recording with multilingual Whisper Base."""
         request = TranscribeRequest(audio_base64=audio_base64, language=language)
         data = decode_base64(request.audio_base64, settings.max_body)
+        _debug(settings,
+               "protocol=mcp operation=whisper_transcribe request_id=%s model=%s language=%s audio=%s bytes=%d",
+               uuid.uuid4().hex[:12], STT_MODEL, request.language or settings.language,
+               audio_metadata(data), len(data))
         return await runtime.transcribe(
             audio_file(data, settings.max_audio_seconds), request.language
         )
@@ -229,8 +282,18 @@ def create_app(settings=None, backend=None):
         }
 
     @app.post("/v1/chat/completions")
-    async def chat(request: ChatRequest):
+    async def chat(request: ChatRequest, http_request: Request):
         identifier, created = "chatcmpl-" + uuid.uuid4().hex, int(time.time())
+        image_count = sum(
+            part.get("type") == "image_url"
+            for message in request.messages
+            for part in (message["content"] if isinstance(message["content"], list) else [])
+        )
+        _debug(settings,
+               "protocol=http operation=vlm_chat request_id=%s model=%s messages=%d images=%d max_tokens=%d stream=%s",
+               http_request.scope.get("state", {}).get("request_id", "-"),
+               request.model, len(request.messages), image_count,
+               request.max_tokens, request.stream)
         if not request.stream:
             return completion(await runtime.chat(request), identifier, created)
 
@@ -268,6 +331,7 @@ def create_app(settings=None, backend=None):
 
     @app.post("/v1/audio/transcriptions")
     async def transcribe(
+        request: Request,
         file: Annotated[UploadFile, File()],
         model: Annotated[str, Form()] = STT_MODEL,
         language: Annotated[str | None, Form()] = None,
@@ -285,6 +349,11 @@ def create_app(settings=None, backend=None):
             await file.close()
         if len(data) > settings.max_body:
             raise HTTPException(413, "Audio upload too large")
+        metadata = audio_metadata(data)
+        _debug(settings,
+               "protocol=http operation=whisper_transcribe request_id=%s model=%s language=%s audio=%s bytes=%d",
+               request.scope.get("state", {}).get("request_id", "-"), model,
+               language or settings.language, metadata, len(data))
         text = await runtime.transcribe(audio_file(data, settings.max_audio_seconds), language)
         return PlainTextResponse(text) if response_format == "text" else {"text": text}
 
@@ -298,16 +367,29 @@ def create_app(settings=None, backend=None):
                     await ws.close(code=1009)
                     return
                 identifier = None
+                operation = "unknown"
+                started = time.perf_counter()
                 try:
                     envelope = json.loads(raw)
                     identifier = envelope.get("id")
                     if not isinstance(identifier, str) or len(identifier) > 64:
                         raise ValueError("Provide a string id of at most 64 characters")
+                    operation = str(envelope.get("op", "unknown"))
+                    _debug(settings,
+                           "protocol=websocket event=request_start request_id=%s operation=%s",
+                           identifier, operation)
                     result = await dispatch(
                         runtime, settings, envelope["op"], envelope.get("payload", {})
                     )
                     await ws.send_json({"id": identifier, "ok": True, "result": result})
+                    _debug(settings,
+                           "protocol=websocket event=request_end request_id=%s operation=%s duration_ms=%.1f ok=true",
+                           identifier, operation, (time.perf_counter() - started) * 1000)
                 except Exception as exc:
+                    _debug(settings,
+                           "protocol=websocket event=request_error request_id=%s operation=%s duration_ms=%.1f error_type=%s",
+                           identifier or "-", operation, (time.perf_counter() - started) * 1000,
+                           type(exc).__name__)
                     await ws.send_json({"id": identifier, "ok": False, "error": str(exc)})
         except WebSocketDisconnect:
             pass

@@ -362,6 +362,23 @@ and inspect logs for sharing/memory errors. Check first-start downloads and an
 offline restart. Report HailoRT/device logs if either model fails to initialize;
 the service intentionally does not hide that by unloading the other model.
 
+### Protocol debug logging
+
+Set `HAILO_DEBUG_LOG=true` in `/etc/hailo-10h-services.env`, then restart the
+service to log request start/end, transport (`http`, `websocket`, `wyoming`,
+`mqtt`, or `mcp`), operation, request ID, status and duration. Whisper diagnostics
+include model/language and audio container, codec, sample rate, channels, duration
+and byte count. Wyoming additionally logs PCM encoding and input sample rate.
+Chat logs include model, message/image counts and token limit. Prompts, transcripts,
+API keys and raw audio/image payloads are never logged. Debug logging is off by
+default; disable it with `HAILO_DEBUG_LOG=false`.
+
+```bash
+sudoedit /etc/hailo-10h-services.env
+sudo systemctl restart hailo-10h-services
+sudo journalctl -u hailo-10h-services -f
+```
+
 Sources used for the implementation:
 
 - [Hailo GenAI examples](https://github.com/hailo-ai/hailo-apps/tree/main/hailo_apps/python/gen_ai_apps)

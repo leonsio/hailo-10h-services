@@ -71,3 +71,19 @@ def audio_file(data: bytes, max_seconds: int) -> np.ndarray:
             return normalize_audio(samples, audio.samplerate, max_seconds)
     except (sf.LibsndfileError, RuntimeError) as exc:
         raise ValueError("Unsupported audio; use WAV, FLAC or OGG supported by libsndfile") from exc
+
+
+def audio_metadata(data: bytes) -> dict:
+    """Read decoder-independent audio facts for logs without exposing audio content."""
+    try:
+        info = sf.info(io.BytesIO(data))
+    except (sf.LibsndfileError, RuntimeError) as exc:
+        raise ValueError("Unsupported audio; use WAV, FLAC or OGG supported by libsndfile") from exc
+    return {
+        "container": info.format,
+        "codec": info.subtype,
+        "sample_rate_hz": info.samplerate,
+        "channels": info.channels,
+        "frames": info.frames,
+        "duration_seconds": info.duration,
+    }

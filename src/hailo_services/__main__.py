@@ -11,6 +11,8 @@ def main():
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
     settings = Settings.from_env()
+    if settings.debug_log:
+        logging.getLogger("hailo_services").setLevel(logging.DEBUG)
     uvicorn.run(
         create_app(settings),
         host=settings.host,
