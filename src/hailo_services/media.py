@@ -7,7 +7,8 @@ import soundfile as sf
 from PIL import Image, UnidentifiedImageError
 from scipy.signal import resample_poly
 
-Image.MAX_IMAGE_PIXELS = 20_000_000
+_MAX_IMAGE_PIXELS = 50_000_000
+Image.MAX_IMAGE_PIXELS = _MAX_IMAGE_PIXELS
 
 
 def decode_base64(value: str, limit: int) -> bytes:
@@ -30,8 +31,11 @@ def image_frame(value: str, limit: int) -> np.ndarray:
     # URL fetching is deliberately excluded: callers supply their snapshot bytes.
     try:
         with Image.open(io.BytesIO(decode_base64(value, limit))) as image:
-            if image.width * image.height > Image.MAX_IMAGE_PIXELS:
+            if image.width * image.height > _MAX_IMAGE_PIXELS:
                 raise ValueError("Image has too many pixels")
+            # Let JPEG downsample in the decoder before allocating the full-resolution
+            # RGB buffer. Phone photos can be 48 MP, while the VLM input is only 336².
+            image.draft("RGB", (672, 672))
             # Pillow's buffer-backed ndarray is read-only; Hailo GenAI requires
             # writable, contiguous frame storage at the native API boundary.
             return np.array(image.convert("RGB").resize((336, 336)), dtype=np.uint8, copy=True)

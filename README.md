@@ -333,8 +333,10 @@ streaming is HTTP SSE only. `health` is also supported as an operation.
 
 ## Limits, verification and target-device checks
 
-Default total request size 16 MiB, audio duration 120 seconds, images 20 million
-pixels. Wyoming accepts PCM16 mono/stereo at 8–192 kHz, bounded audio chunks and
+Default total request size 16 MiB, audio duration 120 seconds, images 50 million
+pixels. JPEGs are downsampled during decoding before conversion to the VLM's
+336×336 input, which supports typical 48 MP phone photos without allocating the
+full RGB image. Larger images are rejected before conversion. Wyoming accepts PCM16 mono/stereo at 8–192 kHz, bounded audio chunks and
 up to 32 connections. Large uploads/durations and incomplete PCM are rejected.
 Timeouts cannot forcibly interrupt a stuck native driver call; systemd's stop
 limit eventually terminates the process if native shutdown cannot finish.

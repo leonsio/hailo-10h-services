@@ -2,10 +2,12 @@ import asyncio
 import base64
 import io
 import json
+import struct
 import sys
 import threading
 import time
 import types
+import zlib
 from dataclasses import replace
 
 import numpy as np
@@ -189,6 +191,33 @@ def test_media_validation():
         image_frame("http://localhost/private", 4096)
     with pytest.raises(ValueError):
         audio_file(wav(), 0)
+
+
+def test_phone_resolution_jpeg_is_downsampled_but_extreme_images_are_rejected(monkeypatch):
+    # Lower the production limit in this unit test so the decoder path is
+    # exercised without allocating a real 48 MP buffer on the test runner.
+    monkeypatch.setattr("hailo_services.media._MAX_IMAGE_PIXELS", 3_000_000)
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 3_000_000)
+    image = Image.new("RGB", (1800, 1600), "#4a728c")
+    encoded = io.BytesIO()
+    image.save(encoded, format="JPEG", quality=75)
+    frame = image_frame(base64.b64encode(encoded.getvalue()).decode(), 1024 * 1024)
+    assert frame.shape == (336, 336, 3)
+    assert frame.flags.writeable and frame.flags.c_contiguous
+
+    def png_chunk(kind, data):
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    huge_png = (
+        b"\x89PNG\r\n\x1a\n"
+        + png_chunk(b"IHDR", struct.pack(">2I5B", 1801, 1800, 8, 2, 0, 0, 0))
+        + png_chunk(b"IDAT", zlib.compress(b"\0"))
+        + png_chunk(b"IEND", b"")
+    )
+    with pytest.warns(Image.DecompressionBombWarning):
+        with pytest.raises(ValueError, match="Image has too many pixels"):
+            image_frame(base64.b64encode(huge_png).decode(), 1024 * 1024)
 
 
 def test_timeout_retains_queue_slot():
