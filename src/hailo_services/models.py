@@ -35,14 +35,16 @@ def select_release(runtime_version, available, override=None):
 
 
 def prepare_model_version():
+    import hailo_platform
     from hailo_apps.python.core.common.defines import (
         HAILORT_VERSION_KEY,
         MODEL_ZOO_VERSION_KEY,
         VALID_H10_MODEL_ZOO_VERSION,
     )
-    from hailo_apps.python.core.common.installation_utils import auto_detect_hailort_version
 
-    version = os.getenv(HAILORT_VERSION_KEY) or auto_detect_hailort_version()
+    # Read the loaded binding's version without opening the accelerator through
+    # hailortcli fw-control identify. That probe can time out with active clients.
+    version = os.getenv(HAILORT_VERSION_KEY) or getattr(hailo_platform, "__version__", None)
     if not version:
         raise RuntimeError(
             "Cannot detect HailoRT version; set hailort_version in service environment"

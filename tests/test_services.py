@@ -483,3 +483,29 @@ def test_mqtt_envelopes_and_invalid_id_do_not_crash_bridge(monkeypatch):
     assert topic == "hailo10h/response/good"
     assert json.loads(payload)["result"]["text"] == "Hello world"
     assert options["retain"] is False
+
+
+def test_version_detection_uses_binding_without_device_probe(monkeypatch):
+    from hailo_services.models import prepare_model_version
+
+    modules = {
+        "hailo_platform": types.SimpleNamespace(__version__="5.4.0"),
+        "hailo_apps": types.ModuleType("hailo_apps"),
+        "hailo_apps.python": types.ModuleType("hailo_apps.python"),
+        "hailo_apps.python.core": types.ModuleType("hailo_apps.python.core"),
+        "hailo_apps.python.core.common": types.ModuleType("hailo_apps.python.core.common"),
+        "hailo_apps.python.core.common.defines": types.SimpleNamespace(
+            HAILORT_VERSION_KEY="hailort_version",
+            MODEL_ZOO_VERSION_KEY="model_zoo_version",
+            VALID_H10_MODEL_ZOO_VERSION=["v5.1.0", "v5.2.0", "v5.3.0"],
+        ),
+        # No CLI/version probe helper exists in this fixture.
+    }
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.delenv("hailort_version", raising=False)
+    monkeypatch.delenv("model_zoo_version", raising=False)
+    prepare_model_version()
+    import os
+
+    assert os.environ["model_zoo_version"] == "v5.3.0"

@@ -94,8 +94,9 @@ being downloaded/loaded there is no listening HTTP socket. It includes loaded
 model names, paths, mandatory SHARED group, pending work and MQTT connection state.
 
 Hailo's pinned downloader knows model releases v5.1.0/v5.2.0/v5.3.0. This service
-explicitly selects the newest known release not newer than detected HailoRT, and
-logs that choice. For HailoRT 5.4 it selects v5.3.0 instead of the upstream silent
+explicitly selects the newest known release not newer than the loaded HailoRT Python binding, and
+logs that choice. Version detection reads `hailo_platform.__version__` without
+opening the device through `hailortcli`. For HailoRT 5.4 it selects v5.3.0 instead of the upstream silent
 v5.1 fallback. This is a candidate release, **not a claim of tested hardware
 compatibility**; HailoRT validates the HEFs when constructing the models. You can
 set `model_zoo_version=v5.2.0` in the env file for a known matching release, or use
@@ -253,3 +254,36 @@ Sources used for the implementation:
 - [Hailo shared-device usage and KV-cache limitation](https://github.com/hailo-ai/hailo_model_zoo_genai/blob/main/docs/USAGE.rst)
 - [Official Wyoming protocol](https://github.com/OHF-Voice/wyoming)
 - [Official MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
+
+## Whisper backend choice and DMA startup failures
+
+[The hailocs/hailo-whisper repository](https://github.com/hailocs/hailo-whisper)
+provides Whisper export, conversion and evaluation, including separate encoder
+and decoder graphs and host embedding/tokenization assets. Its documented Base
+conversion uses five-second inputs and requires DFC 5.x for Hailo-10H. Those
+compiled models and host-side routines are not drop-in replacements for the
+single GenAI `Whisper-Base.hef` consumed by `Speech2Text`. This gateway follows
+[Hailo's native Speech2Text example](https://github.com/hailo-ai/hailo-apps/blob/main/hailo_apps/python/gen_ai_apps/simple_whisper_chat/simple_whisper_chat.py).
+A separate low-level encoder/decoder backend would require its own implementation
+and hardware validation; it is not enabled by this comparison.
+
+A failure in `VDevice(...)` or `VLM(...)` occurs before Whisper initialization.
+`HAILO_TIMEOUT(4)` is a native device/communication timeout; increasing the HTTP
+request timeout will not repair startup. For `HAILO_VDMA_ENABLE_CHANNELS` errno
+22, the published driver rejects activation of channels already enabled; confirm
+the actual kernel reason with `dmesg`. Potential competing device users, stale
+channel state and mismatched kernel/runtime components need target investigation.
+Do not change `group_id` to bypass sharing or assume a HEF swap fixes driver I/O.
+Stop the gateway's restart loop and collect these commands on the Proxmox host
+if the kernel/device is owned by the host:
+
+```bash
+sudo systemctl stop hailo-10h-services
+sudo dmesg -T | grep -Ei 'hailo|h1x|vdma' | tail -100
+sudo fuser -v /dev/h1x-0
+modinfo hailo1x | grep -E '^(version|filename|vermagic):'
+```
+
+`fuser` reports candidates, not proof that another process is incorrectly sharing.
+Verify those clients also use SHARED and compatible HailoRT before restarting.
+Do not unload the kernel driver or reset the device while other clients use it.

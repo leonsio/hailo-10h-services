@@ -40,8 +40,13 @@ class HailoBackend:
         params = VDevice.create_params()
         params.group_id = "SHARED"  # Mandatory, intentionally not configurable.
         try:
+            if params.group_id != "SHARED":
+                raise RuntimeError("Hailo binding did not preserve mandatory group_id=SHARED")
+            _LOG.info("Creating Hailo VDevice with effective group_id=%s", params.group_id)
             self.device = VDevice(params)
+            _LOG.info("Loading resident Qwen2-VL from %s", self.paths["vlm"])
             self.vlm = VLM(self.device, self.paths["vlm"])
+            _LOG.info("Loading resident Whisper Base from %s", self.paths["whisper"])
             self.whisper = Speech2Text(self.device, self.paths["whisper"])
             _LOG.info("Both models initialized; VDevice group_id=SHARED; paths=%s", self.paths)
         except BaseException:
