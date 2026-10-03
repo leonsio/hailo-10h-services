@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Hailo-10H · Service & Playground</title>
+  <link rel="stylesheet" href="ui/style.css">
+  <script src="ui/app.js" defer></script>
+</head>
+<body>
+<main>
+  <header><div><p class="eyebrow">LOCAL AI GATEWAY</p><h1>Hailo-10H <span>Playground</span></h1><p>Status prüfen. Bilder verstehen. Sprache transkribieren.</p></div><span id="connection" class="badge">Verbinde …</span></header>
+  <section aria-labelledby="status-title">
+    <div class="section-title"><h2 id="status-title">Service-Status</h2><button id="refresh" type="button" class="quiet">Aktualisieren</button></div>
+    <div class="stats">
+      <article><span>Hailo-Gruppe</span><strong id="group">—</strong></article>
+      <article><span>Warteschlange / aktive Aufträge</span><strong id="pending">—</strong></article>
+      <article><span>Geladene Modelle</span><strong id="models">—</strong></article>
+      <article><span>MQTT</span><strong id="mqtt">—</strong></article>
+    </div>
+    <p id="status-note" class="hint" role="status">Status wird alle 5 Sekunden aktualisiert.</p>
+    <details><summary>Modelldateien & Rohstatus</summary><pre id="raw-status">—</pre></details>
+  </section>
+  <section id="auth-section" aria-labelledby="access-title">
+    <h2 id="access-title">API-Zugang</h2>
+    <label for="api-key">API-Schlüssel</label>
+    <div class="key-row"><input id="api-key" type="password" placeholder="HAILO_API_KEY aus der Service-Konfiguration" autocomplete="off" spellcheck="false"><button id="check-key" type="button" class="quiet">Zugang prüfen</button></div>
+    <p id="auth-note" class="hint" role="status">Der Schlüssel bleibt nur im Speicher dieser Seite und wird nicht gespeichert.</p>
+  </section>
+  <div class="playgrounds">
+    <section aria-labelledby="chat-title">
+      <div class="section-title"><div><p class="eyebrow">QWEN2-VL</p><h2 id="chat-title">VLM-Chat</h2></div><button id="clear-chat" type="button" class="quiet">Neuer Chat</button></div>
+      <div id="conversation" class="conversation" role="log" aria-label="Chat-Verlauf"><p class="empty">Stelle eine Frage oder lade ein Bild zur Analyse hoch.</p></div>
+      <form id="chat-form">
+        <label for="prompt">Deine Nachricht</label><textarea id="prompt" rows="3" required placeholder="Was ist auf diesem Bild zu sehen?"></textarea>
+        <div class="form-row"><div><label for="image">Bild (optional)</label><input id="image" type="file" accept="image/jpeg,image/png,image/webp"></div><div class="tokens"><label for="max-tokens">Max. Tokens</label><input id="max-tokens" type="number" min="1" max="1024" value="256" required></div></div>
+        <img id="image-preview" hidden alt="Vorschau des ausgewählten Bildes">
+        <button id="send-chat" type="submit">Nachricht senden</button>
+      </form>
+      <p id="chat-note" class="hint" role="status"></p>
+    </section>
+    <section aria-labelledby="whisper-title">
+      <p class="eyebrow">WHISPER BASE</p><h2 id="whisper-title">Sprache testen</h2>
+      <p>Eine kurze Aufnahme machen, anhören und anschließend transkribieren.</p>
+      <p id="mic-hint" class="hint"></p>
+      <div class="record-panel"><strong id="record-time">00:00</strong><progress id="record-progress" max="30" value="0" aria-label="Aufnahmedauer"></progress><div class="button-row"><button id="record" type="button" disabled>Aufnahme starten</button><button id="stop" type="button" class="quiet" disabled>Stoppen</button></div></div>
+      <label for="audio-file">Oder Audiodatei hochladen (WAV / FLAC / OGG)</label><input id="audio-file" type="file" accept=".wav,.flac,.ogg,audio/wav,audio/flac,audio/ogg">
+      <p id="audio-name" class="hint">Noch keine Aufnahme ausgewählt.</p><audio id="audio-preview" controls hidden></audio>
+      <label for="language">Sprache</label><select id="language"><option value="de">Deutsch</option><option value="en">Englisch</option><option value="">Service-Standard</option><option value="fr">Französisch</option><option value="es">Spanisch</option><option value="ru">Russisch</option></select>
+      <button id="transcribe" type="button" disabled>Transkribieren</button>
+      <p id="whisper-note" class="hint" role="status"></p>
+      <label for="transcript">Transkript</label><textarea id="transcript" rows="5" readonly placeholder="Der erkannte Text erscheint hier."></textarea>
+    </section>
+  </div>
+  <footer>Verarbeitung auf deinem Hailo-Service · <a href="health">Health-API</a> · Audio wird erst mit „Transkribieren“ gesendet.</footer>
+</main>
+</body>
+</html>

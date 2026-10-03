@@ -4,6 +4,54 @@ Resident **Qwen2-VL-2B-Instruct** and multilingual **Whisper Base** for Home Ass
 and other applications. Native HailoRT GenAI inference; no CPU inference fallback.
 Every accelerator connection uses **`VDevice group_id="SHARED"`**, hardcoded.
 
+## Status page and browser playground
+
+Open **`http://<cm5-IP>:8090/`** to view service readiness, the effective SHARED
+group, pending jobs (including active inference), loaded models, model paths and
+MQTT connectivity. Status refreshes every five seconds. All page assets ship with
+the Python package; no external CDN, Node build or extra service is needed.
+
+The page includes:
+
+- **VLM chat:** text questions, optional JPEG/PNG/WebP images, conversation history,
+  token limit and response time. Start a new chat after 16 turns or four images.
+- **Whisper:** start/stop a microphone recording (up to 30 seconds, or the configured
+  lower audio/body limit), local playback, language selection and transcription.
+  Alternatively upload WAV, FLAC or OGG. Audio is sent only when clicking
+  **Transkribieren**. Browser recordings use mono PCM16 WAV, decoded/resampled by
+  the existing audio API; no WebM/AAC decoder or ffmpeg is needed.
+- **API key:** enter `HAILO_API_KEY` from `/etc/hailo-10h-services.env` if enabled.
+  The key is kept only in the open page's memory, never in localStorage or a URL.
+  Chat history, selected media and transcripts are also kept only in the page.
+
+Browsers permit microphone capture only in a **secure context**, such as HTTPS
+or localhost. A plain HTTP LAN address permits status/chat/uploads but cannot
+capture the microphone. Use an HTTPS reverse proxy with a browser-trusted
+certificate, or on your desktop forward the service through SSH:
+
+```bash
+ssh -N -L 18090:127.0.0.1:8090 leonsio@<cm5-IP>
+# Open http://localhost:18090/ in the browser on that same desktop.
+```
+
+On a phone, use HTTPS for microphone capture. Recording requires a modern browser
+with AudioWorklet support and microphone permission. The page explains when
+capture is unavailable. Capturing stops when the page moves to the background.
+See [MDN's microphone secure-context requirements](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia).
+
+Only the page's exact read-only asset routes, `/ui/config` (non-secret limits/model
+names) and the existing `/health` are public. Inference endpoints retain their
+Bearer authentication and body limits. The page becomes available after normal
+service startup, when both models have loaded successfully.
+
+To update an existing installation from the branch containing this change:
+
+```bash
+git pull --ff-only
+sudo /opt/hailo-10h-services/venv/bin/pip install --no-deps --force-reinstall .
+sudo systemctl restart hailo-10h-services
+```
+
 ## Behavior and architecture
 
 One systemd service, one process, one native owner thread, one SHARED VDevice,

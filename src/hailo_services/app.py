@@ -5,10 +5,11 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -19,6 +20,13 @@ from .runtime import BusyError, Runtime
 from .schemas import ChatRequest, TranscribeRequest
 
 _LOG = logging.getLogger(__name__)
+_WEB = Path(__file__).with_name("web")
+_WEB_FILES = {
+    "/": "index.html",
+    "/ui/app.js": "app.js",
+    "/ui/style.css": "style.css",
+    "/ui/recorder-worklet.js": "recorder-worklet.js",
+}
 
 
 class AccessAndSizeLimit:
@@ -30,7 +38,12 @@ class AccessAndSizeLimit:
             return await self.app(scope, receive, send)
         headers = dict(scope.get("headers", []))
         expected = f"Bearer {self.settings.api_key}".encode()
-        if self.settings.api_key and scope["path"] != "/health":
+        public = scope["path"] == "/health" or (
+            scope["type"] == "http"
+            and scope.get("method") in {"GET", "HEAD"}
+            and scope["path"] in {*_WEB_FILES, "/ui/config"}
+        )
+        if self.settings.api_key and not public:
             if not hmac.compare_digest(headers.get(b"authorization", b""), expected):
                 if scope["type"] == "websocket":
                     await send({"type": "websocket.close", "code": 1008})
@@ -152,6 +165,37 @@ def create_app(settings=None, backend=None):
     app.state.runtime = runtime
     app.state.mqtt = mqtt
     app.add_middleware(AccessAndSizeLimit, settings=settings)
+
+    async def web_file(request):
+        return FileResponse(
+            _WEB / _WEB_FILES[request.url.path],
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Content-Type-Options": "nosniff",
+                "Referrer-Policy": "no-referrer",
+                "Content-Security-Policy": (
+                    "default-src 'self'; script-src 'self'; style-src 'self'; "
+                    "img-src 'self' data: blob:; media-src 'self' blob:; "
+                    "connect-src 'self'; worker-src 'self'; object-src 'none'; "
+                    "base-uri 'none'; frame-ancestors 'none'"
+                ),
+            },
+        )
+
+    for path in _WEB_FILES:
+        app.add_route(path, web_file, methods=["GET", "HEAD"], include_in_schema=False)
+
+    @app.get("/ui/config", include_in_schema=False)
+    async def web_config():
+        return {
+            "auth_required": bool(settings.api_key),
+            "vlm_model": VLM_MODEL,
+            "whisper_model": STT_MODEL,
+            "language": settings.language,
+            "max_body": settings.max_body,
+            "max_audio_seconds": settings.max_audio_seconds,
+            "recording_seconds": min(30, settings.max_audio_seconds),
+        }
 
     @app.exception_handler(BusyError)
     async def busy_handler(request, exc):

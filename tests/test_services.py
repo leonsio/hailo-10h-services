@@ -142,6 +142,44 @@ def test_auth_limits_and_unsupported_parameters():
         )
 
 
+def test_playground_public_assets_keep_inference_authenticated():
+    backend = FakeBackend()
+    with TestClient(create_app(settings(api_key="secret", max_audio_seconds=10), backend)) as client:
+        page = client.get("/")
+        assert page.status_code == 200 and 'lang="de"' in page.text
+        assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
+        assert client.head("/").status_code == 200
+        for path in ("app.js", "style.css", "recorder-worklet.js"):
+            asset = client.get("/ui/" + path)
+            assert asset.status_code == 200
+            assert asset.headers["x-content-type-options"] == "nosniff"
+        config = client.get("/ui/config").json()
+        assert config["auth_required"] is True
+        assert config["recording_seconds"] == 10
+        assert config["whisper_model"] == "whisper-base"
+        assert "secret" not in json.dumps(config)
+        assert client.post("/ui/config").status_code == 401
+        assert client.get("/ui/unknown.js").status_code == 401
+        assert client.get("/ui/../config.py").status_code == 401
+        payload = {"messages": [{"role": "user", "content": "Hallo"}]}
+        assert client.post("/v1/chat/completions", json=payload).status_code == 401
+        assert client.post("/v1/audio/transcriptions", files={"file": ("voice.wav", wav())}).status_code == 401
+        assert not backend.calls
+        headers = {"Authorization": "Bearer secret"}
+        assert client.post("/v1/chat/completions", json=payload, headers=headers).status_code == 200
+        assert client.post(
+            "/v1/audio/transcriptions", files={"file": ("aufnahme.wav", wav(48000))},
+            data={"model": "whisper-base", "language": "de"}, headers=headers,
+        ).json() == {"text": "Hallo Welt"}
+
+
+def test_playground_config_without_key():
+    with TestClient(create_app(settings(), FakeBackend())) as client:
+        config = client.get("/ui/config").json()
+        assert config["auth_required"] is False
+        assert config["recording_seconds"] == 30
+
+
 def test_media_validation():
     assert image_frame(snapshot(), 4096).shape == (336, 336, 3)
     with pytest.raises(ValueError):
