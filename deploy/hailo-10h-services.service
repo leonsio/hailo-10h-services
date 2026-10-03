@@ -1,0 +1,28 @@
+[Unit]
+Description=Hailo-10H resident Qwen2-VL and Whisper gateway (SHARED)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=hailo-services
+Group=hailo-services
+WorkingDirectory=/opt/hailo-10h-services
+EnvironmentFile=/etc/hailo-10h-services.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/hailo-10h-services/venv/bin/hailo-10h-services
+Restart=on-failure
+RestartSec=15
+# First launch downloads large HEFs. Type=simple has no readiness deadline.
+TimeoutStopSec=240
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target
