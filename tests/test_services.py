@@ -160,7 +160,7 @@ def test_timeout_retains_queue_slot():
         runtime = Runtime(settings(queue_size=1, request_timeout=0.01), Slow())
         await runtime.start()
         request = ChatRequest(messages=[{"role": "user", "content": "hi"}])
-        with pytest.raises(TimeoutError):
+        with pytest.raises(asyncio.TimeoutError):
             await runtime.chat(request)
         assert runtime.pending == 1
         with pytest.raises(BusyError):

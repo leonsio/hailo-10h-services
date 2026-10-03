@@ -161,7 +161,7 @@ def create_app(settings=None, backend=None):
     async def value_handler(request, exc):
         return JSONResponse({"error": str(exc)}, status_code=400)
 
-    @app.exception_handler(TimeoutError)
+    @app.exception_handler(asyncio.TimeoutError)
     async def timeout_handler(request, exc):
         return JSONResponse(
             {"error": "Inference timed out; native work may still be completing"}, status_code=504
