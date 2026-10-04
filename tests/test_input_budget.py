@@ -26,6 +26,7 @@ class BudgetBackend(LiteRTLMBackend):
         super().__init__("/fake/gemma.litertlm", context)
         self.created = []
         self.closed = 0
+        self.rendered = []
         self.engine = SimpleNamespace(tokenize=lambda text: text.split())
         self.litert_lm = SimpleNamespace(
             Tool=type("Tool", (), {}), SamplerConfig=lambda **kwargs: kwargs,
@@ -47,6 +48,7 @@ class BudgetBackend(LiteRTLMBackend):
                 backend.closed += 1
 
             def render_message_to_string(self, prompt):
+                backend.rendered.append(prompt)
                 return json.dumps({
                     "messages": self.options["messages"], "tools": [
                         t.get_tool_description() for t in self.options.get("tools", [])
@@ -290,6 +292,61 @@ def test_kitchen_light_off_request_keeps_only_relevant_action_tools():
     assert [tool["function"]["name"] for tool in selected] == ["intent__HassTurnOff"]
     assert stats["tools_before"] == 3
     assert stats["tools_after"] == 1
+
+
+def test_explicit_turn_off_beats_live_context_and_light_set_descriptions():
+    tools = [
+        {"type": "function", "function": {
+            "name": "homeassistant__GetLiveContext",
+            "description": (
+                "Provides current state. As a first step in conditional actions, "
+                "for example if something is on, turn off a light."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "area": {"type": "string"}, "domain": {"type": "string"},
+            }},
+        }},
+        {"type": "function", "function": {
+            "name": "intent__HassTurnOff",
+            "description": "Turns off/closes a device or entity.",
+            "parameters": {"type": "object", "properties": {
+                "area": {"type": "string"}, "domain": {"type": "array"},
+            }},
+        }},
+        {"type": "function", "function": {
+            "name": "light__HassLightSet",
+            "description": "Sets brightness percentage or color of a light.",
+            "parameters": {"type": "object", "properties": {
+                "area": {"type": "string"}, "brightness": {"type": "integer"},
+            }},
+        }},
+    ]
+    selected, stats = retrieve_tools(
+        [{"role": "user", "content": "schalte das Licht in der Küche aus"}],
+        tools,
+    )
+    assert [tool["function"]["name"] for tool in selected] == ["intent__HassTurnOff"]
+    assert stats["tools_after"] == 1
+
+
+def test_budget_counts_complete_litert_render_once_for_tool_followup():
+    backend = BudgetBackend(context=4096)
+    backend.start()
+    messages = [
+        {"role": "system", "content": "system " * 1000},
+        {"role": "user", "content": "schalte das Licht aus"},
+        {"role": "assistant", "content": None, "tool_calls": [{
+            "id": "call_live",
+            "type": "function",
+            "function": {"name": TOOL["function"]["name"], "arguments": "{}"},
+        }]},
+        {"role": "tool", "tool_call_id": "call_live", "content": "state on"},
+    ]
+    request = req(messages, tools=[TOOL], max_input_tokens=4096)
+    trimmed = backend._limit_input(request, {"tools": []})
+    assert trimmed.messages == messages
+    assert len(backend.rendered) == 1
+    assert backend.rendered[0]["role"] == "tool"
 
 
 def test_active_tool_schema_is_preserved_alongside_retrieved_followup_tools():
