@@ -1,12 +1,15 @@
 """Low-latency LiteRT helpers for Home Assistant agent requests.
 
 This module is installed once from :mod:`hailo_services.__init__`. It keeps the
-main runtime implementation small while providing two production optimizations:
+main runtime implementation small while providing production optimizations and
+diagnostics:
 
 * Successful Home Assistant action results can be acknowledged without a second
   Gemma inference round.
 * LiteRT conversations expose native benchmark information, which is logged
   together with wall-clock timings for prefill/decode diagnostics.
+* In debug mode, the exact rendered prompt sent to Gemma is logged after the
+  LiteRT chat template and tool declarations have been applied.
 """
 
 from __future__ import annotations
@@ -142,10 +145,12 @@ def _duration_ms(tokens, tokens_per_second):
     return tokens / tokens_per_second * 1000.0
 
 
-def _benchmark(conversation):
+def _benchmark(conversation, *, enabled):
+    if not enabled:
+        return {"available": False, "disabled": True}
     getter = getattr(conversation, "get_benchmark_info", None)
     if not callable(getter):
-        return {"available": False}
+        return {"available": False, "error": "get_benchmark_info unavailable"}
     try:
         info = getter()
     except Exception as exc:  # Native metrics are diagnostic, never request-fatal.
@@ -171,7 +176,7 @@ def _benchmark(conversation):
 
 
 def _log_timing(backend, conversation, *, wall_ms, create_call_ms, enter_ms, first_chunk_ms=None):
-    benchmark = _benchmark(conversation)
+    benchmark = _benchmark(conversation, enabled=bool(getattr(backend, "debug_log", False)))
     prefill_ms = benchmark.get("prefill_ms_estimate")
     decode_ms = benchmark.get("decode_ms_estimate")
     accounted = sum(value for value in (prefill_ms, decode_ms) if isinstance(value, (int, float)))
@@ -218,6 +223,32 @@ class _ConversationProxy:
 
     def __getattr__(self, name):
         return getattr(self._conversation, name)
+
+    def render_message_to_string(self, *args, **kwargs):
+        rendered = self._conversation.render_message_to_string(*args, **kwargs)
+        if getattr(self._backend, "debug_log", False):
+            token_count = None
+            try:
+                token_count = len(self._backend.engine.tokenize(rendered))
+            except Exception:
+                pass
+            source_message = args[0] if args else kwargs.get("message")
+            _LOG.debug(
+                "event=gemma_rendered_prompt request_id=%s json=%s",
+                getattr(_REQUEST, "request_id", "-"),
+                json.dumps(
+                    {
+                        "characters": len(rendered),
+                        "raw_tokens": token_count,
+                        "source_message": source_message,
+                        "prompt": rendered,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    default=str,
+                ),
+            )
+        return rendered
 
     def send_message(self, *args, **kwargs):
         started = time.perf_counter()
@@ -301,6 +332,35 @@ def instrument_engine(backend):
     backend.engine = _EngineProxy(engine, backend)
 
 
+def _start_with_benchmark(self, original_start, *args, **kwargs):
+    """Enable LiteRT native benchmark collection during debug startup.
+
+    ``LiteRTLMBackend.start`` owns engine construction in :mod:`runtime`.  Keep
+    that implementation as the single source of truth and temporarily decorate
+    the public ``litert_lm.Engine`` constructor so the native
+    ``enable_benchmark`` option is passed during that construction. Startup is
+    serialized before request handling begins, and the constructor is restored
+    immediately afterwards.
+    """
+    import litert_lm
+
+    original_engine = litert_lm.Engine
+
+    @wraps(original_engine)
+    def engine_with_diagnostics(*engine_args, **engine_kwargs):
+        engine_kwargs.setdefault("enable_benchmark", bool(getattr(self, "debug_log", False)))
+        return original_engine(*engine_args, **engine_kwargs)
+
+    litert_lm.Engine = engine_with_diagnostics
+    try:
+        result = original_start(self, *args, **kwargs)
+    finally:
+        litert_lm.Engine = original_engine
+    if getattr(self, "debug_log", False):
+        _LOG.info("LiteRT native benchmark diagnostics enabled")
+    return result
+
+
 def install():
     """Install the fast path and metric hooks on ``LiteRTLMBackend`` once."""
     from . import runtime
@@ -314,7 +374,7 @@ def install():
 
     @wraps(original_start)
     def start(self, *args, **kwargs):
-        result = original_start(self, *args, **kwargs)
+        result = _start_with_benchmark(self, original_start, *args, **kwargs)
         instrument_engine(self)
         return result
 
