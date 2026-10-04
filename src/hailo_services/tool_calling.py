@@ -3,7 +3,6 @@
 import json
 import logging
 import re
-import unicodedata
 import uuid
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError
@@ -140,11 +139,9 @@ def native_messages(messages):
 
 def _normalized_text(value):
     text = str(value).casefold().replace("ß", "ss")
-    text = unicodedata.normalize("NFKD", text)
-    text = "".join(char for char in text if not unicodedata.combining(char))
+    text = text.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
     text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
     return re.sub(r"\s+", " ", text).strip()
-
 
 def _latest_user_text(messages):
     for message in reversed(messages):
