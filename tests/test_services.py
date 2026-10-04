@@ -244,6 +244,8 @@ def test_litert_backend_uses_python_engine_and_preserves_chat_history(tmp_path, 
     ]
     assert calls["conversation"]["max_output_tokens"] == 64
     assert calls["conversation"]["sampler_config"] == {"temperature": 0.2, "seed": 7}
+    assert backend.chat(request.model_copy(update={"top_p": 0.8})) == "Antwort"
+    assert calls["conversation"]["sampler_config"]["top_p"] == 0.8
     streamed = []
     assert backend.chat(request, emit=streamed.append) == "Antwort"
     assert streamed == ["Ant", "wort"]
@@ -676,6 +678,7 @@ def test_vlm_preprocessing_context_cleanup_and_native_streaming():
     backend = HailoBackend(settings())
     backend.vlm = Vlm()
     request = ChatRequest(
+        top_p=0.8,
         messages=[
             {
                 "role": "user",
@@ -695,6 +698,7 @@ def test_vlm_preprocessing_context_cleanup_and_native_streaming():
     assert not memoryview(frame).readonly and frame.flags.c_contiguous
     assert frame[0, 0].tolist() == [255, 0, 0]
     assert backend.vlm.request["prompt"][0]["content"][1] == {"type": "image"}
+    assert backend.vlm.request["top_p"] == 0.8
 
     def fail(**kwargs):
         raise RuntimeError("native failure")

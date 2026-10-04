@@ -11,6 +11,7 @@ class ChatRequest(BaseModel):
     messages: list[dict[str, Any]] = Field(min_length=1, max_length=128)
     max_tokens: int = Field(default=256, ge=1, le=1024)
     temperature: float = Field(default=0.1, ge=0, le=1)
+    top_p: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     seed: int = Field(default=42, ge=0, le=2**32 - 1)
     stream: bool = False
     user: str | None = None
