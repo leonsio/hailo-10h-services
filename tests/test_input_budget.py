@@ -352,9 +352,10 @@ When controlling Home Assistant always call the intent tools."""
         {"role": "system", "content": system},
         {"role": "user", "content": "schalte das Licht in der Küche aus"},
     ], tools=[turn_off, todo])
+    request._request_id = "debug-entity-123"
     with caplog.at_level("DEBUG", logger="hailo_services.runtime"):
         selected = backend.select_tools(request)
-    assert "event=entity_retrieval_trace" in caplog.text
+    assert "event=entity_retrieval_trace request_id=debug-entity-123" in caplog.text
     assert "Küchenlicht" in caplog.text
     assert "event=after_entity_retrieval" in caplog.text
     assert "event=tool_retrieval_trace" in caplog.text
@@ -371,10 +372,11 @@ def test_debug_budget_logs_rendered_and_final_gemma_request(caplog):
         {"role": "system", "content": "system"},
         {"role": "user", "content": "current"},
     ], tools=[TOOL], max_input_tokens=4096)
+    request._request_id = "debug-budget-456"
     with caplog.at_level("DEBUG", logger="hailo_services.runtime"):
         result = backend.chat(request, tools_prepared=True)
     assert result == "ok"
-    assert "event=before_input_budget" in caplog.text
+    assert "event=before_input_budget request_id=debug-budget-456" in caplog.text
     assert "event=input_budget_candidate" in caplog.text
     assert "rendered_messages" in caplog.text
     assert "event=input_budget_selected" in caplog.text
