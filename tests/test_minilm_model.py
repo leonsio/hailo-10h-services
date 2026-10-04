@@ -111,4 +111,6 @@ def test_semantic_tool_retrieval_limits_tool_schemas():
     }} for i in range(15)]
     selected, stats = retrieve_tools([{"role": "user", "content": "lamp"}], tools, encoder=Encoder())
     assert selected[0]["function"]["name"] == "lamp"
-    assert stats["tools_after"] == 12
+    # A confident lexical hit is no longer padded with unrelated semantic
+    # top-N results just to reach the old fixed 12-tool limit.
+    assert stats["tools_after"] == 1
