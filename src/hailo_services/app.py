@@ -415,7 +415,7 @@ def create_app(settings=None, backend=None, litert_backend=None):
                         yield event({"content": chunk})
                     yield event({}, "stop")
             except Exception as exc:
-                _LOG.exception("Streaming inference failed")
+                _LOG.exception("Streaming inference failed request_id=%s", request_id)
                 yield (
                     "data: "
                     + json.dumps({"error": {
