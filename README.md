@@ -136,6 +136,35 @@ both HEFs plus download temporary files. Later starts work offline with cached
 models. Raw Hugging Face weights cannot be substituted for compiled Hailo HEFs.
 Absolute HEF paths can be configured for version-matched files already installed.
 
+The optional Home Assistant/Gemma path also downloads
+`minilm-l6-ruvector.hef` from the public `cstr/all-MiniLM-L6-v2-hailo10h` model
+repo on first start to
+`/usr/local/hailo/resources/models/hailo10h/minilm-l6-ruvector.hef`. An existing
+non-empty file is reused. The downloaded HEF is currently cached as an artifact;
+it is **not yet configured or run on the Hailo device**. The model card's encoder
+expects host-side tokenizer, word/position embeddings and LayerNorm assets in
+addition to the HEF. This first broker iteration therefore uses local lexical
+matching and does not claim MiniLM semantic retrieval.
+
+### Home Assistant tool-context reduction
+
+For Gemma requests, the latest user message is matched against incoming function
+names, descriptions and JSON-schema enum values. The service passes only relevant
+tool definitions and, when there are clear matches, at most 12 relevant values
+from large entity enums. It keeps the original schemas if there is no lexical
+match, and skips filtering for an explicitly selected tool or a continued tool
+round. This is a conservative first pass; add precise entity names/aliases and
+areas to HA descriptions or enum values for the best results.
+
+Every Gemma request defaults to `HAILO_LITERT_MAX_INPUT_TOKENS=4096`, even when
+the client does not send `max_input_tokens`. Old complete chat rounds are removed
+first. The rendered message text and selected tool JSON are tokenized, with a
+256-token margin for LiteRT's template overhead, while requested output tokens
+are reserved from the configured context. If the required system/current-turn
+content still exceeds the budget, the API returns `input_token_limit_exceeded`
+without calling Gemma; it never silently truncates the active request. Adjust the
+limit with `HAILO_LITERT_MAX_INPUT_TOKENS` if you use a different Gemma context.
+
 Both model handles stay open for the service lifetime. The runtime does not
 control firmware paging or guarantee physical allocation of every byte at all
 times; constructor success and `/health` mean both native model instances loaded.

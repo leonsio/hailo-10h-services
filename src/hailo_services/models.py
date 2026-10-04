@@ -3,8 +3,49 @@
 import logging
 import os
 import re
+import tempfile
+import urllib.request
+from pathlib import Path
 
 _LOG = logging.getLogger(__name__)
+
+
+def ensure_minilm_hef(path, url):
+    """Reuse or atomically download the MiniLM HEF into the shared Hailo store."""
+    destination = Path(path).expanduser()
+    if destination.is_file() and destination.stat().st_size:
+        _LOG.info("Reusing MiniLM HEF at %s", destination)
+        return destination
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".download", dir=destination.parent
+    )
+    temporary_path = Path(temporary)
+    try:
+        request = urllib.request.Request(url, headers={"User-Agent": "hailo-10h-services/0.1"})
+        with os.fdopen(fd, "wb") as output:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                length = response.headers.get("Content-Length")
+                expected = int(length) if length and length.isdecimal() else None
+                size = 0
+                while chunk := response.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > 100 * 1024 * 1024:
+                        raise RuntimeError("MiniLM HEF download exceeds the 100 MiB safety limit")
+                    output.write(chunk)
+                output.flush()
+                os.fsync(output.fileno())
+        if size < 1024 * 1024 or (expected is not None and size != expected):
+            raise RuntimeError(
+                f"Incomplete MiniLM HEF download ({size} bytes; expected {expected or 'at least 1 MiB'})"
+            )
+        os.replace(temporary_path, destination)
+        _LOG.info("Downloaded MiniLM HEF to %s (%d bytes)", destination, size)
+        return destination
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def release_tuple(version):

@@ -13,6 +13,7 @@ from hailo_services.config import LLM_MODEL
 from hailo_services.input_budget import InputBudgetError, history_candidates
 from hailo_services.runtime import LiteRTLMBackend
 from hailo_services.schemas import ChatRequest
+from hailo_services.tool_retrieval import retrieve_tools
 
 TOOL = {"type": "function", "function": {
     "name": "intent__HassTurnOn", "description": "turn a light on",
@@ -126,7 +127,7 @@ def test_context_reserves_output_space_when_cap_exceeds_available_input():
     assert trimmed.messages == [request.messages[0], *request.messages[-1:]]
 
 
-@pytest.mark.parametrize(("prompt_tokens", "accepted"), [(4095, True), (4096, False)])
+@pytest.mark.parametrize(("prompt_tokens", "accepted"), [(3839, True), (3840, False)])
 def test_exact_budget_boundary_and_requested_value_are_applied(prompt_tokens, accepted):
     backend = BudgetBackend()
     backend.start()
@@ -138,7 +139,7 @@ def test_exact_budget_boundary_and_requested_value_are_applied(prompt_tokens, ac
     else:
         with pytest.raises(InputBudgetError) as error:
             backend._limit_input(request, {})
-        assert error.value.tokens == 4097
+        assert error.value.tokens == 4096
     probe = backend.created[-1]
     assert probe["max_output_tokens"] == request.max_tokens
 
@@ -194,3 +195,56 @@ def test_engine_tokenizer_and_renderer_are_required_only_when_budget_is_requeste
         backend._limit_input(request, {})
     assert not backend.created
     assert backend.chat(req([{"role": "user", "content": "hello"}])) == "ok"
+
+
+def test_german_user_request_reduces_irrelevant_ha_tools_and_entity_enums():
+    tools = [
+        {"type": "function", "function": {
+            "name": "intent__HassTurnOn", "description": "Turn on a living room light",
+            "parameters": {"type": "object", "properties": {"entity_id": {
+                "type": "string", "enum": [
+                    "light.wohnzimmer_stehlampe", "light.wohnzimmer_decke",
+                    "light.schlafzimmer_stehlampe", "light.kueche_decke",
+                ]
+            }}}
+        }},
+        {"type": "function", "function": {
+            "name": "intent__HassClimateSetTemperature", "description": "Set climate temperature",
+            "parameters": {"type": "object", "properties": {"temperature": {"type": "number"}}}
+        }},
+        {"type": "function", "function": {
+            "name": "intent__HassCoverClose", "description": "Close a window cover",
+            "parameters": {"type": "object", "properties": {"entity_id": {"type": "string"}}}
+        }},
+    ]
+    selected, stats = retrieve_tools(
+        [{"role": "user", "content": "Mach bitte die Stehlampe im Wohnzimmer an."}], tools
+    )
+    assert [item["function"]["name"] for item in selected] == ["intent__HassTurnOn"]
+    assert selected[0]["function"]["parameters"]["properties"]["entity_id"]["enum"] == [
+        "light.wohnzimmer_stehlampe",
+    ]
+    assert stats == {"tools_before": 3, "tools_after": 1, "enum_values_removed": 3}
+    # Input schemas are copied; requests can be safely retried with the original.
+    assert len(tools[0]["function"]["parameters"]["properties"]["entity_id"]["enum"]) == 4
+
+
+def test_tool_retrieval_preserves_tools_without_a_confident_match():
+    tools = [TOOL, {"type": "function", "function": {"name": "other", "parameters": {}}}]
+    selected, stats = retrieve_tools([{"role": "user", "content": "Guten Morgen"}], tools)
+    assert selected == tools
+    assert stats["tools_after"] == 2
+
+
+def test_default_gemma_input_budget_is_4096_even_if_client_omits_custom_field():
+    backend = BudgetBackend()
+    backend.start()
+    request = req([{"role": "user", "content": "active request"}])
+    backend.engine.tokenize = lambda text: range(4096)
+    assert request.max_input_tokens is None
+    with pytest.raises(InputBudgetError) as error:
+        backend.chat(request)
+    assert error.value.limit == 4096
+    assert error.value.tokens == 4352
+    assert backend.closed == len(backend.created)
+    assert backend.max_input_tokens == 4096

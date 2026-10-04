@@ -1,15 +1,16 @@
 """One owner thread. No per-request VDevice/model creation or idle unloading."""
 
 import asyncio
+import json
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .config import LLM_MODEL, STT_MODEL, VLM_MODEL, Settings
+from .config import LLM_MODEL, MINILM_HEF_URL, STT_MODEL, VLM_MODEL, Settings
 from .input_budget import InputBudgetError, history_candidates
 from .media import image_frame
-from .models import prepare_model_version
+from .models import ensure_minilm_hef, prepare_model_version
 from .tool_calling import (
     has_tool_context,
     native_messages,
@@ -17,8 +18,10 @@ from .tool_calling import (
     response_message,
     selected_tools,
 )
+from .tool_retrieval import retrieve_tools
 
 _LOG = logging.getLogger(__name__)
+_INPUT_TOKEN_SAFETY_MARGIN = 256
 
 
 class BusyError(RuntimeError):
@@ -34,6 +37,7 @@ class HailoBackend:
         self.settings = settings
         self.device = self.vlm = self.whisper = None
         self.paths = {}
+        self.artifact_paths = {}
 
     def start(self):
         from hailo_apps.python.core.common.core import resolve_hef_path
@@ -50,6 +54,11 @@ class HailoBackend:
             if path is None or not path.is_file() or path.stat().st_size == 0:
                 raise RuntimeError(f"Could not resolve/download {model}")
             self.paths[key] = str(path)
+        # The HEF is cached beside the other Hailo-10H models. MiniLM host-side
+        # tokenizer/embedding assets are not bundled with this encoder HEF.
+        self.artifact_paths["minilm_hef"] = str(ensure_minilm_hef(
+            self.settings.minilm_hef_path, MINILM_HEF_URL
+        ))
         params = VDevice.create_params()
         params.group_id = "SHARED"  # Mandatory, intentionally not configurable.
         try:
@@ -133,9 +142,10 @@ class HailoBackend:
 class LiteRTLMBackend:
     """Resident LiteRT-LM Python Engine for text-only Gemma requests."""
 
-    def __init__(self, model_path, max_num_tokens=16384):
+    def __init__(self, model_path, max_num_tokens=16384, max_input_tokens=4096):
         self.model_path = str(Path(model_path).expanduser())
         self.max_num_tokens = max_num_tokens
+        self.max_input_tokens = max_input_tokens
         self.engine_context = None
         self.engine = None
         self.litert_lm = None
@@ -189,9 +199,9 @@ class LiteRTLMBackend:
         for candidate in history_candidates(request.messages):
             trimmed = request.model_copy(update={"messages": candidate})
             messages = self._messages(trimmed)
-            # A fresh native conversation renders exactly the template/tools
-            # used by inference, without running prefill or decoding. Release it
-            # before creating the next probe or the inference conversation.
+            # A fresh native conversation supplies the same tools and prefix
+            # messages without running prefill or decoding. Release it before
+            # creating the next probe or the inference conversation.
             with self.engine.create_conversation(
                 messages=messages[:-1], max_output_tokens=request.max_tokens, **tool_options,
             ) as probe:
@@ -201,9 +211,16 @@ class LiteRTLMBackend:
                         "max_input_tokens requires LiteRT-LM Conversation.render_message_to_string; "
                         "upgrade litert-lm"
                     )
-                # Reserve one token for the runtime's BOS/start token even when
-                # the template already contains it. Never estimate from chars.
-                tokens = len(self.engine.tokenize(render(self._prompt(messages)))) + 1
+                # render_message_to_string renders one message, not the whole
+                # conversation preface. Count every message and the tool JSON,
+                # then reserve headroom for LiteRT's system/tool template tokens.
+                rendered = "\n".join(render(message) for message in messages)
+                rendered_tools = json.dumps(
+                    selected_tools(request), ensure_ascii=False, separators=(",", ":")
+                ) if has_tool_context(request) else ""
+                tokens = len(self.engine.tokenize(rendered + "\n" + rendered_tools))
+                tokens += _INPUT_TOKEN_SAFETY_MARGIN + 8 * max(0, len(messages) - 1)
+                tokens += 16 * len(selected_tools(request))
             if tokens <= limit:
                 _LOG.info(
                     "input_budget model=%s input_tokens=%d limit=%d max_input_tokens=%d "
@@ -243,6 +260,27 @@ class LiteRTLMBackend:
     def _chat(self, request, emit=None, cancelled=None):
         if self.engine is None:
             raise RuntimeError("LiteRT-LM is not ready")
+        if request.max_input_tokens is None:
+            request = request.model_copy(update={"max_input_tokens": self.max_input_tokens})
+        if request.tools and not any(
+            message.get("role") == "tool" or message.get("tool_calls")
+            for message in request.messages
+        ):
+            source_tools = request.tools
+            if isinstance(request.tool_choice, dict):
+                forced_name = request.tool_choice["function"]["name"]
+                source_tools = [
+                    tool for tool in request.tools
+                    if tool["function"]["name"] == forced_name
+                ]
+            compact_tools, stats = retrieve_tools(request.messages, source_tools)
+            if stats["tools_after"] < stats["tools_before"] or stats["enum_values_removed"]:
+                request = request.model_copy(update={"tools": compact_tools})
+                _LOG.info(
+                    "tool_retrieval model=%s tools=%d->%d enum_values_removed=%d",
+                    request.model, stats["tools_before"], stats["tools_after"],
+                    stats["enum_values_removed"],
+                )
         tool_options = {}
         if has_tool_context(request):
             if not hasattr(self.litert_lm, "Tool"):
@@ -301,7 +339,8 @@ class Runtime:
         self.litert_backend = litert_backend
         if self.litert_backend is None and settings.litert_model_path:
             self.litert_backend = LiteRTLMBackend(
-                settings.litert_model_path, settings.litert_max_num_tokens
+                settings.litert_model_path, settings.litert_max_num_tokens,
+                settings.litert_max_input_tokens,
             )
         self.litert_executor = (
             ThreadPoolExecutor(max_workers=1, thread_name_prefix="litert-lm-owner")
@@ -419,12 +458,14 @@ class Runtime:
                 "model": LLM_MODEL if self.litert_backend else None,
                 "model_path": getattr(self.litert_backend, "model_path", None),
                 "max_num_tokens": getattr(self.litert_backend, "max_num_tokens", None),
+                "max_input_tokens": getattr(self.litert_backend, "max_input_tokens", None),
                 "pending": self.litert_pending,
                 "error": self.litert_error,
             },
             "models": ([VLM_MODEL, STT_MODEL] if self.ready else [])
             + ([LLM_MODEL] if self.litert_ready else []),
             "model_paths": self.backend.paths,
+            "artifact_paths": getattr(self.backend, "artifact_paths", {}),
         }
 
     async def close(self):
