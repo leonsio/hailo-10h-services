@@ -355,6 +355,8 @@ def create_app(settings=None, backend=None, litert_backend=None):
     @app.post("/v1/chat/completions")
     async def chat(request: ChatRequest, http_request: Request):
         identifier, created = "chatcmpl-" + uuid.uuid4().hex, int(time.time())
+        request_id = http_request.scope.get("state", {}).get("request_id", "-")
+        request._request_id = request_id
         image_count = sum(
             part.get("type") == "image_url"
             for message in request.messages
@@ -362,9 +364,16 @@ def create_app(settings=None, backend=None, litert_backend=None):
         )
         _debug(settings,
                "protocol=http operation=chat_completion request_id=%s model=%s messages=%d images=%d max_tokens=%d max_input_tokens=%s stream=%s",
-               http_request.scope.get("state", {}).get("request_id", "-"),
+               request_id,
                request.model, len(request.messages), image_count,
                request.max_tokens, request.max_input_tokens, request.stream)
+        if settings.debug_log:
+            _LOG.debug(
+                "protocol=http operation=chat_completion event=validated_request "
+                "request_id=%s json=%s",
+                request_id,
+                request.model_dump_json(exclude_none=False),
+            )
         if not request.stream:
             return completion(await runtime.chat(request), identifier, created, request.model)
 
