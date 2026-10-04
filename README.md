@@ -228,7 +228,10 @@ changes; move stale/incompatible files out of the store before re-downloading.
 | MQTT (optional) | `hailo10h/request/chat`, `…/transcribe` | JSON requests | Base64 audio |
 | Wyoming TCP | `HOST:10300` | — | Home Assistant Assist STT |
 
-HTTP, MCP and WebSocket require `Authorization: Bearer API_KEY` when configured.
+HTTP and WebSocket require `Authorization: Bearer API_KEY` when configured.
+MCP skips API-key authentication for loopback and private LAN peers by default
+(`HAILO_MCP_NO_AUTH_NETWORKS`). Other peers still require the API key.
+Set this variable to an empty value to require the key for all MCP peers.
 Wyoming has no token authentication: keep port 10300 on a trusted network and
 limit access to HA. MQTT uses broker credentials, optional TLS and broker topic
 ACLs; HTTP keys do not apply to it. HTTP defaults to LAN binding; use a reverse
@@ -246,6 +249,20 @@ supplies end-of-speech/VAD; this service buffers audio until `audio-stop`.
 `/v1/chat/completions`, supplying a snapshot as a base64 data URL. MCP-capable
 clients can call `analyze_image`. Add the actual service IP/name plus `:*` to
 `HAILO_MCP_HOSTS` for MCP DNS rebinding protection, then restart the service.
+
+**Local MCP without credentials:** configure the service environment:
+
+```ini
+HAILO_MCP_HOSTS=localhost:*,127.0.0.1:*,192.168.1.9:*
+HAILO_MCP_NO_AUTH_NETWORKS=127.0.0.0/8,::1/128,192.168.2.4/32
+```
+
+Restart `hailo-10h-services`, then add the MCP integration with
+`http://192.168.1.9:8090/mcp/`. No API key or OAuth credentials are needed.
+The first setting permits the destination Host header; the second permits the
+Home Assistant source IP. HTTP/WebSocket authentication and MCP body/Host limits
+remain active. The allowlist uses the socket peer; the bundled listener disables proxy-header
+trust. Restrict access when using a local proxy, whose peer IP is what the service sees.
 
 This is an inference gateway, not an HA conversation agent that executes tools.
 The built-in OpenAI Conversation integration is not automatically redirected to

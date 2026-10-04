@@ -28,6 +28,7 @@ class Settings:
     mqtt_password: str = ""
     mqtt_prefix: str = "hailo10h"
     mqtt_tls: bool = False
+    mcp_no_auth_networks: str = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
     mcp_hosts: str = "localhost:*,127.0.0.1:*"
 
     @classmethod
