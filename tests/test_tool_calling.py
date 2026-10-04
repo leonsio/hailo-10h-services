@@ -167,6 +167,82 @@ def test_multi_name_model_argument_requires_parallel_calls():
             "",
         )
 
+AREA_TOOL = [{"type": "function", "function": {
+    "name": "intent__HassTurnOff",
+    "description": "Turns off a device",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "area": {"type": "string"},
+            "domain": {"type": "array", "items": {"type": "string"}},
+        },
+        "additionalProperties": False,
+    },
+}}]
+
+
+def area_request(user_text="schalte das Licht in der Küche aus", entities=None):
+    if entities is None:
+        entities = [
+            ("Licht - Rechts", "light", "Küche"),
+            ("Licht - Links", "light", "Küche"),
+            ("Oberlicht", "light", "Küche"),
+        ]
+    static = "\\n".join(
+        f"- names: {name}\\n  domain: {domain}\\n  areas: {area}"
+        for name, domain, area in entities
+    )
+    return ChatRequest(**{
+        "model": LLM_MODEL,
+        "messages": [
+            {"role": "system", "content": "Static Context: Relevant entities for the current user request:\\n" + static},
+            {"role": "user", "content": user_text},
+        ],
+        "tools": AREA_TOOL,
+        "parallel_tool_calls": True,
+    })
+
+
+def test_generic_area_command_rewrites_single_name_to_area_domain():
+    request = area_request()
+    response = model_response(
+        name="intent__HassTurnOff",
+        arguments={"name": "Licht - Rechts", "domain": ["light"]},
+    )
+    result = response_message(response, request, "")
+    assert len(result["tool_calls"]) == 1
+    assert json.loads(result["tool_calls"][0]["function"]["arguments"]) == {
+        "area": "Küche",
+        "domain": ["light"],
+    }
+
+
+def test_explicit_device_name_is_not_rewritten_to_area():
+    request = area_request("schalte Licht - Rechts in der Küche aus")
+    response = model_response(
+        name="intent__HassTurnOff",
+        arguments={"name": "Licht - Rechts", "domain": ["light"]},
+    )
+    result = response_message(response, request, "")
+    assert json.loads(result["tool_calls"][0]["function"]["arguments"]) == {
+        "name": "Licht - Rechts",
+        "domain": ["light"],
+    }
+
+
+def test_single_relevant_entity_is_not_rewritten_to_area():
+    request = area_request(entities=[("Oberlicht", "light", "Küche")])
+    response = model_response(
+        name="intent__HassTurnOff",
+        arguments={"name": "Oberlicht", "domain": ["light"]},
+    )
+    result = response_message(response, request, "")
+    assert json.loads(result["tool_calls"][0]["function"]["arguments"]) == {
+        "name": "Oberlicht",
+        "domain": ["light"],
+    }
+
 def test_none_and_required_tool_choices():
     request = ChatRequest(**payload(tool_choice="none"))
     with pytest.raises(ValueError, match="unavailable"):
