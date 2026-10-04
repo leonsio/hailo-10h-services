@@ -151,7 +151,7 @@ def _static_context_parts(content: str):
     catalogue = content[entries_start:suffix_start].strip()
     entries = [
         block.strip()
-        for block in re.split(r"(?m)(?=^- names:\\s*)", catalogue)
+        for block in re.split(r"(?m)(?=^- names:\s*)", catalogue)
         if block.strip().startswith("- names:")
     ]
     if not entries:
