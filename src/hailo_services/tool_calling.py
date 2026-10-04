@@ -143,6 +143,7 @@ def _normalized_text(value):
     text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
     return re.sub(r"\s+", " ", text).strip()
 
+
 def _latest_user_text(messages):
     for message in reversed(messages):
         if message.get("role") != "user":
