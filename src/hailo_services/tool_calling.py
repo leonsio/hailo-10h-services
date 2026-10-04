@@ -144,6 +144,8 @@ def _normalized_text(value):
     text = "".join(char for char in text if not unicodedata.combining(char))
     text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
     return re.sub(r"\s+", " ", text).strip()
+
+
 def _latest_user_text(messages):
     for message in reversed(messages):
         if message.get("role") != "user":
@@ -248,6 +250,7 @@ def _expand_name_list_arguments(arguments, schema, parallel_tool_calls):
             "Model returned multiple device names while parallel_tool_calls is disabled"
         )
     return [{**arguments, "name": value} for value in names]
+
 
 def response_message(response, request, text):
     """Validate generated function names and arguments before returning actions."""
