@@ -25,8 +25,8 @@ from .tool_retrieval import (
     _score,
     _static_context_parts,
     _text,
-    _tool_score,
     _tokens,
+    _tool_score,
     latest_user_text,
 )
 
