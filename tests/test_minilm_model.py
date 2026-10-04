@@ -88,7 +88,10 @@ def test_minilm_host_preparation_runs_encoder_and_normalizes_masked_output():
     model.configured = SimpleNamespace(
         create_bindings=lambda **kwargs: binding,
         wait_for_async_ready=lambda **kwargs: None,
-        run_async=lambda items, callback: SimpleNamespace(wait=lambda timeout: None),
+        run_async=lambda items, callback: (
+            callback(completion_info=SimpleNamespace(exception=None))
+            or SimpleNamespace(wait=lambda timeout: None)
+        ),
     )
     vector = model.embed("hello")
     assert buffers[0].shape == (1, 128, 384)
