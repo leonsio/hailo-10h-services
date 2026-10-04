@@ -25,11 +25,12 @@ _LOG = logging.getLogger(__name__)
 _INPUT_TOKEN_SAFETY_MARGIN = 256
 
 
-def _debug_json(enabled: bool, event: str, payload):
+def _debug_json(enabled: bool, event: str, payload, *, request_id: str = "-"):
     if enabled:
         _LOG.debug(
-            "event=%s json=%s",
+            "event=%s request_id=%s json=%s",
             event,
+            request_id,
             json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str),
         )
 
@@ -139,6 +140,7 @@ class HailoBackend:
         return "".join(segment.text for segment in segments).strip()
 
     def select_tools(self, request):
+        request_id = getattr(request, "_request_id", "-")
         entity_trace = {} if self.settings.debug_log else None
         _debug_json(
             self.settings.debug_log,
@@ -151,6 +153,7 @@ class HailoBackend:
                     for tool in (request.tools or [])
                 ],
             },
+            request_id=request_id,
         )
         compact_messages, context_stats = compact_static_context(
             request.messages,
@@ -166,7 +169,12 @@ class HailoBackend:
                 context_stats["entities_after"],
                 context_stats["characters_removed"],
             )
-        _debug_json(self.settings.debug_log, "entity_retrieval_trace", entity_trace or {})
+        _debug_json(
+            self.settings.debug_log,
+            "entity_retrieval_trace",
+            entity_trace or {},
+            request_id=request_id,
+        )
         _debug_json(
             self.settings.debug_log,
             "after_entity_retrieval",
@@ -174,6 +182,7 @@ class HailoBackend:
                 "stats": context_stats,
                 "messages": compact_messages,
             },
+            request_id=request_id,
         )
         if not request.tools:
             return request
@@ -211,7 +220,12 @@ class HailoBackend:
             "MiniLM tool retrieval: %d -> %d tools; %d enum values removed",
             stats["tools_before"], stats["tools_after"], stats["enum_values_removed"],
         )
-        _debug_json(self.settings.debug_log, "tool_retrieval_trace", tool_trace or {})
+        _debug_json(
+            self.settings.debug_log,
+            "tool_retrieval_trace",
+            tool_trace or {},
+            request_id=request_id,
+        )
         _debug_json(
             self.settings.debug_log,
             "after_tool_retrieval",
@@ -224,6 +238,7 @@ class HailoBackend:
                 "selected_tools": selected,
                 "messages": request.messages,
             },
+            request_id=request_id,
         )
         return request.model_copy(update={"tools": selected})
 
@@ -355,6 +370,7 @@ class LiteRTLMBackend:
                     "rendered_messages": rendered,
                     "rendered_tools": rendered_tools,
                 },
+                request_id=getattr(request, "_request_id", "-"),
             )
             if tokens <= limit:
                 _LOG.info(
@@ -372,6 +388,7 @@ class LiteRTLMBackend:
                         "removed_messages": len(request.messages) - len(candidate),
                         "request": trimmed.model_dump(mode="json", exclude_none=False),
                     },
+                    request_id=getattr(request, "_request_id", "-"),
                 )
                 return trimmed
         _debug_json(
@@ -382,6 +399,7 @@ class LiteRTLMBackend:
                 "input_limit": limit,
                 "request": request.model_dump(mode="json", exclude_none=False),
             },
+            request_id=getattr(request, "_request_id", "-"),
         )
         raise InputBudgetError(
             tokens, limit, request.max_input_tokens, self.max_num_tokens, request.max_tokens
@@ -447,6 +465,7 @@ class LiteRTLMBackend:
             self.debug_log,
             "before_input_budget",
             request.model_dump(mode="json", exclude_none=False),
+            request_id=getattr(request, "_request_id", "-"),
         )
         request = self._limit_input(request, tool_options)
         messages = self._messages(request)
@@ -461,6 +480,7 @@ class LiteRTLMBackend:
                 "max_input_tokens": request.max_input_tokens,
                 "max_output_tokens": request.max_tokens,
             },
+            request_id=getattr(request, "_request_id", "-"),
         )
         with self.engine.create_conversation(
             messages=messages[:-1],
@@ -487,6 +507,7 @@ class LiteRTLMBackend:
                         ),
                         "parsed_response": result,
                     },
+                    request_id=getattr(request, "_request_id", "-"),
                 )
                 if emit:
                     emit(result)
@@ -506,6 +527,7 @@ class LiteRTLMBackend:
                 self.debug_log,
                 "gemma_stream_response",
                 {"prompt": prompt, "response": result, "chunks": output},
+                request_id=getattr(request, "_request_id", "-"),
             )
             return result
 
