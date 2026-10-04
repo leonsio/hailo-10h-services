@@ -129,6 +129,44 @@ def test_invalid_generated_actions_are_rejected(name, args):
         assert "tool_calls" not in response.json()
 
 
+def test_multi_name_model_argument_expands_to_parallel_calls():
+    request = ChatRequest(**payload())
+    result = response_message(
+        model_response(arguments={"name": ["Backofen Licht", "Oberlicht"]}),
+        request,
+        "",
+    )
+    calls = result["tool_calls"]
+    assert len(calls) == 2
+    assert len({call["id"] for call in calls}) == 2
+    assert [json.loads(call["function"]["arguments"]) for call in calls] == [
+        {"name": "Backofen Licht"},
+        {"name": "Oberlicht"},
+    ]
+
+
+def test_single_name_list_is_normalized_even_without_parallel_calls():
+    request = ChatRequest(**payload(parallel_tool_calls=False))
+    result = response_message(
+        model_response(arguments={"name": ["Oberlicht"]}),
+        request,
+        "",
+    )
+    assert len(result["tool_calls"]) == 1
+    assert json.loads(result["tool_calls"][0]["function"]["arguments"]) == {
+        "name": "Oberlicht"
+    }
+
+
+def test_multi_name_model_argument_requires_parallel_calls():
+    request = ChatRequest(**payload(parallel_tool_calls=False))
+    with pytest.raises(ValueError, match="multiple device names"):
+        response_message(
+            model_response(arguments={"name": ["Backofen Licht", "Oberlicht"]}),
+            request,
+            "",
+        )
+
 def test_none_and_required_tool_choices():
     request = ChatRequest(**payload(tool_choice="none"))
     with pytest.raises(ValueError, match="unavailable"):
