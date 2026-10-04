@@ -488,6 +488,8 @@ class Runtime:
         if litert and not self.litert_ready:
             detail = self.litert_error or "LiteRT-LM model is not configured"
             raise BusyError(f"{LLM_MODEL} is unavailable: {detail}")
+        if litert and isinstance(self.backend, HailoBackend):
+            request = await self.call(self.backend.select_tools, request)
         future = self.submit(
             self.litert_backend.chat if litert else self.backend.chat,
             request,
