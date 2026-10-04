@@ -26,6 +26,9 @@ _SYNONYMS = {
     "anmachen": {"turn_on", "on", "light", "switch"},
     "ausschalten": {"turn_off", "off", "light", "switch"},
     "ausmachen": {"turn_off", "off", "light", "switch"},
+    "licht": {"light"},
+    "lampe": {"light"},
+    "lampen": {"light"},
     "öffnen": {"open", "cover", "garage"},
     "oeffnen": {"open", "cover", "garage"},
     "hoch": {"open", "cover", "up"},
@@ -200,7 +203,7 @@ def compact_static_context(
             lexical_hits.sort(key=lambda item: (-item[0], item[1]))
             best = lexical_hits[0][0]
             candidates = [
-                item for item in lexical_hits if item[0] >= max(1, best - 2)
+                item for item in lexical_hits if item[0] >= max(1, best - 4)
             ][:semantic_candidates]
         else:
             candidates = lexical
