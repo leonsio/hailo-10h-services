@@ -439,7 +439,7 @@ conversation agent options and expose the devices you want Assist to control.
 
 ### Home Assistant device control through function tools
 
-Chat requests accept optional `top_p` in the range 0 through 1, including the
+Chat requests accept optional `max_input_tokens` (1..131072) and `top_p` (0..1), including the
 `top_p: 1.0` sent by Home Assistant's llama.cpp integration. The value is passed
 to LiteRT's `SamplerConfig` for Gemma and Hailo's generation parameters for Qwen.
 If omitted or null, the backend's existing sampling default is preserved.
@@ -452,9 +452,31 @@ default. Configure `HAILO_LITERT_MAX_NUM_TOKENS` in
 history, tool schemas and generated output; `max_tokens` in the chat request
 only limits the generated response and does not enlarge the context.
 
+For Gemma only, `max_input_tokens` is a per-request limit for prompt tokens. It
+is measured with the loaded LiteRT-LM tokenizer after rendering the actual
+Gemma template and Home Assistant tools. The requested `max_tokens` and one
+start-token slot are reserved inside `HAILO_LITERT_MAX_NUM_TOKENS`, so the
+effective input cap is the lower of `max_input_tokens` and the remaining
+context. When needed, the service removes complete older user turns (including
+their assistant/tool-call/tool-result messages), while keeping system messages
+and the complete current user/tool turn. Tool calls remain enabled. If the
+required system prompt, tools and current turn alone exceed the cap, the API
+returns `input_token_limit_exceeded` with the measured size instead of damaging
+the prompt. Qwen image requests do not accept this parameter because the Gemma
+tokenizer cannot count Qwen's image tokens.
+
+With the Home Assistant **Local OpenAI LLM** conversation integration, choose
+server type **Generic OpenAI-Compatible**. In the Conversation Agent options,
+open **Request Body Parameters** and add `max_input_tokens` with value `4096`.
+The integration sends it as a top-level request parameter. It also has **Max
+Message History**; that caps the number of messages before the service applies
+its exact token budget. Don't choose server type `llama.cpp` for this service,
+because that mode adds llama.cpp-specific request parameters.
+
 The startup log and `/health` → `litert_lm.max_num_tokens` show the configured
 context. More context increases RAM requirements, and a particular model export
-may impose its own limit. No messages or tools are silently removed. Native
+may impose its own limit. No system prompt, tools or current user/tool turn is
+silently removed. Native
 inference failures now return a JSON error with HTTP 502; consult the preceding
 native log for the specific cause rather than assuming every failure is a
 context overflow. Start with 16384 for the reported Home Assistant request;

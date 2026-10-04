@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .config import LLM_MODEL, STT_MODEL, VLM_MODEL, Settings
+from .input_budget import InputBudgetError, history_candidates
 from .media import image_frame
 from .models import prepare_model_version
 from .tool_calling import (
@@ -154,7 +155,66 @@ class LiteRTLMBackend:
 
     @staticmethod
     def _messages(request):
-        return native_messages(request.messages)
+        messages = native_messages(request.messages)
+        if has_tool_context(request):
+            instructions = []
+            if request.tool_choice == "required" or isinstance(request.tool_choice, dict):
+                instructions.append("Return a function call using one of the available tools.")
+            if not request.parallel_tool_calls:
+                instructions.append("Return at most one function call in this response.")
+            if instructions:
+                instruction = "\n".join(instructions)
+                if messages[0]["role"] == "system":
+                    messages[0]["content"] += "\n" + instruction
+                else:
+                    messages.insert(0, {"role": "system", "content": instruction})
+        return messages
+
+    @staticmethod
+    def _prompt(messages):
+        return messages[-1] if messages[-1]["role"] == "tool" else messages[-1]["content"]
+
+    def _limit_input(self, request, tool_options):
+        if request.max_input_tokens is None:
+            return request
+        if not callable(getattr(self.engine, "tokenize", None)):
+            raise ValueError("max_input_tokens requires LiteRT-LM Engine.tokenize; upgrade litert-lm")
+        # Native prefill rejects input >= context. Also reserve the requested
+        # output budget, rather than letting generation run out of KV space.
+        limit = min(request.max_input_tokens, self.max_num_tokens - request.max_tokens - 1)
+        if limit < 1:
+            raise ValueError("The configured LiteRT context leaves no room for input and output")
+        # Validate all original call/result dependencies before dropping history.
+        self._messages(request)
+        for candidate in history_candidates(request.messages):
+            trimmed = request.model_copy(update={"messages": candidate})
+            messages = self._messages(trimmed)
+            # A fresh native conversation renders exactly the template/tools
+            # used by inference, without running prefill or decoding. Release it
+            # before creating the next probe or the inference conversation.
+            with self.engine.create_conversation(
+                messages=messages[:-1], max_output_tokens=request.max_tokens, **tool_options,
+            ) as probe:
+                render = getattr(probe, "render_message_to_string", None)
+                if not callable(render):
+                    raise ValueError(
+                        "max_input_tokens requires LiteRT-LM Conversation.render_message_to_string; "
+                        "upgrade litert-lm"
+                    )
+                # Reserve one token for the runtime's BOS/start token even when
+                # the template already contains it. Never estimate from chars.
+                tokens = len(self.engine.tokenize(render(self._prompt(messages)))) + 1
+            if tokens <= limit:
+                _LOG.info(
+                    "input_budget model=%s input_tokens=%d limit=%d max_input_tokens=%d "
+                    "removed_messages=%d output_reserved=%d",
+                    request.model, tokens, limit, request.max_input_tokens,
+                    len(request.messages) - len(candidate), request.max_tokens,
+                )
+                return trimmed
+        raise InputBudgetError(
+            tokens, limit, request.max_input_tokens, self.max_num_tokens, request.max_tokens
+        )
 
     @staticmethod
     def _chunk_text(chunk):
@@ -183,7 +243,6 @@ class LiteRTLMBackend:
     def _chat(self, request, emit=None, cancelled=None):
         if self.engine is None:
             raise RuntimeError("LiteRT-LM is not ready")
-        messages = self._messages(request)
         tool_options = {}
         if has_tool_context(request):
             if not hasattr(self.litert_lm, "Tool"):
@@ -192,17 +251,8 @@ class LiteRTLMBackend:
                 "tools": native_tools(self.litert_lm, selected_tools(request)),
                 "automatic_tool_calling": False,
             }
-            instructions = []
-            if request.tool_choice == "required" or isinstance(request.tool_choice, dict):
-                instructions.append("Return a function call using one of the available tools.")
-            if not request.parallel_tool_calls:
-                instructions.append("Return at most one function call in this response.")
-            if instructions:
-                instruction = "\n".join(instructions)
-                if messages[0]["role"] == "system":
-                    messages[0]["content"] += "\n" + instruction
-                else:
-                    messages.insert(0, {"role": "system", "content": instruction})
+        request = self._limit_input(request, tool_options)
+        messages = self._messages(request)
         with self.engine.create_conversation(
             messages=messages[:-1],
             sampler_config=self.litert_lm.SamplerConfig(
@@ -212,7 +262,7 @@ class LiteRTLMBackend:
             max_output_tokens=request.max_tokens,
             **tool_options,
         ) as conversation:
-            prompt = messages[-1] if messages[-1]["role"] == "tool" else messages[-1]["content"]
+            prompt = self._prompt(messages)
             if emit is None or has_tool_context(request):
                 response = conversation.send_message(
                     prompt, max_output_tokens=request.max_tokens
@@ -302,6 +352,8 @@ class Runtime:
         return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 
     async def chat(self, request):
+        if request.max_input_tokens is not None and request.model != LLM_MODEL:
+            raise ValueError(f"max_input_tokens requires model {LLM_MODEL}; Qwen image tokens cannot be counted here")
         if has_tool_context(request) and request.model != LLM_MODEL:
             raise ValueError(f"Tool calling requires model {LLM_MODEL}")
         if request.model == LLM_MODEL:
@@ -320,6 +372,8 @@ class Runtime:
         return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 
     async def stream(self, request):
+        if request.max_input_tokens is not None and request.model != LLM_MODEL:
+            raise ValueError(f"max_input_tokens requires model {LLM_MODEL}; Qwen image tokens cannot be counted here")
         if has_tool_context(request):
             yield await self.chat(request)
             return

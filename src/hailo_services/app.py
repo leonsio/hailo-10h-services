@@ -24,6 +24,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .config import LLM_MODEL, STT_MODEL, VLM_MODEL, Settings
+from .input_budget import InputBudgetError
 from .media import audio_file, audio_metadata, decode_base64
 from .protocols import MQTTBridge, WyomingServer, dispatch
 from .runtime import BusyError, LiteRTInferenceError, Runtime
@@ -282,6 +283,14 @@ def create_app(settings=None, backend=None, litert_backend=None):
     async def value_handler(request, exc):
         return JSONResponse({"error": str(exc)}, status_code=400)
 
+    @app.exception_handler(InputBudgetError)
+    async def input_budget_handler(request, exc):
+        return JSONResponse({"error": {
+            "message": str(exc), "type": "invalid_request_error",
+            "code": "input_token_limit_exceeded", "input_tokens": exc.tokens,
+            "input_limit": exc.limit,
+        }}, status_code=400)
+
     @app.exception_handler(LiteRTInferenceError)
     async def litert_error_handler(request, exc):
         return JSONResponse({"error": {"message": str(exc), "type": "inference_error"}}, status_code=502)
@@ -319,10 +328,10 @@ def create_app(settings=None, backend=None, litert_backend=None):
             for part in (message["content"] if isinstance(message.get("content"), list) else [])
         )
         _debug(settings,
-               "protocol=http operation=chat_completion request_id=%s model=%s messages=%d images=%d max_tokens=%d stream=%s",
+               "protocol=http operation=chat_completion request_id=%s model=%s messages=%d images=%d max_tokens=%d max_input_tokens=%s stream=%s",
                http_request.scope.get("state", {}).get("request_id", "-"),
                request.model, len(request.messages), image_count,
-               request.max_tokens, request.stream)
+               request.max_tokens, request.max_input_tokens, request.stream)
         if not request.stream:
             return completion(await runtime.chat(request), identifier, created, request.model)
 
@@ -367,7 +376,12 @@ def create_app(settings=None, backend=None, litert_backend=None):
                 _LOG.exception("Streaming inference failed")
                 yield (
                     "data: "
-                    + json.dumps({"error": {"message": str(exc), "type": "inference_error"}})
+                    + json.dumps({"error": {
+                        "message": str(exc),
+                        "type": "invalid_request_error" if isinstance(exc, InputBudgetError) else "inference_error",
+                        **({"code": "input_token_limit_exceeded", "input_tokens": exc.tokens,
+                            "input_limit": exc.limit} if isinstance(exc, InputBudgetError) else {}),
+                    }})
                     + "\n\n"
                 )
             yield "data: [DONE]\n\n"
