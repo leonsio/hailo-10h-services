@@ -325,6 +325,64 @@ def test_active_tool_schema_is_preserved_alongside_retrieved_followup_tools():
     assert "todo__HassListAddItem" not in names
 
 
+def test_debug_traces_include_remaining_entities_and_tools(caplog):
+    backend = HailoBackend(settings(debug_log=True))
+    backend.minilm = None
+    system = """Du bist Sprachassistent.
+Static Context: An overview of the areas and the devices in this smart home:
+- names: Küchenlicht
+  domain: light
+  areas: Küche
+- names: Schlafzimmerlicht
+  domain: light
+  areas: Schlafzimmer
+
+When controlling Home Assistant always call the intent tools."""
+    turn_off = {"type": "function", "function": {
+        "name": "intent__HassTurnOff",
+        "description": "Turns off a light",
+        "parameters": {"type": "object", "properties": {"area": {"type": "string"}}},
+    }}
+    todo = {"type": "function", "function": {
+        "name": "todo__HassListAddItem",
+        "description": "Add todo item",
+        "parameters": {"type": "object", "properties": {}},
+    }}
+    request = req([
+        {"role": "system", "content": system},
+        {"role": "user", "content": "schalte das Licht in der Küche aus"},
+    ], tools=[turn_off, todo])
+    with caplog.at_level("DEBUG", logger="hailo_services.runtime"):
+        selected = backend.select_tools(request)
+    assert "event=entity_retrieval_trace" in caplog.text
+    assert "Küchenlicht" in caplog.text
+    assert "event=after_entity_retrieval" in caplog.text
+    assert "event=tool_retrieval_trace" in caplog.text
+    assert "intent__HassTurnOff" in caplog.text
+    assert "event=after_tool_retrieval" in caplog.text
+    assert [tool["function"]["name"] for tool in selected.tools] == ["intent__HassTurnOff"]
+
+
+def test_debug_budget_logs_rendered_and_final_gemma_request(caplog):
+    backend = BudgetBackend(context=4096)
+    backend.debug_log = True
+    backend.start()
+    request = req([
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "current"},
+    ], tools=[TOOL], max_input_tokens=4096)
+    with caplog.at_level("DEBUG", logger="hailo_services.runtime"):
+        result = backend.chat(request, tools_prepared=True)
+    assert result == "ok"
+    assert "event=before_input_budget" in caplog.text
+    assert "event=input_budget_candidate" in caplog.text
+    assert "rendered_messages" in caplog.text
+    assert "event=input_budget_selected" in caplog.text
+    assert "event=final_gemma_request" in caplog.text
+    assert "intent__HassTurnOn" in caplog.text
+    assert "event=gemma_response" in caplog.text
+
+
 def test_tool_retrieval_preserves_tools_without_a_confident_match():
     tools = [TOOL, {"type": "function", "function": {"name": "other", "parameters": {}}}]
     selected, stats = retrieve_tools([{"role": "user", "content": "Guten Morgen"}], tools)
