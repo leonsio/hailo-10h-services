@@ -22,6 +22,7 @@ class Settings:
     max_audio_seconds: int = 120
     debug_log: bool = False
     litert_model_path: str = ""
+    litert_max_num_tokens: int = 16384
     mqtt_host: str = ""
     mqtt_port: int = 1883
     mqtt_username: str = ""
@@ -48,4 +49,6 @@ class Settings:
             raise ValueError("Invalid listener port")
         if config.max_audio_seconds < 1:
             raise ValueError("Audio duration limit must be positive")
+        if not 2048 <= config.litert_max_num_tokens <= 131072:
+            raise ValueError("LiteRT context must be between 2048 and 131072 tokens")
         return config

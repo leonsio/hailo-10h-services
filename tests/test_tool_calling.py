@@ -211,3 +211,53 @@ def test_old_litert_without_tools_reports_upgrade():
     del backend.litert_lm.Tool
     with pytest.raises(ValueError, match="upgrade"):
         backend.chat(ChatRequest(**payload()))
+
+
+def test_native_failure_returns_json_error_and_correct_debug_status(caplog):
+    backend = NativeBackend()
+    original_start = backend.start
+
+    def start():
+        original_start()
+
+        class Conversation:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def send_message(self, *args, **kwargs):
+                raise RuntimeError("litert_lm_conversation_send_message failed")
+
+        backend.engine.create_conversation = lambda **kwargs: Conversation()
+
+    backend.start = start
+    import logging
+
+    with caplog.at_level(logging.DEBUG, logger="hailo_services.app"):
+        with TestClient(create_app(settings(debug_log=True), FakeBackend(), backend)) as client:
+            health = client.get("/health").json()
+            assert health["litert_lm"]["max_num_tokens"] == 16384
+            response = client.post("/v1/chat/completions", json=payload())
+            assert response.status_code == 502
+            assert response.json()["error"]["type"] == "inference_error"
+            assert "16384" in response.json()["error"]["message"]
+            assert "HAILO_LITERT_MAX_NUM_TOKENS" in response.json()["error"]["message"]
+    assert "status=502" in caplog.text
+
+
+def test_context_configuration(monkeypatch):
+    from hailo_services.config import Settings
+    from hailo_services.runtime import Runtime
+
+    monkeypatch.setenv("HAILO_LITERT_MAX_NUM_TOKENS", "32768")
+    config = Settings.from_env()
+    assert config.litert_max_num_tokens == 32768
+    runtime = Runtime(settings(litert_model_path="/fake/model", litert_max_num_tokens=32768), FakeBackend())
+    assert runtime.litert_backend.max_num_tokens == 32768
+    runtime.executor.shutdown()
+    runtime.litert_executor.shutdown()
+    monkeypatch.setenv("HAILO_LITERT_MAX_NUM_TOKENS", "0")
+    with pytest.raises(ValueError, match="context"):
+        Settings.from_env()

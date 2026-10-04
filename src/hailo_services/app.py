@@ -25,7 +25,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from .config import LLM_MODEL, STT_MODEL, VLM_MODEL, Settings
 from .media import audio_file, audio_metadata, decode_base64
 from .protocols import MQTTBridge, WyomingServer, dispatch
-from .runtime import BusyError, Runtime
+from .runtime import BusyError, LiteRTInferenceError, Runtime
 from .schemas import ChatRequest, TranscribeRequest
 from .tool_calling import has_tool_context
 
@@ -80,8 +80,13 @@ class AccessAndSizeLimit:
             await send(message)
 
         async def call_app(current_scope, current_receive):
+            nonlocal response_status
             try:
                 await self.app(current_scope, current_receive, debug_send)
+            except Exception:
+                if response_status == "accepted":
+                    response_status = "failed" if is_websocket else 500
+                raise
             finally:
                 _debug(self.settings,
                        "protocol=%s transport=%s event=request_end request_id=%s method=%s path=%s status=%s duration_ms=%.1f",
@@ -262,6 +267,10 @@ def create_app(settings=None, backend=None, litert_backend=None):
     @app.exception_handler(ValueError)
     async def value_handler(request, exc):
         return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.exception_handler(LiteRTInferenceError)
+    async def litert_error_handler(request, exc):
+        return JSONResponse({"error": {"message": str(exc), "type": "inference_error"}}, status_code=502)
 
     @app.exception_handler(asyncio.TimeoutError)
     async def timeout_handler(request, exc):

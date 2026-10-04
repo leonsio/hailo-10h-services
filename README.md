@@ -422,6 +422,22 @@ conversation agent options and expose the devices you want Assist to control.
 
 ### Home Assistant device control through function tools
 
+LiteRT's implicit 4096-token context is too small for full Home Assistant function
+schemas and a system prompt (a reported two-message request used 7385 input
+tokens). The gateway now explicitly sets `Engine(max_num_tokens=16384)` by
+default. Configure `HAILO_LITERT_MAX_NUM_TOKENS` in
+`/etc/hailo-10h-services.env` and restart to change it. The limit includes input,
+history, tool schemas and generated output; `max_tokens` in the chat request
+only limits the generated response and does not enlarge the context.
+
+The startup log and `/health` → `litert_lm.max_num_tokens` show the configured
+context. More context increases RAM requirements, and a particular model export
+may impose its own limit. No messages or tools are silently removed. Native
+inference failures now return a JSON error with HTTP 502; consult the preceding
+native log for the specific cause rather than assuming every failure is a
+context overflow. Start with 16384 for the reported Home Assistant request;
+larger histories may require a larger context or a shorter conversation.
+
 The HTTP `/v1/chat/completions` endpoint accepts `user`, `tools`, `tool_choice`
 (`auto`, `none`, `required`, or a named function), and `parallel_tool_calls`.
 Tool calling uses **Gemma through LiteRT-LM**, including its native model chat

@@ -236,7 +236,7 @@ def test_litert_backend_uses_python_engine_and_preserves_chat_history(tmp_path, 
         ],
     )
     assert backend.chat(request) == "Antwort"
-    assert calls["engine"] == (str(model), {"backend": "cpu"})
+    assert calls["engine"] == (str(model), {"backend": "cpu", "max_num_tokens": 16384})
     assert calls["conversation"]["messages"] == [
         {"role": "system", "content": "Sei knapp."},
         {"role": "user", "content": "Hi"},

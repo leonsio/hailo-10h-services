@@ -24,6 +24,10 @@ class BusyError(RuntimeError):
     pass
 
 
+class LiteRTInferenceError(RuntimeError):
+    pass
+
+
 class HailoBackend:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -127,8 +131,9 @@ class HailoBackend:
 class LiteRTLMBackend:
     """Resident LiteRT-LM Python Engine for text-only Gemma requests."""
 
-    def __init__(self, model_path):
+    def __init__(self, model_path, max_num_tokens=16384):
         self.model_path = str(Path(model_path).expanduser())
+        self.max_num_tokens = max_num_tokens
         self.engine_context = None
         self.engine = None
         self.litert_lm = None
@@ -141,10 +146,10 @@ class LiteRTLMBackend:
 
         self.litert_lm = litert_lm
         self.engine_context = litert_lm.Engine(
-            str(path), backend=litert_lm.Backend.CPU()
+            str(path), backend=litert_lm.Backend.CPU(), max_num_tokens=self.max_num_tokens
         )
         self.engine = self.engine_context.__enter__()
-        _LOG.info("Loaded LiteRT-LM model %s on CPU", path)
+        _LOG.info("Loaded LiteRT-LM model %s on CPU; max_num_tokens=%d", path, self.max_num_tokens)
 
     @staticmethod
     def _messages(request):
@@ -163,6 +168,18 @@ class LiteRTLMBackend:
         ) if isinstance(chunk, dict) else ""
 
     def chat(self, request, emit=None, cancelled=None):
+        try:
+            return self._chat(request, emit, cancelled)
+        except RuntimeError as exc:
+            _LOG.exception("LiteRT inference failed; model=%s context_tokens=%d", request.model, self.max_num_tokens)
+            raise LiteRTInferenceError(
+                f"LiteRT-LM inference failed (configured context: {self.max_num_tokens} tokens). "
+                "Check the preceding native log for the cause. If the input exceeds the context, "
+                "increase HAILO_LITERT_MAX_NUM_TOKENS and restart, or reduce the Home Assistant "
+                "prompt/history. Larger contexts require more RAM."
+            ) from exc
+
+    def _chat(self, request, emit=None, cancelled=None):
         if self.engine is None:
             raise RuntimeError("LiteRT-LM is not ready")
         messages = self._messages(request)
@@ -231,7 +248,9 @@ class Runtime:
         self.ready = False
         self.litert_backend = litert_backend
         if self.litert_backend is None and settings.litert_model_path:
-            self.litert_backend = LiteRTLMBackend(settings.litert_model_path)
+            self.litert_backend = LiteRTLMBackend(
+                settings.litert_model_path, settings.litert_max_num_tokens
+            )
         self.litert_executor = (
             ThreadPoolExecutor(max_workers=1, thread_name_prefix="litert-lm-owner")
             if self.litert_backend is not None else None
@@ -343,6 +362,7 @@ class Runtime:
                 "ready": self.litert_ready,
                 "model": LLM_MODEL if self.litert_backend else None,
                 "model_path": getattr(self.litert_backend, "model_path", None),
+                "max_num_tokens": getattr(self.litert_backend, "max_num_tokens", None),
                 "pending": self.litert_pending,
                 "error": self.litert_error,
             },
