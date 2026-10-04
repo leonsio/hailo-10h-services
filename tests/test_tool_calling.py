@@ -233,6 +233,9 @@ def test_native_failure_returns_json_error_and_correct_debug_status(caplog):
             def __exit__(self, *args):
                 pass
 
+            def render_message_to_string(self, message):
+                return json.dumps(message)
+
             def send_message(self, *args, **kwargs):
                 raise RuntimeError("litert_lm_conversation_send_message failed")
 
