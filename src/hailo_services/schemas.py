@@ -1,12 +1,13 @@
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 
 from .config import VLM_MODEL
 
 
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    _request_id: str = PrivateAttr(default="-")
     model: str = VLM_MODEL
     messages: list[dict[str, Any]] = Field(min_length=1, max_length=128)
     max_tokens: int = Field(default=256, ge=1, le=1024)
