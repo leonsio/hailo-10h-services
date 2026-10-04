@@ -138,6 +138,39 @@ class AccessAndSizeLimit:
                 return
             if not message.get("more_body", False):
                 break
+        if self.settings.debug_log:
+            # Log the complete inbound HTTP request after the bounded body has
+            # been collected. Keep credentials out of logs while preserving all
+            # other headers and the exact JSON/body sent by the client.
+            debug_headers = {
+                key.decode("latin1"): (
+                    "<redacted>" if key.lower() in {
+                        b"authorization", b"proxy-authorization", b"cookie", b"set-cookie",
+                        b"x-api-key", b"api-key",
+                    } else value.decode("latin1")
+                )
+                for key, value in scope.get("headers", [])
+            }
+            content_type = headers.get(b"content-type", b"").decode("latin1").lower()
+            if "application/json" in content_type:
+                try:
+                    debug_body = json.dumps(
+                        json.loads(bytes(body)), ensure_ascii=False, separators=(",", ":")
+                    )
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    debug_body = bytes(body).decode("utf-8", errors="replace")
+            elif content_type.startswith("text/") or not body:
+                debug_body = bytes(body).decode("utf-8", errors="replace")
+            else:
+                debug_body = f"<binary body: {len(body)} bytes>"
+            _LOG.debug(
+                "protocol=%s transport=%s event=request_payload request_id=%s "
+                "method=%s path=%s headers=%s body=%s",
+                protocol, transport, request_id, method, path,
+                json.dumps(debug_headers, ensure_ascii=False, separators=(",", ":")),
+                debug_body,
+            )
+
         delivered = False
 
         async def bounded_receive():
