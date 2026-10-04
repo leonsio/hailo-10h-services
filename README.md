@@ -136,9 +136,42 @@ both HEFs plus download temporary files. Later starts work offline with cached
 models. Raw Hugging Face weights cannot be substituted for compiled Hailo HEFs.
 Absolute HEF paths can be configured for version-matched files already installed.
 
-Both model handles stay open for the service lifetime. The runtime does not
+The optional Home Assistant/Gemma path also downloads
+`minilm-l6-ruvector.hef` from the public `cstr/all-MiniLM-L6-v2-hailo10h` model
+repo on first start to
+`/usr/local/hailo/resources/models/hailo10h/minilm-l6-ruvector.hef`. An existing
+non-empty file is reused. The tokenizer and original MiniLM weights are cached
+beside the HEF on first start (about 90 MB for the weights). The service extracts
+the CPU embedding and LayerNorm tensors and keeps the encoder configured on the
+same `SHARED` Hailo device as Qwen and Whisper. Install the new Python dependencies
+before restarting an existing installation:
+
+```bash
+sudo /opt/hailo-10h-services/venv/bin/pip install 'safetensors>=0.4,<1' 'tokenizers>=0.20,<1'
+sudo /opt/hailo-10h-services/venv/bin/pip install --no-deps --force-reinstall .
+sudo systemctl restart hailo-10h-services
+```
+
+### Home Assistant tool-context reduction
+
+For Gemma requests, MiniLM embeds the latest user message and incoming function
+descriptions on Hailo and ranks tools by cosine similarity. Exact entity and
+name matches contribute to ranking. The service sends at most 12 tool definitions
+to Gemma and reduces large entity enums when names clearly match. Explicitly
+selected tools and ongoing tool rounds keep their required schemas intact.
+
+Every Gemma request is capped at 4096 input tokens, even when
+the client does not send `max_input_tokens`. Old complete chat rounds are removed
+first. The rendered message text and selected tool JSON are tokenized, with a
+256-token margin for LiteRT's template overhead, while requested output tokens
+are reserved from the configured context. If the required system/current-turn
+content still exceeds the budget, the API returns `input_token_limit_exceeded`
+without calling Gemma; it never silently truncates the active request. You may
+configure a lower cap with `HAILO_LITERT_MAX_INPUT_TOKENS`.
+
+All Hailo model handles stay open for the service lifetime. The runtime does not
 control firmware paging or guarantee physical allocation of every byte at all
-times; constructor success and `/health` mean both native model instances loaded.
+times; constructor success and `/health` mean the native model instances loaded.
 Insufficient accelerator memory or incompatible HEFs cause startup to **fail**,
 without silently falling back, switching models, or unloading Qwen to run Whisper.
 Actual coexistence/residency must be validated on the target Hailo-10H.
@@ -439,7 +472,7 @@ conversation agent options and expose the devices you want Assist to control.
 
 ### Home Assistant device control through function tools
 
-Chat requests accept optional `top_p` in the range 0 through 1, including the
+Chat requests accept optional `max_input_tokens` (1..131072) and `top_p` (0..1), including the
 `top_p: 1.0` sent by Home Assistant's llama.cpp integration. The value is passed
 to LiteRT's `SamplerConfig` for Gemma and Hailo's generation parameters for Qwen.
 If omitted or null, the backend's existing sampling default is preserved.
@@ -452,9 +485,31 @@ default. Configure `HAILO_LITERT_MAX_NUM_TOKENS` in
 history, tool schemas and generated output; `max_tokens` in the chat request
 only limits the generated response and does not enlarge the context.
 
+For Gemma only, `max_input_tokens` is a per-request limit for prompt tokens. It
+is measured with the loaded LiteRT-LM tokenizer after rendering the actual
+Gemma template and Home Assistant tools. The requested `max_tokens` and one
+start-token slot are reserved inside `HAILO_LITERT_MAX_NUM_TOKENS`, so the
+effective input cap is the lower of `max_input_tokens`, 4096 and the remaining
+context. When needed, the service removes complete older user turns (including
+their assistant/tool-call/tool-result messages), while keeping system messages
+and the complete current user/tool turn. Tool calls remain enabled. If the
+required system prompt, tools and current turn alone exceed the cap, the API
+returns `input_token_limit_exceeded` with the measured size instead of damaging
+the prompt. Qwen image requests do not accept this parameter because the Gemma
+tokenizer cannot count Qwen's image tokens.
+
+With the Home Assistant **Local OpenAI LLM** conversation integration, choose
+server type **Generic OpenAI-Compatible**. In the Conversation Agent options,
+open **Request Body Parameters** and add `max_input_tokens` with value `4096`.
+The integration sends it as a top-level request parameter. It also has **Max
+Message History**; that caps the number of messages before the service applies
+its exact token budget. Don't choose server type `llama.cpp` for this service,
+because that mode adds llama.cpp-specific request parameters.
+
 The startup log and `/health` → `litert_lm.max_num_tokens` show the configured
 context. More context increases RAM requirements, and a particular model export
-may impose its own limit. No messages or tools are silently removed. Native
+may impose its own limit. No system prompt, tools or current user/tool turn is
+silently removed. Native
 inference failures now return a JSON error with HTTP 502; consult the preceding
 native log for the specific cause rather than assuming every failure is a
 context overflow. Start with 16384 for the reported Home Assistant request;

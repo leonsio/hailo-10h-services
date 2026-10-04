@@ -10,6 +10,7 @@ class ChatRequest(BaseModel):
     model: str = VLM_MODEL
     messages: list[dict[str, Any]] = Field(min_length=1, max_length=128)
     max_tokens: int = Field(default=256, ge=1, le=1024)
+    max_input_tokens: int | None = Field(default=None, ge=1, le=131072)
     temperature: float = Field(default=0.1, ge=0, le=1)
     top_p: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     seed: int = Field(default=42, ge=0, le=2**32 - 1)
@@ -26,6 +27,21 @@ class ChatRequest(BaseModel):
 
         validate_tools(tools or [])
         return tools
+
+    @field_validator("max_input_tokens", mode="before")
+    @classmethod
+    def check_max_input_tokens(cls, value):
+        # Local OpenAI LLM renders custom request-body values as template text.
+        # Accept a decimal string such as "4096", but reject bools/floats.
+        if isinstance(value, bool):
+            raise ValueError("max_input_tokens must be an integer")
+        if isinstance(value, str):
+            if not value.isdecimal():
+                raise ValueError("max_input_tokens must be an integer")
+            return int(value)
+        if value is not None and not isinstance(value, int):
+            raise ValueError("max_input_tokens must be an integer")
+        return value
 
     @field_validator("tool_choice")
     @classmethod

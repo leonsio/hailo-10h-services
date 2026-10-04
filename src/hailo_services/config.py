@@ -4,6 +4,10 @@ from dataclasses import dataclass
 VLM_MODEL = "Qwen2-VL-2B-Instruct"
 STT_MODEL = "whisper-base"
 LLM_MODEL = "gemma-4-E2B-it"
+MINILM_HEF_URL = (
+    "https://huggingface.co/cstr/all-MiniLM-L6-v2-hailo10h/resolve/main/"
+    "minilm-l6-ruvector.hef?download=true"
+)
 
 
 @dataclass(frozen=True)
@@ -23,6 +27,8 @@ class Settings:
     debug_log: bool = False
     litert_model_path: str = ""
     litert_max_num_tokens: int = 16384
+    litert_max_input_tokens: int = 4096
+    minilm_hef_path: str = "/usr/local/hailo/resources/models/hailo10h/minilm-l6-ruvector.hef"
     mqtt_host: str = ""
     mqtt_port: int = 1883
     mqtt_username: str = ""
@@ -52,4 +58,6 @@ class Settings:
             raise ValueError("Audio duration limit must be positive")
         if not 2048 <= config.litert_max_num_tokens <= 131072:
             raise ValueError("LiteRT context must be between 2048 and 131072 tokens")
+        if not 512 <= config.litert_max_input_tokens <= 131072:
+            raise ValueError("LiteRT input limit must be between 512 and 131072 tokens")
         return config

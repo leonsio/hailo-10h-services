@@ -582,7 +582,20 @@ def test_mqtt_dispatch_uses_same_runtime():
 
 def test_native_shared_creation_residency_and_partial_cleanup(monkeypatch, tmp_path):
     monkeypatch.setattr("hailo_services.runtime.prepare_model_version", lambda: None)
+    minilm_hef = tmp_path / "minilm-l6-ruvector.hef"
+    minilm_hef.write_bytes(b"compiled test fixture")
+    monkeypatch.setattr("hailo_services.runtime.ensure_minilm_hef", lambda path, url: minilm_hef)
     events, params_seen = [], []
+
+    class FakeMiniLM:
+        def __init__(self, device, path):
+            assert path == str(minilm_hef)
+            self.artifacts = {"minilm_tokenizer": "tokenizer", "minilm_weights": "weights"}
+
+        def close(self):
+            events.append("minilm")
+
+    monkeypatch.setattr("hailo_services.runtime.MiniLM", FakeMiniLM)
 
     class Resource:
         def __init__(self, name):
@@ -628,9 +641,11 @@ def test_native_shared_creation_residency_and_partial_cleanup(monkeypatch, tmp_p
         (VLM_MODEL, {"app_name": "vlm_chat", "arch": "hailo10h"}),
         ("Whisper-Base", {"app_name": "whisper_chat", "arch": "hailo10h"}),
     ]
+    assert backend.artifact_paths == {"minilm_hef": str(minilm_hef),
+                                    "minilm_tokenizer": "tokenizer", "minilm_weights": "weights"}
     assert not events and backend.vlm and backend.whisper
     backend.close()
-    assert events == ["whisper", "vlm", "device"]
+    assert events == ["minilm", "whisper", "vlm", "device"]
 
     def fail(*args):
         raise RuntimeError("out of memory")

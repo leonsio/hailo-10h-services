@@ -1,14 +1,17 @@
 """One owner thread. No per-request VDevice/model creation or idle unloading."""
 
 import asyncio
+import json
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .config import LLM_MODEL, STT_MODEL, VLM_MODEL, Settings
+from .config import LLM_MODEL, MINILM_HEF_URL, STT_MODEL, VLM_MODEL, Settings
+from .input_budget import InputBudgetError, history_candidates
 from .media import image_frame
-from .models import prepare_model_version
+from .models import ensure_minilm_hef, prepare_model_version
+from .minilm import MiniLM
 from .tool_calling import (
     has_tool_context,
     native_messages,
@@ -16,8 +19,10 @@ from .tool_calling import (
     response_message,
     selected_tools,
 )
+from .tool_retrieval import retrieve_tools
 
 _LOG = logging.getLogger(__name__)
+_INPUT_TOKEN_SAFETY_MARGIN = 256
 
 
 class BusyError(RuntimeError):
@@ -31,8 +36,9 @@ class LiteRTInferenceError(RuntimeError):
 class HailoBackend:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.device = self.vlm = self.whisper = None
+        self.device = self.vlm = self.whisper = self.minilm = None
         self.paths = {}
+        self.artifact_paths = {}
 
     def start(self):
         from hailo_apps.python.core.common.core import resolve_hef_path
@@ -49,6 +55,10 @@ class HailoBackend:
             if path is None or not path.is_file() or path.stat().st_size == 0:
                 raise RuntimeError(f"Could not resolve/download {model}")
             self.paths[key] = str(path)
+        # Cache the HEF before allocating the accelerator.
+        self.artifact_paths["minilm_hef"] = str(ensure_minilm_hef(
+            self.settings.minilm_hef_path, MINILM_HEF_URL
+        ))
         params = VDevice.create_params()
         params.group_id = "SHARED"  # Mandatory, intentionally not configurable.
         try:
@@ -60,7 +70,9 @@ class HailoBackend:
             self.vlm = VLM(self.device, self.paths["vlm"])
             _LOG.info("Loading resident Whisper Base from %s", self.paths["whisper"])
             self.whisper = Speech2Text(self.device, self.paths["whisper"])
-            _LOG.info("Both models initialized; VDevice group_id=SHARED; paths=%s", self.paths)
+            self.minilm = MiniLM(self.device, self.artifact_paths["minilm_hef"])
+            self.artifact_paths.update(self.minilm.artifacts)
+            _LOG.info("All models initialized; VDevice group_id=SHARED; paths=%s", self.paths)
         except BaseException:
             self.close()
             raise
@@ -116,13 +128,28 @@ class HailoBackend:
         )
         return "".join(segment.text for segment in segments).strip()
 
+    def select_tools(self, request):
+        if not request.tools or any(m.get("role") == "tool" or m.get("tool_calls") for m in request.messages):
+            return request
+        source = request.tools
+        if isinstance(request.tool_choice, dict):
+            name = request.tool_choice["function"]["name"]
+            source = [tool for tool in source if tool["function"]["name"] == name]
+        selected, stats = retrieve_tools(request.messages, source, encoder=self.minilm)
+        _LOG.info("MiniLM tool retrieval: %d -> %d tools; %d enum values removed",
+                  stats["tools_before"], stats["tools_after"], stats["enum_values_removed"])
+        return request.model_copy(update={"tools": selected})
+
     def close(self):
         # Release models before the device, including after partial startup.
-        for name in ("whisper", "vlm", "device"):
+        for name in ("minilm", "whisper", "vlm", "device"):
             resource = getattr(self, name)
             if resource is not None:
                 try:
-                    resource.release()
+                    if name == "minilm":
+                        resource.close()
+                    else:
+                        resource.release()
                 except Exception:
                     _LOG.exception("Error releasing %s", name)
                 finally:
@@ -132,9 +159,10 @@ class HailoBackend:
 class LiteRTLMBackend:
     """Resident LiteRT-LM Python Engine for text-only Gemma requests."""
 
-    def __init__(self, model_path, max_num_tokens=16384):
+    def __init__(self, model_path, max_num_tokens=16384, max_input_tokens=4096):
         self.model_path = str(Path(model_path).expanduser())
         self.max_num_tokens = max_num_tokens
+        self.max_input_tokens = max_input_tokens
         self.engine_context = None
         self.engine = None
         self.litert_lm = None
@@ -154,7 +182,73 @@ class LiteRTLMBackend:
 
     @staticmethod
     def _messages(request):
-        return native_messages(request.messages)
+        messages = native_messages(request.messages)
+        if has_tool_context(request):
+            instructions = []
+            if request.tool_choice == "required" or isinstance(request.tool_choice, dict):
+                instructions.append("Return a function call using one of the available tools.")
+            if not request.parallel_tool_calls:
+                instructions.append("Return at most one function call in this response.")
+            if instructions:
+                instruction = "\n".join(instructions)
+                if messages[0]["role"] == "system":
+                    messages[0]["content"] += "\n" + instruction
+                else:
+                    messages.insert(0, {"role": "system", "content": instruction})
+        return messages
+
+    @staticmethod
+    def _prompt(messages):
+        return messages[-1] if messages[-1]["role"] == "tool" else messages[-1]["content"]
+
+    def _limit_input(self, request, tool_options):
+        if request.max_input_tokens is None:
+            return request
+        if not callable(getattr(self.engine, "tokenize", None)):
+            raise ValueError("max_input_tokens requires LiteRT-LM Engine.tokenize; upgrade litert-lm")
+        # Native prefill rejects input >= context. Also reserve the requested
+        # output budget, rather than letting generation run out of KV space.
+        limit = min(request.max_input_tokens, 4096, self.max_num_tokens - request.max_tokens - 1)
+        if limit < 1:
+            raise ValueError("The configured LiteRT context leaves no room for input and output")
+        # Validate all original call/result dependencies before dropping history.
+        self._messages(request)
+        for candidate in history_candidates(request.messages):
+            trimmed = request.model_copy(update={"messages": candidate})
+            messages = self._messages(trimmed)
+            # A fresh native conversation supplies the same tools and prefix
+            # messages without running prefill or decoding. Release it before
+            # creating the next probe or the inference conversation.
+            with self.engine.create_conversation(
+                messages=messages[:-1], max_output_tokens=request.max_tokens, **tool_options,
+            ) as probe:
+                render = getattr(probe, "render_message_to_string", None)
+                if not callable(render):
+                    raise ValueError(
+                        "max_input_tokens requires LiteRT-LM Conversation.render_message_to_string; "
+                        "upgrade litert-lm"
+                    )
+                # render_message_to_string renders one message, not the whole
+                # conversation preface. Count every message and the tool JSON,
+                # then reserve headroom for LiteRT's system/tool template tokens.
+                rendered = "\n".join(render(message) for message in messages)
+                rendered_tools = json.dumps(
+                    selected_tools(request), ensure_ascii=False, separators=(",", ":")
+                ) if has_tool_context(request) else ""
+                tokens = len(self.engine.tokenize(rendered + "\n" + rendered_tools))
+                tokens += _INPUT_TOKEN_SAFETY_MARGIN + 8 * max(0, len(messages) - 1)
+                tokens += 16 * len(selected_tools(request))
+            if tokens <= limit:
+                _LOG.info(
+                    "input_budget model=%s input_tokens=%d limit=%d max_input_tokens=%d "
+                    "removed_messages=%d output_reserved=%d",
+                    request.model, tokens, limit, request.max_input_tokens,
+                    len(request.messages) - len(candidate), request.max_tokens,
+                )
+                return trimmed
+        raise InputBudgetError(
+            tokens, limit, request.max_input_tokens, self.max_num_tokens, request.max_tokens
+        )
 
     @staticmethod
     def _chunk_text(chunk):
@@ -168,9 +262,9 @@ class LiteRTLMBackend:
             if isinstance(item, dict) and item.get("type") == "text"
         ) if isinstance(chunk, dict) else ""
 
-    def chat(self, request, emit=None, cancelled=None):
+    def chat(self, request, emit=None, cancelled=None, tools_prepared=False):
         try:
-            return self._chat(request, emit, cancelled)
+            return self._chat(request, emit, cancelled, tools_prepared)
         except RuntimeError as exc:
             _LOG.exception("LiteRT inference failed; model=%s context_tokens=%d", request.model, self.max_num_tokens)
             raise LiteRTInferenceError(
@@ -180,10 +274,30 @@ class LiteRTLMBackend:
                 "prompt/history. Larger contexts require more RAM."
             ) from exc
 
-    def _chat(self, request, emit=None, cancelled=None):
+    def _chat(self, request, emit=None, cancelled=None, tools_prepared=False):
         if self.engine is None:
             raise RuntimeError("LiteRT-LM is not ready")
-        messages = self._messages(request)
+        if request.max_input_tokens is None:
+            request = request.model_copy(update={"max_input_tokens": self.max_input_tokens})
+        if not tools_prepared and request.tools and not any(
+            message.get("role") == "tool" or message.get("tool_calls")
+            for message in request.messages
+        ):
+            source_tools = request.tools
+            if isinstance(request.tool_choice, dict):
+                forced_name = request.tool_choice["function"]["name"]
+                source_tools = [
+                    tool for tool in request.tools
+                    if tool["function"]["name"] == forced_name
+                ]
+            compact_tools, stats = retrieve_tools(request.messages, source_tools)
+            if stats["tools_after"] < stats["tools_before"] or stats["enum_values_removed"]:
+                request = request.model_copy(update={"tools": compact_tools})
+                _LOG.info(
+                    "tool_retrieval model=%s tools=%d->%d enum_values_removed=%d",
+                    request.model, stats["tools_before"], stats["tools_after"],
+                    stats["enum_values_removed"],
+                )
         tool_options = {}
         if has_tool_context(request):
             if not hasattr(self.litert_lm, "Tool"):
@@ -192,17 +306,8 @@ class LiteRTLMBackend:
                 "tools": native_tools(self.litert_lm, selected_tools(request)),
                 "automatic_tool_calling": False,
             }
-            instructions = []
-            if request.tool_choice == "required" or isinstance(request.tool_choice, dict):
-                instructions.append("Return a function call using one of the available tools.")
-            if not request.parallel_tool_calls:
-                instructions.append("Return at most one function call in this response.")
-            if instructions:
-                instruction = "\n".join(instructions)
-                if messages[0]["role"] == "system":
-                    messages[0]["content"] += "\n" + instruction
-                else:
-                    messages.insert(0, {"role": "system", "content": instruction})
+        request = self._limit_input(request, tool_options)
+        messages = self._messages(request)
         with self.engine.create_conversation(
             messages=messages[:-1],
             sampler_config=self.litert_lm.SamplerConfig(
@@ -212,7 +317,7 @@ class LiteRTLMBackend:
             max_output_tokens=request.max_tokens,
             **tool_options,
         ) as conversation:
-            prompt = messages[-1] if messages[-1]["role"] == "tool" else messages[-1]["content"]
+            prompt = self._prompt(messages)
             if emit is None or has_tool_context(request):
                 response = conversation.send_message(
                     prompt, max_output_tokens=request.max_tokens
@@ -251,7 +356,8 @@ class Runtime:
         self.litert_backend = litert_backend
         if self.litert_backend is None and settings.litert_model_path:
             self.litert_backend = LiteRTLMBackend(
-                settings.litert_model_path, settings.litert_max_num_tokens
+                settings.litert_model_path, settings.litert_max_num_tokens,
+                settings.litert_max_input_tokens,
             )
         self.litert_executor = (
             ThreadPoolExecutor(max_workers=1, thread_name_prefix="litert-lm-owner")
@@ -302,12 +408,17 @@ class Runtime:
         return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 
     async def chat(self, request):
+        if request.max_input_tokens is not None and request.model != LLM_MODEL:
+            raise ValueError(f"max_input_tokens requires model {LLM_MODEL}; Qwen image tokens cannot be counted here")
         if has_tool_context(request) and request.model != LLM_MODEL:
             raise ValueError(f"Tool calling requires model {LLM_MODEL}")
         if request.model == LLM_MODEL:
             if not self.litert_ready:
                 detail = self.litert_error or "LiteRT-LM model is not configured"
                 raise BusyError(f"{LLM_MODEL} is unavailable: {detail}")
+            if request.tools and isinstance(self.backend, HailoBackend):
+                request = await self.call(self.backend.select_tools, request)
+                return await self.call_litert(self.litert_backend.chat, request, None, None, True)
             return await self.call_litert(self.litert_backend.chat, request)
         if request.model != VLM_MODEL:
             raise ValueError(f"Unknown model: {request.model}")
@@ -320,6 +431,8 @@ class Runtime:
         return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 
     async def stream(self, request):
+        if request.max_input_tokens is not None and request.model != LLM_MODEL:
+            raise ValueError(f"max_input_tokens requires model {LLM_MODEL}; Qwen image tokens cannot be counted here")
         if has_tool_context(request):
             yield await self.chat(request)
             return
@@ -365,12 +478,15 @@ class Runtime:
                 "model": LLM_MODEL if self.litert_backend else None,
                 "model_path": getattr(self.litert_backend, "model_path", None),
                 "max_num_tokens": getattr(self.litert_backend, "max_num_tokens", None),
+                "max_input_tokens": getattr(self.litert_backend, "max_input_tokens", None),
                 "pending": self.litert_pending,
                 "error": self.litert_error,
             },
             "models": ([VLM_MODEL, STT_MODEL] if self.ready else [])
             + ([LLM_MODEL] if self.litert_ready else []),
             "model_paths": self.backend.paths,
+            "artifact_paths": getattr(self.backend, "artifact_paths", {}),
+            "minilm_ready": bool(self.ready and getattr(self.backend, "minilm", None)),
         }
 
     async def close(self):
