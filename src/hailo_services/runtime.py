@@ -25,6 +25,15 @@ _LOG = logging.getLogger(__name__)
 _INPUT_TOKEN_SAFETY_MARGIN = 256
 
 
+def _debug_json(enabled: bool, event: str, payload):
+    if enabled:
+        _LOG.debug(
+            "event=%s json=%s",
+            event,
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str),
+        )
+
+
 class BusyError(RuntimeError):
     pass
 
@@ -130,10 +139,24 @@ class HailoBackend:
         return "".join(segment.text for segment in segments).strip()
 
     def select_tools(self, request):
+        entity_trace = {} if self.settings.debug_log else None
+        _debug_json(
+            self.settings.debug_log,
+            "retrieval_input",
+            {
+                "model": request.model,
+                "messages": request.messages,
+                "tool_names": [
+                    tool.get("function", {}).get("name")
+                    for tool in (request.tools or [])
+                ],
+            },
+        )
         compact_messages, context_stats = compact_static_context(
             request.messages,
             encoder=self.minilm,
             embedding_cache=self._retrieval_embedding_cache,
+            trace=entity_trace,
         )
         request = request.model_copy(update={"messages": compact_messages})
         if context_stats["system_prompts_compacted"]:
@@ -143,17 +166,28 @@ class HailoBackend:
                 context_stats["entities_after"],
                 context_stats["characters_removed"],
             )
+        _debug_json(self.settings.debug_log, "entity_retrieval_trace", entity_trace or {})
+        _debug_json(
+            self.settings.debug_log,
+            "after_entity_retrieval",
+            {
+                "stats": context_stats,
+                "messages": compact_messages,
+            },
+        )
         if not request.tools:
             return request
         source = request.tools
         if isinstance(request.tool_choice, dict):
             name = request.tool_choice["function"]["name"]
             source = [tool for tool in source if tool["function"]["name"] == name]
+        tool_trace = {} if self.settings.debug_log else None
         selected, stats = retrieve_tools(
             request.messages,
             source,
             encoder=self.minilm,
             embedding_cache=self._retrieval_embedding_cache,
+            trace=tool_trace,
         )
         required_names = set()
         for message in request.messages:
@@ -177,6 +211,20 @@ class HailoBackend:
             "MiniLM tool retrieval: %d -> %d tools; %d enum values removed",
             stats["tools_before"], stats["tools_after"], stats["enum_values_removed"],
         )
+        _debug_json(self.settings.debug_log, "tool_retrieval_trace", tool_trace or {})
+        _debug_json(
+            self.settings.debug_log,
+            "after_tool_retrieval",
+            {
+                "stats": stats,
+                "required_tool_names": sorted(required_names),
+                "selected_tool_names": [
+                    tool.get("function", {}).get("name") for tool in selected
+                ],
+                "selected_tools": selected,
+                "messages": request.messages,
+            },
+        )
         return request.model_copy(update={"tools": selected})
 
     def close(self):
@@ -198,10 +246,17 @@ class HailoBackend:
 class LiteRTLMBackend:
     """Resident LiteRT-LM Python Engine for text-only Gemma requests."""
 
-    def __init__(self, model_path, max_num_tokens=16384, max_input_tokens=4096):
+    def __init__(
+        self,
+        model_path,
+        max_num_tokens=16384,
+        max_input_tokens=4096,
+        debug_log=False,
+    ):
         self.model_path = str(Path(model_path).expanduser())
         self.max_num_tokens = max_num_tokens
         self.max_input_tokens = max_input_tokens
+        self.debug_log = debug_log
         self.engine_context = None
         self.engine = None
         self.litert_lm = None
@@ -254,7 +309,7 @@ class LiteRTLMBackend:
             raise ValueError("The configured LiteRT context leaves no room for input and output")
         # Validate all original call/result dependencies before dropping history.
         self._messages(request)
-        for candidate in history_candidates(request.messages):
+        for candidate_index, candidate in enumerate(history_candidates(request.messages)):
             trimmed = request.model_copy(update={"messages": candidate})
             messages = self._messages(trimmed)
             # A fresh native conversation supplies the same tools and prefix
@@ -276,9 +331,31 @@ class LiteRTLMBackend:
                 rendered_tools = json.dumps(
                     selected_tools(request), ensure_ascii=False, separators=(",", ":")
                 ) if has_tool_context(request) else ""
-                tokens = len(self.engine.tokenize(rendered + "\n" + rendered_tools))
-                tokens += _INPUT_TOKEN_SAFETY_MARGIN + 8 * max(0, len(messages) - 1)
-                tokens += 16 * len(selected_tools(request))
+                raw_tokens = len(self.engine.tokenize(rendered + "\n" + rendered_tools))
+                template_margin = _INPUT_TOKEN_SAFETY_MARGIN + 8 * max(0, len(messages) - 1)
+                tool_margin = 16 * len(selected_tools(request))
+                tokens = raw_tokens + template_margin + tool_margin
+            _debug_json(
+                self.debug_log,
+                "input_budget_candidate",
+                {
+                    "candidate_index": candidate_index,
+                    "messages_before": len(request.messages),
+                    "messages_after": len(candidate),
+                    "removed_messages": len(request.messages) - len(candidate),
+                    "raw_tokens": raw_tokens,
+                    "template_margin": template_margin,
+                    "tool_margin": tool_margin,
+                    "input_tokens": tokens,
+                    "input_limit": limit,
+                    "output_reserved": request.max_tokens,
+                    "accepted": tokens <= limit,
+                    "messages": messages,
+                    "tools": selected_tools(request),
+                    "rendered_messages": rendered,
+                    "rendered_tools": rendered_tools,
+                },
+            )
             if tokens <= limit:
                 _LOG.info(
                     "input_budget model=%s input_tokens=%d limit=%d max_input_tokens=%d "
@@ -286,7 +363,26 @@ class LiteRTLMBackend:
                     request.model, tokens, limit, request.max_input_tokens,
                     len(request.messages) - len(candidate), request.max_tokens,
                 )
+                _debug_json(
+                    self.debug_log,
+                    "input_budget_selected",
+                    {
+                        "input_tokens": tokens,
+                        "input_limit": limit,
+                        "removed_messages": len(request.messages) - len(candidate),
+                        "request": trimmed.model_dump(mode="json", exclude_none=False),
+                    },
+                )
                 return trimmed
+        _debug_json(
+            self.debug_log,
+            "input_budget_failed",
+            {
+                "input_tokens": tokens,
+                "input_limit": limit,
+                "request": request.model_dump(mode="json", exclude_none=False),
+            },
+        )
         raise InputBudgetError(
             tokens, limit, request.max_input_tokens, self.max_num_tokens, request.max_tokens
         )
@@ -347,8 +443,25 @@ class LiteRTLMBackend:
                 "tools": native_tools(self.litert_lm, selected_tools(request)),
                 "automatic_tool_calling": False,
             }
+        _debug_json(
+            self.debug_log,
+            "before_input_budget",
+            request.model_dump(mode="json", exclude_none=False),
+        )
         request = self._limit_input(request, tool_options)
         messages = self._messages(request)
+        _debug_json(
+            self.debug_log,
+            "final_gemma_request",
+            {
+                "request": request.model_dump(mode="json", exclude_none=False),
+                "native_messages": messages,
+                "selected_tools": selected_tools(request),
+                "max_num_tokens": self.max_num_tokens,
+                "max_input_tokens": request.max_input_tokens,
+                "max_output_tokens": request.max_tokens,
+            },
+        )
         with self.engine.create_conversation(
             messages=messages[:-1],
             sampler_config=self.litert_lm.SamplerConfig(
@@ -364,6 +477,17 @@ class LiteRTLMBackend:
                     prompt, max_output_tokens=request.max_tokens
                 )
                 result = response_message(response, request, self._chunk_text(response).strip())
+                _debug_json(
+                    self.debug_log,
+                    "gemma_response",
+                    {
+                        "prompt": prompt,
+                        "raw_response": (
+                            response.to_json() if hasattr(response, "to_json") else response
+                        ),
+                        "parsed_response": result,
+                    },
+                )
                 if emit:
                     emit(result)
                 return result
@@ -377,7 +501,13 @@ class LiteRTLMBackend:
                 if text:
                     output.append(text)
                     emit(text)
-            return "".join(output).strip()
+            result = "".join(output).strip()
+            _debug_json(
+                self.debug_log,
+                "gemma_stream_response",
+                {"prompt": prompt, "response": result, "chunks": output},
+            )
+            return result
 
     def close(self):
         if self.engine_context is not None:
@@ -397,9 +527,13 @@ class Runtime:
         self.litert_backend = litert_backend
         if self.litert_backend is None and settings.litert_model_path:
             self.litert_backend = LiteRTLMBackend(
-                settings.litert_model_path, settings.litert_max_num_tokens,
+                settings.litert_model_path,
+                settings.litert_max_num_tokens,
                 settings.litert_max_input_tokens,
+                settings.debug_log,
             )
+        if self.litert_backend is not None:
+            self.litert_backend.debug_log = settings.debug_log
         self.litert_executor = (
             ThreadPoolExecutor(max_workers=1, thread_name_prefix="litert-lm-owner")
             if self.litert_backend is not None else None
