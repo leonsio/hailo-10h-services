@@ -236,7 +236,7 @@ def test_litert_backend_uses_python_engine_and_preserves_chat_history(tmp_path, 
         ],
     )
     assert backend.chat(request) == "Antwort"
-    assert calls["engine"] == (str(model), {"backend": "cpu"})
+    assert calls["engine"] == (str(model), {"backend": "cpu", "max_num_tokens": 16384})
     assert calls["conversation"]["messages"] == [
         {"role": "system", "content": "Sei knapp."},
         {"role": "user", "content": "Hi"},
@@ -263,13 +263,13 @@ def test_optional_http_whisper_debug_logs_protocol_and_audio_metadata(caplog):
             )
             assert response.status_code == 200
     logs = caplog.text
-    assert "protocol=http event=request_start" in logs
+    assert "protocol=http transport=http event=request_start" in logs
     assert "protocol=http operation=whisper_transcribe" in logs
     assert "model=whisper-base language=de" in logs
     assert "'container': 'WAV'" in logs and "'codec': 'PCM_16'" in logs
     assert "'sample_rate_hz': 48000" in logs and "'channels': 2" in logs
     assert "'duration_seconds': 0.1" in logs
-    assert "protocol=http event=request_end" in logs and "status=200" in logs
+    assert "protocol=http transport=http event=request_end" in logs and "status=200" in logs
     assert "Hallo Welt" not in logs and "secret" not in logs
 
 
@@ -293,7 +293,7 @@ def test_auth_limits_and_unsupported_parameters():
         assert (
             client.post(
                 "/v1/chat/completions",
-                json={"messages": [{"role": "user", "content": "hi"}], "tools": []},
+                json={"messages": [{"role": "user", "content": "hi"}], "unsupported": []},
                 headers=headers,
             ).status_code
             == 422

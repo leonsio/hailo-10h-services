@@ -9,11 +9,22 @@ from pathlib import Path
 from .config import LLM_MODEL, STT_MODEL, VLM_MODEL, Settings
 from .media import image_frame
 from .models import prepare_model_version
+from .tool_calling import (
+    has_tool_context,
+    native_messages,
+    native_tools,
+    response_message,
+    selected_tools,
+)
 
 _LOG = logging.getLogger(__name__)
 
 
 class BusyError(RuntimeError):
+    pass
+
+
+class LiteRTInferenceError(RuntimeError):
     pass
 
 
@@ -120,8 +131,9 @@ class HailoBackend:
 class LiteRTLMBackend:
     """Resident LiteRT-LM Python Engine for text-only Gemma requests."""
 
-    def __init__(self, model_path):
+    def __init__(self, model_path, max_num_tokens=16384):
         self.model_path = str(Path(model_path).expanduser())
+        self.max_num_tokens = max_num_tokens
         self.engine_context = None
         self.engine = None
         self.litert_lm = None
@@ -134,27 +146,21 @@ class LiteRTLMBackend:
 
         self.litert_lm = litert_lm
         self.engine_context = litert_lm.Engine(
-            str(path), backend=litert_lm.Backend.CPU()
+            str(path), backend=litert_lm.Backend.CPU(), max_num_tokens=self.max_num_tokens
         )
         self.engine = self.engine_context.__enter__()
-        _LOG.info("Loaded LiteRT-LM model %s on CPU", path)
+        _LOG.info("Loaded LiteRT-LM model %s on CPU; max_num_tokens=%d", path, self.max_num_tokens)
 
     @staticmethod
     def _messages(request):
-        messages = []
-        for message in request.messages:
-            content = message["content"]
-            if not isinstance(content, str):
-                if any(item.get("type") == "image_url" for item in content):
-                    raise ValueError(f"Model {LLM_MODEL} accepts text only")
-                content = "\n".join(item["text"] for item in content)
-            messages.append({"role": message["role"], "content": content})
-        if not messages or messages[-1]["role"] != "user":
-            raise ValueError("The final chat message for Gemma must be from the user")
-        return messages
+        return native_messages(request.messages)
 
     @staticmethod
     def _chunk_text(chunk):
+        if hasattr(chunk, "to_json"):
+            chunk = chunk.to_json()
+        if isinstance(chunk, dict) and isinstance(chunk.get("content"), str):
+            return chunk["content"]
         return "".join(
             item.get("text", "")
             for item in chunk.get("content", [])
@@ -162,22 +168,57 @@ class LiteRTLMBackend:
         ) if isinstance(chunk, dict) else ""
 
     def chat(self, request, emit=None, cancelled=None):
+        try:
+            return self._chat(request, emit, cancelled)
+        except RuntimeError as exc:
+            _LOG.exception("LiteRT inference failed; model=%s context_tokens=%d", request.model, self.max_num_tokens)
+            raise LiteRTInferenceError(
+                f"LiteRT-LM inference failed (configured context: {self.max_num_tokens} tokens). "
+                "Check the preceding native log for the cause. If the input exceeds the context, "
+                "increase HAILO_LITERT_MAX_NUM_TOKENS and restart, or reduce the Home Assistant "
+                "prompt/history. Larger contexts require more RAM."
+            ) from exc
+
+    def _chat(self, request, emit=None, cancelled=None):
         if self.engine is None:
             raise RuntimeError("LiteRT-LM is not ready")
         messages = self._messages(request)
+        tool_options = {}
+        if has_tool_context(request):
+            if not hasattr(self.litert_lm, "Tool"):
+                raise ValueError("Installed LiteRT-LM lacks Tool support; upgrade litert-lm")
+            tool_options = {
+                "tools": native_tools(self.litert_lm, selected_tools(request)),
+                "automatic_tool_calling": False,
+            }
+            instructions = []
+            if request.tool_choice == "required" or isinstance(request.tool_choice, dict):
+                instructions.append("Return a function call using one of the available tools.")
+            if not request.parallel_tool_calls:
+                instructions.append("Return at most one function call in this response.")
+            if instructions:
+                instruction = "\n".join(instructions)
+                if messages[0]["role"] == "system":
+                    messages[0]["content"] += "\n" + instruction
+                else:
+                    messages.insert(0, {"role": "system", "content": instruction})
         with self.engine.create_conversation(
             messages=messages[:-1],
             sampler_config=self.litert_lm.SamplerConfig(
                 temperature=request.temperature, seed=request.seed
             ),
             max_output_tokens=request.max_tokens,
+            **tool_options,
         ) as conversation:
-            prompt = messages[-1]["content"]
-            if emit is None:
+            prompt = messages[-1] if messages[-1]["role"] == "tool" else messages[-1]["content"]
+            if emit is None or has_tool_context(request):
                 response = conversation.send_message(
                     prompt, max_output_tokens=request.max_tokens
                 )
-                return self._chunk_text(response).strip()
+                result = response_message(response, request, self._chunk_text(response).strip())
+                if emit:
+                    emit(result)
+                return result
             output = []
             for chunk in conversation.send_message_async(
                 prompt, max_output_tokens=request.max_tokens
@@ -207,7 +248,9 @@ class Runtime:
         self.ready = False
         self.litert_backend = litert_backend
         if self.litert_backend is None and settings.litert_model_path:
-            self.litert_backend = LiteRTLMBackend(settings.litert_model_path)
+            self.litert_backend = LiteRTLMBackend(
+                settings.litert_model_path, settings.litert_max_num_tokens
+            )
         self.litert_executor = (
             ThreadPoolExecutor(max_workers=1, thread_name_prefix="litert-lm-owner")
             if self.litert_backend is not None else None
@@ -257,6 +300,8 @@ class Runtime:
         return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 
     async def chat(self, request):
+        if has_tool_context(request) and request.model != LLM_MODEL:
+            raise ValueError(f"Tool calling requires model {LLM_MODEL}")
         if request.model == LLM_MODEL:
             if not self.litert_ready:
                 detail = self.litert_error or "LiteRT-LM model is not configured"
@@ -273,6 +318,9 @@ class Runtime:
         return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 
     async def stream(self, request):
+        if has_tool_context(request):
+            yield await self.chat(request)
+            return
         loop = asyncio.get_running_loop()
         queue = asyncio.Queue()  # Bounded by request.max_tokens <= 1024.
         cancelled = threading.Event()
@@ -314,6 +362,7 @@ class Runtime:
                 "ready": self.litert_ready,
                 "model": LLM_MODEL if self.litert_backend else None,
                 "model_path": getattr(self.litert_backend, "model_path", None),
+                "max_num_tokens": getattr(self.litert_backend, "max_num_tokens", None),
                 "pending": self.litert_pending,
                 "error": self.litert_error,
             },

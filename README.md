@@ -416,11 +416,89 @@ the client must trust that certificate. LiteRT-LM and
 Gemma share system RAM with the service; verify memory headroom on the Pi before
 raising the request queue size.
 
-For Home Assistant, use its **llama.cpp** conversation integration and enter
-the service URL and API key; that integration accepts OpenAI-compatible chat
-completion servers and lets you choose the model. Home Assistant's built-in
-OpenAI integration only supports OpenAI's own API, so it cannot be pointed at
-this local service. See the [llama.cpp integration instructions](https://www.home-assistant.io/integrations/llama_cpp/).
+For Home Assistant, use the **LiteLLM** conversation integration with the service
+URL, API key and model `gemma-4-E2B-it`. Enable Home Assistant control in the
+conversation agent options and expose the devices you want Assist to control.
+
+### Home Assistant device control through function tools
+
+LiteRT's implicit 4096-token context is too small for full Home Assistant function
+schemas and a system prompt (a reported two-message request used 7385 input
+tokens). The gateway now explicitly sets `Engine(max_num_tokens=16384)` by
+default. Configure `HAILO_LITERT_MAX_NUM_TOKENS` in
+`/etc/hailo-10h-services.env` and restart to change it. The limit includes input,
+history, tool schemas and generated output; `max_tokens` in the chat request
+only limits the generated response and does not enlarge the context.
+
+The startup log and `/health` → `litert_lm.max_num_tokens` show the configured
+context. More context increases RAM requirements, and a particular model export
+may impose its own limit. No messages or tools are silently removed. Native
+inference failures now return a JSON error with HTTP 502; consult the preceding
+native log for the specific cause rather than assuming every failure is a
+context overflow. Start with 16384 for the reported Home Assistant request;
+larger histories may require a larger context or a shorter conversation.
+
+The HTTP `/v1/chat/completions` endpoint accepts `user`, `tools`, `tool_choice`
+(`auto`, `none`, `required`, or a named function), and `parallel_tool_calls`.
+Tool calling uses **Gemma through LiteRT-LM**, including its native model chat
+template and function parser. Qwen's Hailo VLM path remains available for text
+and images, but rejects tool requests with a clear error.
+
+The server passes the supplied function schemas to LiteRT-LM with
+`automatic_tool_calling=False`. It returns OpenAI-compatible `tool_calls` with
+unique IDs, JSON string arguments and `finish_reason: "tool_calls"`.
+**Home Assistant executes the actions** using its own permissions and exposed
+entities. The gateway needs no Home Assistant access token and never executes
+the advertised functions itself.
+
+The next request may include assistant messages with `content: null` and
+`tool_calls`, followed by `role: "tool"` messages with matching `tool_call_id`s.
+The adapter restores these as native LiteRT tool calls and tool responses so
+Gemma can produce a spoken answer or request another function. Consecutive tool
+results are grouped into one native tool message. Ordinary chat still streams
+text as before. Tool-enabled streaming buffers one model response before emitting
+validated tool-call deltas; this adds latency before the first chunk.
+
+Generated functions must be among the offered tools, and their arguments must
+validate against the corresponding JSON schema. Invalid or incomplete calls are
+reported as errors instead of actions. Named choices restrict the offered tools;
+`required` and named choices reject responses without a function call.
+`parallel_tool_calls=false` rejects multiple generated calls. JSON schemas may
+use local references but cannot retrieve external references. This implements
+the protocol; actual tool selection and reliable device identification still
+depend on the model and the Home Assistant prompt.
+
+Update an existing installation from the branch containing this change:
+
+```bash
+git fetch origin
+git switch feat/home-assistant-tool-calling
+git pull --ff-only
+sudo /opt/hailo-10h-services/venv/bin/pip install --upgrade 'jsonschema>=4.23,<5'
+sudo /opt/hailo-10h-services/venv/bin/pip install --no-deps --force-reinstall .
+sudo systemctl restart hailo-10h-services.service
+```
+
+The installed `litert_lm` package must export `Tool` and support
+`create_conversation(tools=..., automatic_tool_calling=False)`.
+If the API reports missing Tool support, upgrade `litert-lm` in the service venv.
+The installer also checks for `Engine`/`Tool` when a LiteRT model is configured.
+No Hailo driver, HEF model or SHARED device settings change.
+
+To check function generation without executing any device action, send a request
+with one tool (add your configured bearer API key):
+
+```bash
+curl -sS http://localhost:8090/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer ${HAILO_API_KEY}" \
+  -d '{"model":"gemma-4-E2B-it","messages":[{"role":"user","content":"Schalte die Lampe im Wohnzimmer ein."}],"tools":[{"type":"function","function":{"name":"intent__HassTurnOn","description":"Turns on a light","parameters":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false}}}],"tool_choice":"required","max_tokens":256}'
+```
+
+Expect a tool call containing `intent__HassTurnOn` and a JSON argument object
+with the light name, rather than just a textual claim that the light is on.
+Target Pi/model testing is still required; protocol tests use a fake LiteRT
+engine and do not establish actual model accuracy or device execution.
 
 Sources used for the implementation:
 
