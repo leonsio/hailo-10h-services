@@ -335,12 +335,11 @@ def instrument_engine(backend):
 def _start_with_benchmark(self, original_start, *args, **kwargs):
     """Enable LiteRT native benchmark collection during debug startup.
 
-    ``LiteRTLMBackend.start`` owns engine construction in :mod:`runtime`.  Keep
+    ``LiteRTLMBackend.start`` owns engine construction in :mod:`runtime`. Keep
     that implementation as the single source of truth and temporarily decorate
-    the public ``litert_lm.Engine`` constructor so the native
-    ``enable_benchmark`` option is passed during that construction. Startup is
-    serialized before request handling begins, and the constructor is restored
-    immediately afterwards.
+    the public ``litert_lm.Engine`` constructor so the native benchmark option
+    is injected only for debug startup. Startup is serialized before request
+    handling begins, and the constructor is restored immediately afterwards.
     """
     import litert_lm
 
@@ -348,7 +347,8 @@ def _start_with_benchmark(self, original_start, *args, **kwargs):
 
     @wraps(original_engine)
     def engine_with_diagnostics(*engine_args, **engine_kwargs):
-        engine_kwargs.setdefault("enable_benchmark", bool(getattr(self, "debug_log", False)))
+        if getattr(self, "debug_log", False):
+            engine_kwargs.setdefault("enable_benchmark", True)
         return original_engine(*engine_args, **engine_kwargs)
 
     litert_lm.Engine = engine_with_diagnostics
