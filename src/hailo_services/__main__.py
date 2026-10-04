@@ -18,6 +18,7 @@ def main():
         host=settings.host,
         port=settings.port,
         workers=1,
+        proxy_headers=False,  # MCP network access uses the actual socket peer.
         ws_max_size=settings.max_body,
         timeout_graceful_shutdown=30,
     )

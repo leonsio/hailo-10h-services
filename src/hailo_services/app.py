@@ -5,6 +5,7 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager, suppress
+from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Annotated
 
@@ -47,6 +48,10 @@ def _debug(settings, message, *args):
 class AccessAndSizeLimit:
     def __init__(self, app, settings):
         self.app, self.settings = app, settings
+        self.mcp_no_auth_networks = tuple(
+            ip_network(network.strip())
+            for network in settings.mcp_no_auth_networks.split(",") if network.strip()
+        )
 
     async def __call__(self, scope, receive, send):
         if scope["type"] not in {"http", "websocket"}:
@@ -98,6 +103,15 @@ class AccessAndSizeLimit:
             and scope.get("method") in {"GET", "HEAD"}
             and scope["path"] in {*_WEB_FILES, "/ui/config"}
         )
+        # Trust the socket peer only, never client-supplied forwarding headers.
+        if protocol == "mcp" and not is_websocket:
+            try:
+                address = ip_address(peer[0])
+                if address.version == 6 and address.ipv4_mapped:
+                    address = address.ipv4_mapped
+                public = any(address in network for network in self.mcp_no_auth_networks)
+            except ValueError:
+                pass
         if self.settings.api_key and not public:
             if not hmac.compare_digest(headers.get(b"authorization", b""), expected):
                 if scope["type"] == "websocket":

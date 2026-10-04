@@ -526,6 +526,41 @@ def test_mcp_protocol_and_tools():
         assert response.json()["result"]["content"][0]["text"] == "Hello world"
 
 
+@pytest.mark.parametrize("peer,networks,status", [
+    ("192.168.2.4", "192.168.2.4/32", 200),
+    ("::ffff:192.168.2.4", "192.168.2.4/32", 200),
+    ("192.168.2.5", "192.168.2.4/32", 401),
+    ("203.0.113.5", "192.168.0.0/16", 401),
+    ("192.168.2.4", "", 401),
+])
+def test_mcp_local_auth_bypass(peer, networks, status):
+    config = settings(api_key="secret", mcp_hosts="testserver", mcp_no_auth_networks=networks)
+    with TestClient(create_app(config, FakeBackend()), client=(peer, 1234)) as client:
+        response = client.post(
+            "/mcp/", headers={"Accept": "application/json, text/event-stream",
+                              "X-Forwarded-For": "192.168.2.4"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+        )
+        assert response.status_code == status, response.text
+        assert client.get("/v1/models").status_code == 401
+        assert client.post("/mcp-other").status_code == 401
+        from starlette.websockets import WebSocketDisconnect
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/mcp/"):
+                pass
+
+
+def test_keyless_mcp_keeps_host_and_body_limits():
+    config = settings(api_key="secret", mcp_hosts="testserver", max_body=2048)
+    with TestClient(create_app(config, FakeBackend()), client=("192.168.2.4", 1234)) as client:
+        assert client.post("/mcp/", content=b"x" * 2049).status_code == 413
+        response = client.post(
+            "/mcp/", headers={"Host": "attacker.example", "Accept": "application/json, text/event-stream"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+        )
+        assert response.status_code == 421
+
+
 def test_mqtt_dispatch_uses_same_runtime():
     async def run():
         runtime = Runtime(settings(), FakeBackend())
