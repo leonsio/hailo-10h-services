@@ -19,7 +19,7 @@ from .tool_calling import (
     response_message,
     selected_tools,
 )
-from .tool_retrieval import retrieve_tools
+from .tool_retrieval import compact_static_context, retrieve_tools
 
 _LOG = logging.getLogger(__name__)
 _INPUT_TOKEN_SAFETY_MARGIN = 256
@@ -39,6 +39,7 @@ class HailoBackend:
         self.device = self.vlm = self.whisper = self.minilm = None
         self.paths = {}
         self.artifact_paths = {}
+        self._retrieval_embedding_cache = {}
 
     def start(self):
         from hailo_apps.python.core.common.core import resolve_hef_path
