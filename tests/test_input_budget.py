@@ -251,11 +251,22 @@ def test_default_gemma_input_budget_is_4096_even_if_client_omits_custom_field():
     assert backend.max_input_tokens == 4096
 
 
-def test_client_cannot_raise_gemma_input_above_4096():
-    backend = BudgetBackend()
+def test_configured_gemma_context_caps_client_input_limit():
+    backend = BudgetBackend(context=4096)
     backend.start()
     backend.engine.tokenize = lambda text: range(3841)
     request = req([{"role": "user", "content": "hello"}], max_input_tokens=8192)
     with pytest.raises(InputBudgetError) as error:
         backend._limit_input(request, {})
-    assert error.value.limit == 4096
+    # The cap comes from the actual Gemma context minus the output reserve,
+    # not from a second hard-coded 4096 request limit.
+    assert error.value.limit == 4096 - request.max_tokens - 1
+
+
+def test_input_budget_has_no_hidden_4096_cap_before_gemma_context():
+    backend = BudgetBackend(context=16384)
+    backend.start()
+    backend.engine.tokenize = lambda text: range(5000)
+    request = req([{"role": "user", "content": "hello"}], max_input_tokens=8192)
+    trimmed = backend._limit_input(request, {})
+    assert trimmed.messages == request.messages
