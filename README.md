@@ -439,6 +439,11 @@ conversation agent options and expose the devices you want Assist to control.
 
 ### Home Assistant device control through function tools
 
+Chat requests accept optional `top_p` in the range 0 through 1, including the
+`top_p: 1.0` sent by Home Assistant's llama.cpp integration. The value is passed
+to LiteRT's `SamplerConfig` for Gemma and Hailo's generation parameters for Qwen.
+If omitted or null, the backend's existing sampling default is preserved.
+
 LiteRT's implicit 4096-token context is too small for full Home Assistant function
 schemas and a system prompt (a reported two-message request used 7385 input
 tokens). The gateway now explicitly sets `Engine(max_num_tokens=16384)` by

@@ -261,3 +261,27 @@ def test_context_configuration(monkeypatch):
     monkeypatch.setenv("HAILO_LITERT_MAX_NUM_TOKENS", "0")
     with pytest.raises(ValueError, match="context"):
         Settings.from_env()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_llama_cpp_top_p_reaches_native_sampler(stream):
+    backend = NativeBackend()
+    with TestClient(create_app(settings(), FakeBackend(), backend)) as client:
+        response = client.post("/v1/chat/completions", json=payload(top_p=1.0, stream=stream))
+        assert response.status_code == 200
+        assert backend.calls[-1]["sampler_config"]["top_p"] == 1.0
+        if stream:
+            assert '"finish_reason": "tool_calls"' in response.text
+        else:
+            assert response.json()["choices"][0]["finish_reason"] == "tool_calls"
+
+
+@pytest.mark.parametrize("value", [-0.01, 1.01, float("inf"), float("nan")])
+def test_invalid_top_p_is_rejected(value):
+    with pytest.raises(ValidationError):
+        ChatRequest(**payload(top_p=value))
+
+
+@pytest.mark.parametrize("value", [0.0, 0.5, 1.0, None])
+def test_valid_top_p(value):
+    assert ChatRequest(**payload(top_p=value)).top_p == value

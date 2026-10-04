@@ -91,6 +91,7 @@ class HailoBackend:
                 temperature=request.temperature,
                 seed=request.seed,
                 max_generated_tokens=request.max_tokens,
+                **({"top_p": request.top_p} if request.top_p is not None else {}),
             ) as generation:
                 for chunk in generation:
                     if cancelled is not None and cancelled.is_set():
@@ -205,7 +206,8 @@ class LiteRTLMBackend:
         with self.engine.create_conversation(
             messages=messages[:-1],
             sampler_config=self.litert_lm.SamplerConfig(
-                temperature=request.temperature, seed=request.seed
+                temperature=request.temperature, seed=request.seed,
+                **({"top_p": request.top_p} if request.top_p is not None else {}),
             ),
             max_output_tokens=request.max_tokens,
             **tool_options,
