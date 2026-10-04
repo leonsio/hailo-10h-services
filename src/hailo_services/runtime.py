@@ -130,15 +130,35 @@ class HailoBackend:
         return "".join(segment.text for segment in segments).strip()
 
     def select_tools(self, request):
-        if not request.tools or any(m.get("role") == "tool" or m.get("tool_calls") for m in request.messages):
+        compact_messages, context_stats = compact_static_context(
+            request.messages,
+            encoder=self.minilm,
+            embedding_cache=self._retrieval_embedding_cache,
+        )
+        request = request.model_copy(update={"messages": compact_messages})
+        if context_stats["system_prompts_compacted"]:
+            _LOG.info(
+                "MiniLM entity retrieval: %d -> %d entities; %d chars removed",
+                context_stats["entities_before"],
+                context_stats["entities_after"],
+                context_stats["characters_removed"],
+            )
+        if not request.tools:
             return request
         source = request.tools
         if isinstance(request.tool_choice, dict):
             name = request.tool_choice["function"]["name"]
             source = [tool for tool in source if tool["function"]["name"] == name]
-        selected, stats = retrieve_tools(request.messages, source, encoder=self.minilm)
-        _LOG.info("MiniLM tool retrieval: %d -> %d tools; %d enum values removed",
-                  stats["tools_before"], stats["tools_after"], stats["enum_values_removed"])
+        selected, stats = retrieve_tools(
+            request.messages,
+            source,
+            encoder=self.minilm,
+            embedding_cache=self._retrieval_embedding_cache,
+        )
+        _LOG.info(
+            "MiniLM tool retrieval: %d -> %d tools; %d enum values removed",
+            stats["tools_before"], stats["tools_after"], stats["enum_values_removed"],
+        )
         return request.model_copy(update={"tools": selected})
 
     def close(self):
