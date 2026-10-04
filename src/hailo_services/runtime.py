@@ -155,6 +155,24 @@ class HailoBackend:
             encoder=self.minilm,
             embedding_cache=self._retrieval_embedding_cache,
         )
+        required_names = set()
+        for message in request.messages:
+            for call in message.get("tool_calls") or []:
+                if isinstance(call, dict):
+                    name = call.get("function", {}).get("name")
+                    if isinstance(name, str):
+                        required_names.add(name)
+        if required_names:
+            selected_names = {
+                tool.get("function", {}).get("name") for tool in selected
+            }
+            required = [
+                tool for tool in source
+                if tool.get("function", {}).get("name") in required_names
+                and tool.get("function", {}).get("name") not in selected_names
+            ]
+            selected = required + selected
+            stats["tools_after"] = len(selected)
         _LOG.info(
             "MiniLM tool retrieval: %d -> %d tools; %d enum values removed",
             stats["tools_before"], stats["tools_after"], stats["enum_values_removed"],
@@ -439,9 +457,11 @@ class Runtime:
             if not self.litert_ready:
                 detail = self.litert_error or "LiteRT-LM model is not configured"
                 raise BusyError(f"{LLM_MODEL} is unavailable: {detail}")
-            if request.tools and isinstance(self.backend, HailoBackend):
+            if isinstance(self.backend, HailoBackend):
                 request = await self.call(self.backend.select_tools, request)
-                return await self.call_litert(self.litert_backend.chat, request, None, None, True)
+                return await self.call_litert(
+                    self.litert_backend.chat, request, None, None, bool(request.tools)
+                )
             return await self.call_litert(self.litert_backend.chat, request)
         if request.model != VLM_MODEL:
             raise ValueError(f"Unknown model: {request.model}")
