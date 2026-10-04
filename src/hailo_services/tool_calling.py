@@ -7,7 +7,6 @@ import uuid
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError
 
-
 _LOG = logging.getLogger(__name__)
 
 
