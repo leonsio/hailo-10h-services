@@ -1,6 +1,7 @@
 """Regression tests for low-latency LiteRT Home Assistant handling."""
 
 import json
+import sys
 from types import SimpleNamespace
 
 from hailo_services.config import LLM_MODEL
@@ -90,6 +91,9 @@ class FakeConversation:
     def __exit__(self, *args):
         return None
 
+    def render_message_to_string(self, message):
+        return f"<|turn>user\n{message['content']}\n<|turn>model\n"
+
     def send_message(self, prompt, **kwargs):
         self.sent.append(prompt)
         return {"content": "ok"}
@@ -128,3 +132,77 @@ def test_native_litert_benchmark_metrics_are_logged(caplog):
     assert '"prefill_ms_estimate":3000.0' in caplog.text
     assert '"decode_ms_estimate":2000.0' in caplog.text
     assert '"time_to_first_token_ms":350.0' in caplog.text
+
+
+def test_exact_rendered_prompt_is_logged_in_debug(caplog):
+    backend = SimpleNamespace(engine=FakeEngine(), debug_log=True)
+    instrument_engine(backend)
+    with caplog.at_level("DEBUG", logger="hailo_services.litert_optimizations"):
+        with backend.engine.create_conversation(messages=[]) as conversation:
+            rendered = conversation.render_message_to_string(
+                {"role": "user", "content": "schalte das Licht aus"}
+            )
+    assert rendered == "<|turn>user\nschalte das Licht aus\n<|turn>model\n"
+    assert "event=gemma_rendered_prompt request_id=-" in caplog.text
+    assert '"prompt":"<|turn>user\\nschalte das Licht aus\\n<|turn>model\\n"' in caplog.text
+    assert '"raw_tokens":4' in caplog.text
+
+
+def test_debug_start_enables_native_litert_benchmark(monkeypatch, tmp_path):
+    model = tmp_path / "gemma.litertlm"
+    model.write_bytes(b"fake")
+    captured = {}
+
+    class EngineContext:
+        def __init__(self, *args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            self.engine = FakeEngine()
+
+        def __enter__(self):
+            return self.engine
+
+        def __exit__(self, *args):
+            return None
+
+    fake_litert = SimpleNamespace(
+        Engine=EngineContext,
+        Backend=SimpleNamespace(CPU=lambda: "cpu"),
+    )
+    monkeypatch.setitem(sys.modules, "litert_lm", fake_litert)
+    backend = LiteRTLMBackend(model, max_num_tokens=4096, debug_log=True)
+    backend.start()
+    try:
+        assert captured["kwargs"]["enable_benchmark"] is True
+        assert captured["kwargs"]["max_num_tokens"] == 4096
+    finally:
+        backend.close()
+
+
+def test_non_debug_start_disables_native_litert_benchmark(monkeypatch, tmp_path):
+    model = tmp_path / "gemma.litertlm"
+    model.write_bytes(b"fake")
+    captured = {}
+
+    class EngineContext:
+        def __init__(self, *args, **kwargs):
+            captured["kwargs"] = kwargs
+            self.engine = FakeEngine()
+
+        def __enter__(self):
+            return self.engine
+
+        def __exit__(self, *args):
+            return None
+
+    fake_litert = SimpleNamespace(
+        Engine=EngineContext,
+        Backend=SimpleNamespace(CPU=lambda: "cpu"),
+    )
+    monkeypatch.setitem(sys.modules, "litert_lm", fake_litert)
+    backend = LiteRTLMBackend(model, max_num_tokens=4096, debug_log=False)
+    backend.start()
+    try:
+        assert captured["kwargs"]["enable_benchmark"] is False
+    finally:
+        backend.close()
