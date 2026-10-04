@@ -51,11 +51,17 @@ class NativeBackend(LiteRTLMBackend):
             def __exit__(self, *args):
                 pass
 
+            def render_message_to_string(self, message):
+                return json.dumps(message)
+
             def send_message(self, prompt, **kwargs):
                 backend.prompt = prompt
                 return backend.response
 
         class Engine:
+            def tokenize(self, text):
+                return text.split()
+
             def create_conversation(self, **kwargs):
                 backend.calls.append(kwargs)
                 return Conversation()

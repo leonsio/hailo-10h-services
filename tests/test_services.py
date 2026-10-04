@@ -192,6 +192,9 @@ def test_litert_backend_uses_python_engine_and_preserves_chat_history(tmp_path, 
         def __exit__(self, *args):
             pass
 
+        def render_message_to_string(self, message):
+            return json.dumps(message)
+
         def send_message(self, prompt, **kwargs):
             calls["prompt"] = prompt
             calls["send_kwargs"] = kwargs
@@ -210,6 +213,9 @@ def test_litert_backend_uses_python_engine_and_preserves_chat_history(tmp_path, 
 
         def __exit__(self, *args):
             calls["engine_closed"] = True
+
+        def tokenize(self, text):
+            return text.split()
 
         def create_conversation(self, **kwargs):
             calls["conversation"] = kwargs
