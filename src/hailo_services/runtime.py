@@ -206,9 +206,11 @@ class LiteRTLMBackend:
             return request
         if not callable(getattr(self.engine, "tokenize", None)):
             raise ValueError("max_input_tokens requires LiteRT-LM Engine.tokenize; upgrade litert-lm")
-        # Native prefill rejects input >= context. Also reserve the requested
-        # output budget, rather than letting generation run out of KV space.
-        limit = min(request.max_input_tokens, 4096, self.max_num_tokens - request.max_tokens - 1)
+        # This limit applies only after tool retrieval, immediately before Gemma.
+        # The incoming OpenAI request may be much larger because MiniLM processes
+        # its tool catalogue first. Native prefill still must fit the configured
+        # Gemma context, with the requested output budget reserved.
+        limit = min(request.max_input_tokens, self.max_num_tokens - request.max_tokens - 1)
         if limit < 1:
             raise ValueError("The configured LiteRT context leaves no room for input and output")
         # Validate all original call/result dependencies before dropping history.
