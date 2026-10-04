@@ -11,7 +11,6 @@ import copy
 import re
 import unicodedata
 
-
 _WORD_RE = re.compile(r"[\w.-]+", re.UNICODE)
 _STOP_WORDS = {
     "bitte", "mal", "doch", "ein", "eine", "einen", "einem", "einer", "der", "die", "das",

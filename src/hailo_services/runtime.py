@@ -10,8 +10,8 @@ from pathlib import Path
 from .config import LLM_MODEL, MINILM_HEF_URL, STT_MODEL, VLM_MODEL, Settings
 from .input_budget import InputBudgetError, history_candidates
 from .media import image_frame
-from .models import ensure_minilm_hef, prepare_model_version
 from .minilm import MiniLM
+from .models import ensure_minilm_hef, prepare_model_version
 from .tool_calling import (
     has_tool_context,
     native_messages,
