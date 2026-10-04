@@ -19,13 +19,17 @@ _STOP_WORDS = {
     "macht", "schalte", "schalt", "stell", "stelle", "setze", "fahr", "fahre",
 }
 _SYNONYMS = {
-    "an": {"turn_on", "on"},
-    "aus": {"turn_off", "off"},
-    "einschalten": {"turn_on", "on", "light", "switch"},
-    "anschalten": {"turn_on", "on", "light", "switch"},
-    "anmachen": {"turn_on", "on", "light", "switch"},
-    "ausschalten": {"turn_off", "off", "light", "switch"},
-    "ausmachen": {"turn_off", "off", "light", "switch"},
+    # Synonyms are deliberately split into the same tokens produced from
+    # CamelCase/underscore tool names (HassTurnOff -> "turn", "off").
+    # Keeping only "turn_off" made explicit German action verbs rank below
+    # descriptive tools whose prose happened to contain "light"/"off".
+    "an": {"turn", "on"},
+    "aus": {"turn", "off"},
+    "einschalten": {"turn", "on", "light", "switch"},
+    "anschalten": {"turn", "on", "light", "switch"},
+    "anmachen": {"turn", "on", "light", "switch"},
+    "ausschalten": {"turn", "off", "light", "switch"},
+    "ausmachen": {"turn", "off", "light", "switch"},
     "licht": {"light"},
     "lampe": {"light"},
     "lampen": {"light"},
@@ -106,6 +110,20 @@ def _score(query: set[str], candidate) -> int:
     joined = " ".join(words)
     substring = sum(1 for word in query if len(word) >= 4 and word in joined)
     return exact * 3 + substring
+
+
+def _tool_score(query: set[str], tool) -> int:
+    """Prefer explicit action/function-name matches over incidental prose matches.
+
+    Home Assistant tool descriptions can be verbose and mention unrelated
+    actions as examples. Weighting the function name keeps e.g. HassTurnOff
+    ahead of GetLiveContext for an explicit "schalte ... aus" request.
+    """
+    function = tool.get("function", {}) if isinstance(tool, dict) else {}
+    name_score = _score(query, function.get("name", ""))
+    description_score = _score(query, function.get("description", ""))
+    parameter_score = _score(query, function.get("parameters", {}))
+    return name_score * 4 + description_score + min(parameter_score, 4)
 
 
 def _prune_enums(
@@ -355,7 +373,7 @@ def retrieve_tools(
             "selected_tools": [],
             "enum_pruning": [],
         })
-    ranked = [(_score(query, tool), index, tool) for index, tool in enumerate(tools)]
+    ranked = [(_tool_score(query, tool), index, tool) for index, tool in enumerate(tools)]
     if trace is not None:
         trace["all_tools"] = [
             {
