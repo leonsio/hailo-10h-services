@@ -108,7 +108,15 @@ def _score(query: set[str], candidate) -> int:
     return exact * 3 + substring
 
 
-def _prune_enums(node, query: set[str], stats: dict, limit: int = 12):
+def _prune_enums(
+    node,
+    query: set[str],
+    stats: dict,
+    limit: int = 12,
+    *,
+    trace=None,
+    path: str = "$",
+):
     if isinstance(node, dict):
         enum = node.get("enum")
         if isinstance(enum, list) and len(enum) > 1:
@@ -121,11 +129,25 @@ def _prune_enums(node, query: set[str], stats: dict, limit: int = 12):
                 selected = [item for item in relevant if item[0] >= max(1, best - 2)][:limit]
                 node["enum"] = [item[2] for item in selected]
                 stats["enum_values_removed"] += len(enum) - len(node["enum"])
-        for value in list(node.values()):
-            _prune_enums(value, query, stats, limit)
+                if trace is not None:
+                    trace.append({
+                        "path": path,
+                        "before": enum,
+                        "after": node["enum"],
+                        "scores": [
+                            {"value": item[2], "lexical_score": item[0]}
+                            for item in sorted(ranked, key=lambda item: (-item[0], item[1]))
+                        ],
+                    })
+        for key, value in list(node.items()):
+            _prune_enums(
+                value, query, stats, limit, trace=trace, path=f"{path}.{key}"
+            )
     elif isinstance(node, list):
-        for value in node:
-            _prune_enums(value, query, stats, limit)
+        for index, value in enumerate(node):
+            _prune_enums(
+                value, query, stats, limit, trace=trace, path=f"{path}[{index}]"
+            )
 
 
 def _embedding(encoder, text: str, cache=None):
@@ -169,6 +191,7 @@ def compact_static_context(
     max_entities: int = 8,
     semantic_candidates: int = 24,
     embedding_cache=None,
+    trace=None,
 ):
     """Replace HA's full static entity catalogue with request-relevant entries.
 
@@ -178,6 +201,16 @@ def compact_static_context(
     query_text = latest_user_text(messages).strip()
     query = _tokens(query_text)
     updated = copy.deepcopy(messages)
+    if trace is not None:
+        trace.clear()
+        trace.update({
+            "stage": "entity_retrieval",
+            "query_text": query_text,
+            "query_tokens": sorted(query),
+            "max_entities": max_entities,
+            "semantic_candidates": semantic_candidates,
+            "system_prompts": [],
+        })
     totals = {
         "entities_before": 0,
         "entities_after": 0,
@@ -198,6 +231,23 @@ def compact_static_context(
 
         lexical = [(_score(query, entry), index, entry) for index, entry in enumerate(entries)]
         lexical_hits = [item for item in lexical if item[0] > 0]
+        prompt_trace = None
+        if trace is not None:
+            prompt_trace = {
+                "entities_before": len(entries),
+                "all_entities": [
+                    {
+                        "index": index,
+                        "lexical_score": score,
+                        "entity": entry,
+                    }
+                    for score, index, entry in lexical
+                ],
+                "lexical_hits": [],
+                "semantic_ranking": [],
+                "selected_entities": [],
+            }
+            trace["system_prompts"].append(prompt_trace)
 
         if lexical_hits:
             lexical_hits.sort(key=lambda item: (-item[0], item[1]))
@@ -205,6 +255,15 @@ def compact_static_context(
             candidates = [
                 item for item in lexical_hits if item[0] >= max(1, best - 4)
             ][:semantic_candidates]
+            if prompt_trace is not None:
+                prompt_trace["lexical_hits"] = [
+                    {
+                        "index": index,
+                        "lexical_score": score,
+                        "entity": entry,
+                    }
+                    for score, index, entry in lexical_hits
+                ]
         else:
             candidates = lexical
 
@@ -225,6 +284,16 @@ def compact_static_context(
                 ))
             ranked.sort(key=lambda item: (-item[0], -item[1], item[2]))
             selected = [item[3] for item in ranked[:max_entities]]
+            if prompt_trace is not None:
+                prompt_trace["semantic_ranking"] = [
+                    {
+                        "combined_score": score,
+                        "lexical_score": lexical_score,
+                        "index": index,
+                        "entity": entry,
+                    }
+                    for score, lexical_score, index, entry in ranked
+                ]
         else:
             candidates.sort(key=lambda item: (-item[0], item[1]))
             selected = [item[2] for item in candidates[:max_entities]]
@@ -234,6 +303,8 @@ def compact_static_context(
         if not selected:
             selected = entries[:max_entities]
 
+        if prompt_trace is not None:
+            prompt_trace["selected_entities"] = list(selected)
         compact_catalogue = "\n".join(selected)
         replacement = (
             "Static Context: Relevant entities for the current user request:\n"
@@ -256,6 +327,7 @@ def retrieve_tools(
     enum_limit: int = 8,
     encoder=None,
     embedding_cache=None,
+    trace=None,
 ):
     """Return a compact copy of tools relevant to the latest user turn.
 
@@ -268,7 +340,31 @@ def retrieve_tools(
 
     query_text = latest_user_text(messages).strip()
     query = _tokens(query_text)
+    if trace is not None:
+        trace.clear()
+        trace.update({
+            "stage": "tool_retrieval",
+            "query_text": query_text,
+            "query_tokens": sorted(query),
+            "max_tools": max_tools,
+            "enum_limit": enum_limit,
+            "all_tools": [],
+            "candidates": [],
+            "semantic_ranking": [],
+            "selected_tool_names": [],
+            "selected_tools": [],
+            "enum_pruning": [],
+        })
     ranked = [(_score(query, tool), index, tool) for index, tool in enumerate(tools)]
+    if trace is not None:
+        trace["all_tools"] = [
+            {
+                "index": index,
+                "name": tool.get("function", {}).get("name"),
+                "lexical_score": score,
+            }
+            for score, index, tool in ranked
+        ]
     hits = [item for item in ranked if item[0] > 0]
 
     if hits:
@@ -277,6 +373,16 @@ def retrieve_tools(
         candidates = [item for item in hits if item[0] >= max(1, best - 2)]
     else:
         candidates = ranked
+
+    if trace is not None:
+        trace["candidates"] = [
+            {
+                "index": index,
+                "name": tool.get("function", {}).get("name"),
+                "lexical_score": score,
+            }
+            for score, index, tool in candidates
+        ]
 
     if encoder is not None and query_text and candidates:
         import numpy as np
@@ -301,6 +407,16 @@ def retrieve_tools(
             ))
         semantic.sort(key=lambda item: (-item[0], -item[1], item[2]))
         chosen = [item[3] for item in semantic[:max_tools]]
+        if trace is not None:
+            trace["semantic_ranking"] = [
+                {
+                    "combined_score": score,
+                    "lexical_score": lexical_score,
+                    "index": index,
+                    "name": tool.get("function", {}).get("name"),
+                }
+                for score, lexical_score, index, tool in semantic
+            ]
     elif hits:
         chosen = [item[2] for item in candidates[:max_tools]]
     else:
@@ -314,7 +430,21 @@ def retrieve_tools(
         "enum_values_removed": 0,
     }
     compact = copy.deepcopy(chosen)
+    enum_trace = trace["enum_pruning"] if trace is not None else None
     for tool in compact:
         function = tool.get("function", {})
-        _prune_enums(function.get("parameters", {}), query, stats, enum_limit)
+        _prune_enums(
+            function.get("parameters", {}),
+            query,
+            stats,
+            enum_limit,
+            trace=enum_trace,
+            path=f"$.tools.{function.get('name', '<unnamed>')}.parameters",
+        )
+    if trace is not None:
+        trace["selected_tool_names"] = [
+            tool.get("function", {}).get("name") for tool in compact
+        ]
+        trace["selected_tools"] = copy.deepcopy(compact)
+        trace["stats"] = dict(stats)
     return compact, stats
