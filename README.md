@@ -154,11 +154,17 @@ sudo systemctl restart hailo-10h-services
 
 ### Home Assistant tool-context reduction
 
-For Gemma requests, MiniLM embeds the latest user message and incoming function
-descriptions on Hailo and ranks tools by cosine similarity. Exact entity and
-name matches contribute to ranking. The service sends at most 12 tool definitions
-to Gemma and reduces large entity enums when names clearly match. Explicitly
-selected tools and ongoing tool rounds keep their required schemas intact.
+For Gemma requests, MiniLM first reduces Home Assistant's generated
+`Static Context`: the complete incoming entity catalogue is inspected, but only
+the entities relevant to the latest user request are forwarded to Gemma (up to
+eight candidates). The remaining system instructions are preserved verbatim.
+
+Tool retrieval then ranks the incoming function definitions with lexical matching
+plus MiniLM cosine similarity. Normally at most four relevant tool definitions
+are forwarded, while schemas already referenced by an ongoing tool round are
+kept even when they fall outside that shortlist. Large entity enums are reduced
+when names clearly match. Entity/tool embeddings are cached across requests so
+stable Home Assistant metadata does not have to be recomputed every turn.
 
 Every Gemma request is capped at 4096 input tokens, even when
 the client does not send `max_input_tokens`. Old complete chat rounds are removed
