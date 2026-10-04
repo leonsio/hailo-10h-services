@@ -182,13 +182,14 @@ def _tool_names(tools):
 
 def _deterministic_capability(query: str) -> str | None:
     text = _normalized(query)
-    if re.search(r"\b(wie hell|heller|dunkler|helligkeit|helligkeit|brightness)\b", text):
+    light_target = bool(re.search(r"\b(licht|lichter|lampe|lampen|led|beleuchtung)\b", text))
+    if light_target and re.search(
+        r"\b(wie hell|heller|dunkler|helligkeit|brightness|prozent)\b", text
+    ):
         return "light.brightness"
     if re.search(r"\b(warmweiss|warm weiss|kaltweiss|kalt weiss|farbtemperatur)\b", text):
         return "light.temperature"
-    if re.search(r"\b(farbe|rot|gruen|blau|gelb|orange|violett|lila|pink|weiss)\b", text) and re.search(
-        r"\b(licht|lichter|lampe|lampen|led)\b", text
-    ):
+    if re.search(r"\b(farbe|rot|gruen|blau|gelb|orange|violett|lila|pink|weiss)\b", text) and light_target:
         return "light.color"
     if re.search(r"\b(temperatur|grad|waermer|kaelter)\b", text) and re.search(
         r"\b(heizung|thermostat|klima|klimaanlage|temperatur)\b", text
