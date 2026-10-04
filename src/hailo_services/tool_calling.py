@@ -1,10 +1,14 @@
 """OpenAI/LiteRT tool translation. Actions are executed by the client, never here."""
 
 import json
+import logging
 import re
 import uuid
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError
+
+
+_LOG = logging.getLogger(__name__)
 
 
 def arguments_object(value):
@@ -262,10 +266,30 @@ def response_message(response, request, text):
             raise ValueError("Model requested an unavailable function")
         arguments = arguments_object(function.get("arguments"))
         schema = tools[name].get("parameters", {})
+        original_arguments = dict(arguments)
         arguments = _prefer_area_target(arguments, schema, request.messages)
+        if arguments != original_arguments:
+            _LOG.debug(
+                "event=tool_argument_normalization request_id=%s tool=%s "
+                "kind=area_target before=%s after=%s",
+                getattr(request, "_request_id", "-"),
+                name,
+                json.dumps(original_arguments, ensure_ascii=False, separators=(",", ":")),
+                json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
+            )
         expanded_arguments = _expand_name_list_arguments(
             arguments, schema, request.parallel_tool_calls
         )
+        if len(expanded_arguments) > 1:
+            _LOG.debug(
+                "event=tool_argument_normalization request_id=%s tool=%s "
+                "kind=expand_name_list count=%d before=%s after=%s",
+                getattr(request, "_request_id", "-"),
+                name,
+                len(expanded_arguments),
+                json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
+                json.dumps(expanded_arguments, ensure_ascii=False, separators=(",", ":")),
+            )
         for expanded in expanded_arguments:
             try:
                 Draft202012Validator(schema).validate(expanded)
