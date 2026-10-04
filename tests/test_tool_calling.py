@@ -189,14 +189,14 @@ def area_request(user_text="schalte das Licht in der Küche aus", entities=None)
             ("Licht - Links", "light", "Küche"),
             ("Oberlicht", "light", "Küche"),
         ]
-    static = "\\n".join(
-        f"- names: {name}\\n  domain: {domain}\\n  areas: {area}"
+    static = "\n".join(
+        f"- names: {name}\n  domain: {domain}\n  areas: {area}"
         for name, domain, area in entities
     )
     return ChatRequest(**{
         "model": LLM_MODEL,
         "messages": [
-            {"role": "system", "content": "Static Context: Relevant entities for the current user request:\\n" + static},
+            {"role": "system", "content": "Static Context: Relevant entities for the current user request:\n" + static},
             {"role": "user", "content": user_text},
         ],
         "tools": AREA_TOOL,
