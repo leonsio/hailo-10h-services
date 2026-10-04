@@ -62,7 +62,10 @@ class MiniLM:
         bindings = self.configured.create_bindings(output_buffers={output_name: output})
         bindings.input().set_buffer(frame)
         self.configured.wait_for_async_ready(timeout_ms=10000)
-        job = self.configured.run_async([bindings], lambda _completion_info: None)
+        # HailoRT versions differ in whether completion_info is positional or a
+        # keyword argument. Accept both; an exception escaping this pybind callback
+        # terminates the whole process instead of becoming a Python request error.
+        job = self.configured.run_async([bindings], lambda *args, **kwargs: None)
         job.wait(10000)
         hidden_out = bindings.output(output_name).get_buffer().reshape(128, 384)
         vector = (hidden_out * mask[:, None]).sum(axis=0) / max(float(mask.sum()), 1.0)
