@@ -11,9 +11,9 @@ from test_services import FakeBackend, settings
 from hailo_services.app import create_app
 from hailo_services.config import LLM_MODEL
 from hailo_services.input_budget import InputBudgetError, history_candidates
-from hailo_services.runtime import LiteRTLMBackend
+from hailo_services.runtime import HailoBackend, LiteRTLMBackend
 from hailo_services.schemas import ChatRequest
-from hailo_services.tool_retrieval import retrieve_tools
+from hailo_services.tool_retrieval import compact_static_context, retrieve_tools
 
 TOOL = {"type": "function", "function": {
     "name": "intent__HassTurnOn", "description": "turn a light on",
@@ -228,6 +228,101 @@ def test_german_user_request_reduces_irrelevant_ha_tools_and_entity_enums():
     assert stats == {"tools_before": 3, "tools_after": 1, "enum_values_removed": 3}
     # Input schemas are copied; requests can be safely retried with the original.
     assert len(tools[0]["function"]["parameters"]["properties"]["entity_id"]["enum"]) == 4
+
+
+def test_static_context_is_reduced_to_relevant_kitchen_lights():
+    system = """Du bist Sprachassistent.
+Static Context: An overview of the areas and the devices in this smart home:
+- names: EG Küche - Fenster
+  domain: binary_sensor
+  areas: Küche
+- names: Licht - Links
+  domain: light
+  areas: Küche
+- names: Oberlicht
+  domain: light
+  areas: Küche
+- names: Licht Tisch
+  domain: light
+  areas: Wohnzimmer
+
+When controlling Home Assistant always call the intent tools.
+This device is not able to start timers."""
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": [{"type": "text", "text": "schalte das Licht in der Küche aus"}]},
+    ]
+    compact, stats = compact_static_context(messages)
+    prompt = compact[0]["content"]
+    assert "Licht - Links" in prompt
+    assert "Oberlicht" in prompt
+    assert "EG Küche - Fenster" not in prompt
+    assert "Licht Tisch" not in prompt
+    assert "When controlling Home Assistant always call the intent tools." in prompt
+    assert stats["entities_before"] == 4
+    assert stats["entities_after"] == 2
+    assert stats["characters_removed"] > 0
+    assert messages[0]["content"] == system
+
+
+def test_kitchen_light_off_request_keeps_only_relevant_action_tools():
+    tools = [
+        {"type": "function", "function": {
+            "name": "intent__HassTurnOff",
+            "description": "Turns off/closes a device or entity.",
+            "parameters": {"type": "object", "properties": {"area": {"type": "string"}}},
+        }},
+        {"type": "function", "function": {
+            "name": "intent__HassTurnOn",
+            "description": "Turns on/opens a device or entity.",
+            "parameters": {"type": "object", "properties": {"area": {"type": "string"}}},
+        }},
+        {"type": "function", "function": {
+            "name": "todo__HassListAddItem",
+            "description": "Add item to a todo list",
+            "parameters": {"type": "object", "properties": {"item": {"type": "string"}}},
+        }},
+    ]
+    selected, stats = retrieve_tools(
+        [{"role": "user", "content": "schalte das Licht in der Küche aus"}],
+        tools,
+    )
+    assert [tool["function"]["name"] for tool in selected] == ["intent__HassTurnOff"]
+    assert stats["tools_before"] == 3
+    assert stats["tools_after"] == 1
+
+
+def test_active_tool_schema_is_preserved_alongside_retrieved_followup_tools():
+    backend = HailoBackend(settings())
+    backend.minilm = None
+    live = {"type": "function", "function": {
+        "name": "homeassistant__GetLiveContext",
+        "description": "Get current state",
+        "parameters": {"type": "object", "properties": {}},
+    }}
+    turn_off = {"type": "function", "function": {
+        "name": "intent__HassTurnOff",
+        "description": "Turns off a device",
+        "parameters": {"type": "object", "properties": {}},
+    }}
+    todo = {"type": "function", "function": {
+        "name": "todo__HassListAddItem",
+        "description": "Add a todo item",
+        "parameters": {"type": "object", "properties": {}},
+    }}
+    request = req([
+        {"role": "user", "content": "Wenn das Licht an ist, schalte es aus"},
+        {"role": "assistant", "content": None, "tool_calls": [{
+            "id": "call_live", "type": "function",
+            "function": {"name": "homeassistant__GetLiveContext", "arguments": "{}"},
+        }]},
+        {"role": "tool", "tool_call_id": "call_live", "content": "on"},
+    ], tools=[live, turn_off, todo])
+    selected = backend.select_tools(request)
+    names = [tool["function"]["name"] for tool in selected.tools]
+    assert "homeassistant__GetLiveContext" in names
+    assert "intent__HassTurnOff" in names
+    assert "todo__HassListAddItem" not in names
 
 
 def test_tool_retrieval_preserves_tools_without_a_confident_match():
