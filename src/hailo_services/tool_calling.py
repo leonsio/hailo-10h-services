@@ -139,9 +139,11 @@ def native_messages(messages):
 
 
 def _normalized_text(value):
-    return re.sub(r"\\s+", " ", str(value).casefold().replace("ß", "ss")).strip()
-
-
+    text = str(value).casefold().replace("ß", "ss")
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", text).strip()
 def _latest_user_text(messages):
     for message in reversed(messages):
         if message.get("role") != "user":
@@ -164,7 +166,7 @@ def _relevant_entities(messages):
         if message.get("role") != "system" or not isinstance(message.get("content"), str):
             continue
         blocks = re.findall(
-            r"^- names:\\s*(.+?)\\n\\s+domain:\\s*(.+?)(?:\\n\\s+areas:\\s*(.+?))?(?=\\n- names:|\\n\\n|\\Z)",
+            r"^- names:\s*(.+?)\n\s+domain:\s*(.+?)(?:\n\s+areas:\s*(.+?))?(?=\n- names:|\n\n|\Z)",
             message["content"],
             flags=re.MULTILINE | re.DOTALL,
         )
