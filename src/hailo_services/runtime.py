@@ -339,16 +339,20 @@ class LiteRTLMBackend:
                         "max_input_tokens requires LiteRT-LM Conversation.render_message_to_string; "
                         "upgrade litert-lm"
                     )
-                # render_message_to_string renders one message, not the whole
-                # conversation preface. Count every message and the tool JSON,
-                # then reserve headroom for LiteRT's system/tool template tokens.
-                rendered = "\n".join(render(message) for message in messages)
+                # LiteRT's Conversation already owns messages[:-1] and tool
+                # declarations. Rendering only the final message yields the
+                # complete prompt for Gemma. Rendering every message separately
+                # repeats the whole conversation prefix and tools per message.
+                rendered = render(messages[-1])
                 rendered_tools = json.dumps(
                     selected_tools(request), ensure_ascii=False, separators=(",", ":")
                 ) if has_tool_context(request) else ""
-                raw_tokens = len(self.engine.tokenize(rendered + "\n" + rendered_tools))
-                template_margin = _INPUT_TOKEN_SAFETY_MARGIN + 8 * max(0, len(messages) - 1)
-                tool_margin = 16 * len(selected_tools(request))
+                raw_tokens = len(self.engine.tokenize(rendered))
+                # Keep conservative headroom for native bookkeeping/special tokens.
+                # Tools are already present in rendered; do not count their JSON
+                # payload a second time.
+                template_margin = _INPUT_TOKEN_SAFETY_MARGIN
+                tool_margin = 8 * len(selected_tools(request))
                 tokens = raw_tokens + template_margin + tool_margin
             _debug_json(
                 self.debug_log,
@@ -367,8 +371,10 @@ class LiteRTLMBackend:
                     "accepted": tokens <= limit,
                     "messages": messages,
                     "tools": selected_tools(request),
+                    "render_strategy": "final_message_full_conversation",
+                    "rendered_prompt": rendered,
                     "rendered_messages": rendered,
-                    "rendered_tools": rendered_tools,
+                    "rendered_tools_reference": rendered_tools,
                 },
                 request_id=getattr(request, "_request_id", "-"),
             )
