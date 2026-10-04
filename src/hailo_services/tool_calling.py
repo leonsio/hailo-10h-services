@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import unicodedata
 import uuid
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError
