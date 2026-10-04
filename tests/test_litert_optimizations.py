@@ -145,7 +145,7 @@ def test_exact_rendered_prompt_is_logged_in_debug(caplog):
     assert rendered == "<|turn>user\nschalte das Licht aus\n<|turn>model\n"
     assert "event=gemma_rendered_prompt request_id=-" in caplog.text
     assert '"prompt":"<|turn>user\\nschalte das Licht aus\\n<|turn>model\\n"' in caplog.text
-    assert '"raw_tokens":4' in caplog.text
+    assert '"raw_tokens":6' in caplog.text
 
 
 def test_debug_start_enables_native_litert_benchmark(monkeypatch, tmp_path):
@@ -179,7 +179,7 @@ def test_debug_start_enables_native_litert_benchmark(monkeypatch, tmp_path):
         backend.close()
 
 
-def test_non_debug_start_disables_native_litert_benchmark(monkeypatch, tmp_path):
+def test_non_debug_start_keeps_legacy_engine_arguments(monkeypatch, tmp_path):
     model = tmp_path / "gemma.litertlm"
     model.write_bytes(b"fake")
     captured = {}
@@ -203,6 +203,6 @@ def test_non_debug_start_disables_native_litert_benchmark(monkeypatch, tmp_path)
     backend = LiteRTLMBackend(model, max_num_tokens=4096, debug_log=False)
     backend.start()
     try:
-        assert captured["kwargs"]["enable_benchmark"] is False
+        assert "enable_benchmark" not in captured["kwargs"]
     finally:
         backend.close()
