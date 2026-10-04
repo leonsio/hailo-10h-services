@@ -175,6 +175,29 @@ content still exceeds the budget, the API returns `input_token_limit_exceeded`
 without calling Gemma; it never silently truncates the active request. You may
 configure a lower cap with `HAILO_LITERT_MAX_INPUT_TOKENS`.
 
+With `HAILO_DEBUG_LOG=true`, the full reduction pipeline is logged as JSON.
+Useful events include:
+
+- `retrieval_input`: messages and incoming tool names before MiniLM reduction.
+- `entity_retrieval_trace`: query tokens, every parsed entity with lexical score,
+  semantic ranking, and the selected entity blocks.
+- `after_entity_retrieval`: complete compacted messages sent to the next stage.
+- `tool_retrieval_trace`: all tool scores/candidates, semantic ranking, enum
+  pruning decisions, selected names, and complete selected schemas.
+- `after_tool_retrieval`: the exact tool/schema set remaining after required
+  active-tool schemas are merged back in.
+- `before_input_budget`: request immediately before the 4096-token Gemma budget.
+- `input_budget_candidate`: every history-trimming candidate, raw/token margins,
+  acceptance decision, rendered messages, and rendered tool JSON.
+- `input_budget_selected` / `input_budget_failed`: final budget decision.
+- `final_gemma_request`: exact compacted request, native messages and tools given
+  to LiteRT-LM after all reductions.
+- `gemma_response` / `gemma_stream_response`: raw/parsed final model output.
+
+These verbose records are emitted only in debug mode and can be very large because
+they intentionally preserve enough information to reproduce retrieval and
+token-budget decisions.
+
 All Hailo model handles stay open for the service lifetime. The runtime does not
 control firmware paging or guarantee physical allocation of every byte at all
 times; constructor success and `/health` mean the native model instances loaded.
