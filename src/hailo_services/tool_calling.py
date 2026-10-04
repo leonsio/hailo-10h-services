@@ -133,6 +133,88 @@ def native_messages(messages):
     return converted
 
 
+def _normalized_text(value):
+    return re.sub(r"\\s+", " ", str(value).casefold().replace("ß", "ss")).strip()
+
+
+def _latest_user_text(messages):
+    for message in reversed(messages):
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return " ".join(
+                part.get("text", "") for part in content
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+        return ""
+    return ""
+
+
+def _relevant_entities(messages):
+    entities = []
+    for message in messages:
+        if message.get("role") != "system" or not isinstance(message.get("content"), str):
+            continue
+        blocks = re.findall(
+            r"^- names:\\s*(.+?)\\n\\s+domain:\\s*(.+?)(?:\\n\\s+areas:\\s*(.+?))?(?=\\n- names:|\\n\\n|\\Z)",
+            message["content"],
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        for name, domain, area in blocks:
+            entities.append({
+                "name": name.strip(),
+                "domain": domain.strip(),
+                "area": area.strip() if area else "",
+            })
+    return entities
+
+
+def _prefer_area_target(arguments, schema, messages):
+    """Convert an accidental single-device choice into an area/domain target.
+
+    This is intentionally narrow: the model must already have selected a name
+    and a domain, the user must mention an area, the selected name must not be
+    explicitly present in the user text, and at least two relevant entities of
+    that domain must exist in the mentioned area.
+    """
+    if not isinstance(arguments, dict) or not isinstance(arguments.get("name"), str):
+        return arguments
+    properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+    if "area" not in properties or "domain" not in properties:
+        return arguments
+    domains = arguments.get("domain")
+    if isinstance(domains, str):
+        domains = [domains]
+    if not isinstance(domains, list) or len(domains) != 1 or not isinstance(domains[0], str):
+        return arguments
+    user_text = _normalized_text(_latest_user_text(messages))
+    chosen_name = _normalized_text(arguments["name"])
+    if chosen_name and chosen_name in user_text:
+        return arguments
+    domain = _normalized_text(domains[0])
+    entities = _relevant_entities(messages)
+    area_groups = {}
+    for entity in entities:
+        if _normalized_text(entity["domain"]) != domain or not entity["area"]:
+            continue
+        area_groups.setdefault(entity["area"], []).append(entity)
+    matching = [
+        (area, members) for area, members in area_groups.items()
+        if _normalized_text(area) in user_text and len(members) >= 2
+    ]
+    if len(matching) != 1:
+        return arguments
+    area, members = matching[0]
+    if not any(_normalized_text(item["name"]) == chosen_name for item in members):
+        return arguments
+    repaired = dict(arguments)
+    repaired.pop("name", None)
+    repaired["area"] = area
+    return repaired
+
 def _expand_name_list_arguments(arguments, schema, parallel_tool_calls):
     """Repair Gemma's common HA multi-target shape without inventing arguments.
 
@@ -180,6 +262,7 @@ def response_message(response, request, text):
             raise ValueError("Model requested an unavailable function")
         arguments = arguments_object(function.get("arguments"))
         schema = tools[name].get("parameters", {})
+        arguments = _prefer_area_target(arguments, schema, request.messages)
         expanded_arguments = _expand_name_list_arguments(
             arguments, schema, request.parallel_tool_calls
         )
