@@ -54,8 +54,8 @@ fi
 # path is configured; a package installed only in another user's venv is not visible.
 LITERT_MODEL_PATH=$(sed -n 's/^HAILO_LITERT_MODEL_PATH=//p' /etc/hailo-10h-services.env | tail -n 1)
 if [[ -n ${LITERT_MODEL_PATH} && -f ${LITERT_MODEL_PATH} ]]; then
-  if ! "${SERVICE_DIR}/venv/bin/python" -c 'import litert_lm' 2>/dev/null; then
-    "${SERVICE_DIR}/venv/bin/pip" install litert-lm
+  if ! "${SERVICE_DIR}/venv/bin/python" -c 'from litert_lm import Engine, Tool' 2>/dev/null; then
+    "${SERVICE_DIR}/venv/bin/pip" install --upgrade litert-lm
   fi
 fi
 # Install only the official downloader/config helpers, avoiding unrelated camera capture,

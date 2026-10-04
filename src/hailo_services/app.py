@@ -27,6 +27,7 @@ from .media import audio_file, audio_metadata, decode_base64
 from .protocols import MQTTBridge, WyomingServer, dispatch
 from .runtime import BusyError, Runtime
 from .schemas import ChatRequest, TranscribeRequest
+from .tool_calling import has_tool_context
 
 _LOG = logging.getLogger(__name__)
 _WEB = Path(__file__).with_name("web")
@@ -130,13 +131,15 @@ class AccessAndSizeLimit:
 
 
 def completion(text, identifier, created, model):
+    message = text if isinstance(text, dict) else {"role": "assistant", "content": text}
     return {
         "id": identifier,
         "object": "chat.completion",
         "created": created,
         "model": model,
         "choices": [
-            {"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}
+            {"index": 0, "message": message,
+             "finish_reason": "tool_calls" if message.get("tool_calls") else "stop"}
         ],
     }
 
@@ -290,7 +293,7 @@ def create_app(settings=None, backend=None, litert_backend=None):
         image_count = sum(
             part.get("type") == "image_url"
             for message in request.messages
-            for part in (message["content"] if isinstance(message["content"], list) else [])
+            for part in (message["content"] if isinstance(message.get("content"), list) else [])
         )
         _debug(settings,
                "protocol=http operation=chat_completion request_id=%s model=%s messages=%d images=%d max_tokens=%d stream=%s",
@@ -318,9 +321,25 @@ def create_app(settings=None, backend=None, litert_backend=None):
 
             try:
                 yield event({"role": "assistant", "content": ""})
-                async for chunk in runtime.stream(request):
-                    yield event({"content": chunk})
-                yield event({}, "stop")
+                if has_tool_context(request):
+                    # Buffer native tool output so invalid/incomplete calls are never streamed
+                    # as actions or spoken as text by the voice assistant.
+                    result = await runtime.chat(request)
+                    if isinstance(result, dict):
+                        if result.get("content"):
+                            yield event({"content": result["content"]})
+                        yield event({"tool_calls": [
+                            {"index": index, **call}
+                            for index, call in enumerate(result["tool_calls"])
+                        ]})
+                        yield event({}, "tool_calls")
+                    else:
+                        yield event({"content": result})
+                        yield event({}, "stop")
+                else:
+                    async for chunk in runtime.stream(request):
+                        yield event({"content": chunk})
+                    yield event({}, "stop")
             except Exception as exc:
                 _LOG.exception("Streaming inference failed")
                 yield (

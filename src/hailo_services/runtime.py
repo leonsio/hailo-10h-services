@@ -9,6 +9,13 @@ from pathlib import Path
 from .config import LLM_MODEL, STT_MODEL, VLM_MODEL, Settings
 from .media import image_frame
 from .models import prepare_model_version
+from .tool_calling import (
+    has_tool_context,
+    native_messages,
+    native_tools,
+    response_message,
+    selected_tools,
+)
 
 _LOG = logging.getLogger(__name__)
 
@@ -141,20 +148,14 @@ class LiteRTLMBackend:
 
     @staticmethod
     def _messages(request):
-        messages = []
-        for message in request.messages:
-            content = message["content"]
-            if not isinstance(content, str):
-                if any(item.get("type") == "image_url" for item in content):
-                    raise ValueError(f"Model {LLM_MODEL} accepts text only")
-                content = "\n".join(item["text"] for item in content)
-            messages.append({"role": message["role"], "content": content})
-        if not messages or messages[-1]["role"] != "user":
-            raise ValueError("The final chat message for Gemma must be from the user")
-        return messages
+        return native_messages(request.messages)
 
     @staticmethod
     def _chunk_text(chunk):
+        if hasattr(chunk, "to_json"):
+            chunk = chunk.to_json()
+        if isinstance(chunk, dict) and isinstance(chunk.get("content"), str):
+            return chunk["content"]
         return "".join(
             item.get("text", "")
             for item in chunk.get("content", [])
@@ -165,19 +166,42 @@ class LiteRTLMBackend:
         if self.engine is None:
             raise RuntimeError("LiteRT-LM is not ready")
         messages = self._messages(request)
+        tool_options = {}
+        if has_tool_context(request):
+            if not hasattr(self.litert_lm, "Tool"):
+                raise ValueError("Installed LiteRT-LM lacks Tool support; upgrade litert-lm")
+            tool_options = {
+                "tools": native_tools(self.litert_lm, selected_tools(request)),
+                "automatic_tool_calling": False,
+            }
+            instructions = []
+            if request.tool_choice == "required" or isinstance(request.tool_choice, dict):
+                instructions.append("Return a function call using one of the available tools.")
+            if not request.parallel_tool_calls:
+                instructions.append("Return at most one function call in this response.")
+            if instructions:
+                instruction = "\n".join(instructions)
+                if messages[0]["role"] == "system":
+                    messages[0]["content"] += "\n" + instruction
+                else:
+                    messages.insert(0, {"role": "system", "content": instruction})
         with self.engine.create_conversation(
             messages=messages[:-1],
             sampler_config=self.litert_lm.SamplerConfig(
                 temperature=request.temperature, seed=request.seed
             ),
             max_output_tokens=request.max_tokens,
+            **tool_options,
         ) as conversation:
-            prompt = messages[-1]["content"]
-            if emit is None:
+            prompt = messages[-1] if messages[-1]["role"] == "tool" else messages[-1]["content"]
+            if emit is None or has_tool_context(request):
                 response = conversation.send_message(
                     prompt, max_output_tokens=request.max_tokens
                 )
-                return self._chunk_text(response).strip()
+                result = response_message(response, request, self._chunk_text(response).strip())
+                if emit:
+                    emit(result)
+                return result
             output = []
             for chunk in conversation.send_message_async(
                 prompt, max_output_tokens=request.max_tokens
@@ -257,6 +281,8 @@ class Runtime:
         return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 
     async def chat(self, request):
+        if has_tool_context(request) and request.model != LLM_MODEL:
+            raise ValueError(f"Tool calling requires model {LLM_MODEL}")
         if request.model == LLM_MODEL:
             if not self.litert_ready:
                 detail = self.litert_error or "LiteRT-LM model is not configured"
@@ -273,6 +299,9 @@ class Runtime:
         return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 
     async def stream(self, request):
+        if has_tool_context(request):
+            yield await self.chat(request)
+            return
         loop = asyncio.get_running_loop()
         queue = asyncio.Queue()  # Bounded by request.max_tokens <= 1024.
         cancelled = threading.Event()
