@@ -1,9 +1,8 @@
 import json
 
-import hailo_services.ha_action_verification as action_verification
 from hailo_services.config import LLM_MODEL
+from hailo_services.ha_action_verification import action_verification_response
 from hailo_services.schemas import ChatRequest
-
 
 LIVE_TOOL = {
     "type": "function",
@@ -98,7 +97,7 @@ def base_action_messages():
 
 
 def test_successful_action_requests_live_verification_before_acknowledgement():
-    decision = action_verification.action_verification_response(request(base_action_messages()))
+    decision = action_verification_response(request(base_action_messages()))
     assert decision is not None
     assert decision["kind"] == "verify"
     verify = decision["response"]["tool_calls"][0]
@@ -125,7 +124,7 @@ def test_verified_action_finishes_without_gemma():
             ("Oberlicht", "off"),
         ]),
     ])
-    decision = action_verification.action_verification_response(request(messages))
+    decision = action_verification_response(request(messages))
     assert decision["kind"] == "verified"
     assert decision["response"] == "Erledigt."
 
@@ -146,7 +145,7 @@ def test_mismatching_light_is_retried_once_with_area_disambiguation():
             ("Oberlicht", "off"),
         ]),
     ])
-    decision = action_verification.action_verification_response(request(messages))
+    decision = action_verification_response(request(messages))
     assert decision["kind"] == "retry"
     calls = decision["response"]["tool_calls"]
     assert len(calls) == 1
@@ -183,6 +182,6 @@ def test_second_failed_verification_stops_retry_loop():
         {"role": "assistant", "content": None, "tool_calls": [verify2]},
         live_result("call_verify2", [("Licht - Rechts", "on")]),
     ])
-    decision = action_verification.action_verification_response(request(messages))
+    decision = action_verification_response(request(messages))
     assert decision["kind"] == "failed_verification"
     assert "Licht - Rechts" in decision["response"]
