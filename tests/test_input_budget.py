@@ -248,3 +248,13 @@ def test_default_gemma_input_budget_is_4096_even_if_client_omits_custom_field():
     assert error.value.tokens == 4352
     assert backend.closed == len(backend.created)
     assert backend.max_input_tokens == 4096
+
+
+def test_client_cannot_raise_gemma_input_above_4096():
+    backend = BudgetBackend()
+    backend.start()
+    backend.engine.tokenize = lambda text: range(3840)
+    request = req([{"role": "user", "content": "hello"}], max_input_tokens=8192)
+    with pytest.raises(InputBudgetError) as error:
+        backend._limit_input(request, {})
+    assert error.value.limit == 4096

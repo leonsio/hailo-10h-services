@@ -12,9 +12,14 @@ _LOG = logging.getLogger(__name__)
 
 def ensure_minilm_hef(path, url):
     """Reuse or atomically download the MiniLM HEF into the shared Hailo store."""
+    return ensure_model_file(path, url, 1024 * 1024, 100 * 1024 * 1024)
+
+
+def ensure_model_file(path, url, minimum, maximum):
+    """Download a bounded model asset atomically and reuse a complete local copy."""
     destination = Path(path).expanduser()
-    if destination.is_file() and destination.stat().st_size:
-        _LOG.info("Reusing MiniLM HEF at %s", destination)
+    if destination.is_file() and minimum <= destination.stat().st_size <= maximum:
+        _LOG.info("Reusing model asset at %s", destination)
         return destination
 
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -31,17 +36,17 @@ def ensure_minilm_hef(path, url):
                 size = 0
                 while chunk := response.read(1024 * 1024):
                     size += len(chunk)
-                    if size > 100 * 1024 * 1024:
-                        raise RuntimeError("MiniLM HEF download exceeds the 100 MiB safety limit")
+                    if size > maximum:
+                        raise RuntimeError(f"Model download exceeds {maximum} bytes")
                     output.write(chunk)
                 output.flush()
                 os.fsync(output.fileno())
-        if size < 1024 * 1024 or (expected is not None and size != expected):
+        if size < minimum or (expected is not None and size != expected):
             raise RuntimeError(
-                f"Incomplete MiniLM HEF download ({size} bytes; expected {expected or 'at least 1 MiB'})"
+                f"Incomplete MiniLM HEF/model download ({size} bytes; expected {expected or minimum})"
             )
         os.replace(temporary_path, destination)
-        _LOG.info("Downloaded MiniLM HEF to %s (%d bytes)", destination, size)
+        _LOG.info("Downloaded model asset to %s (%d bytes)", destination, size)
         return destination
     except Exception:
         temporary_path.unlink(missing_ok=True)

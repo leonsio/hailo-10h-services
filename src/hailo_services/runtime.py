@@ -11,6 +11,7 @@ from .config import LLM_MODEL, MINILM_HEF_URL, STT_MODEL, VLM_MODEL, Settings
 from .input_budget import InputBudgetError, history_candidates
 from .media import image_frame
 from .models import ensure_minilm_hef, prepare_model_version
+from .minilm import MiniLM
 from .tool_calling import (
     has_tool_context,
     native_messages,
@@ -35,7 +36,7 @@ class LiteRTInferenceError(RuntimeError):
 class HailoBackend:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.device = self.vlm = self.whisper = None
+        self.device = self.vlm = self.whisper = self.minilm = None
         self.paths = {}
         self.artifact_paths = {}
 
@@ -54,8 +55,7 @@ class HailoBackend:
             if path is None or not path.is_file() or path.stat().st_size == 0:
                 raise RuntimeError(f"Could not resolve/download {model}")
             self.paths[key] = str(path)
-        # The HEF is cached beside the other Hailo-10H models. MiniLM host-side
-        # tokenizer/embedding assets are not bundled with this encoder HEF.
+        # Cache the HEF before allocating the accelerator.
         self.artifact_paths["minilm_hef"] = str(ensure_minilm_hef(
             self.settings.minilm_hef_path, MINILM_HEF_URL
         ))
@@ -70,7 +70,9 @@ class HailoBackend:
             self.vlm = VLM(self.device, self.paths["vlm"])
             _LOG.info("Loading resident Whisper Base from %s", self.paths["whisper"])
             self.whisper = Speech2Text(self.device, self.paths["whisper"])
-            _LOG.info("Both models initialized; VDevice group_id=SHARED; paths=%s", self.paths)
+            self.minilm = MiniLM(self.device, self.artifact_paths["minilm_hef"])
+            self.artifact_paths.update(self.minilm.artifacts)
+            _LOG.info("All models initialized; VDevice group_id=SHARED; paths=%s", self.paths)
         except BaseException:
             self.close()
             raise
@@ -126,13 +128,28 @@ class HailoBackend:
         )
         return "".join(segment.text for segment in segments).strip()
 
+    def select_tools(self, request):
+        if not request.tools or any(m.get("role") == "tool" or m.get("tool_calls") for m in request.messages):
+            return request
+        source = request.tools
+        if isinstance(request.tool_choice, dict):
+            name = request.tool_choice["function"]["name"]
+            source = [tool for tool in source if tool["function"]["name"] == name]
+        selected, stats = retrieve_tools(request.messages, source, encoder=self.minilm)
+        _LOG.info("MiniLM tool retrieval: %d -> %d tools; %d enum values removed",
+                  stats["tools_before"], stats["tools_after"], stats["enum_values_removed"])
+        return request.model_copy(update={"tools": selected})
+
     def close(self):
         # Release models before the device, including after partial startup.
-        for name in ("whisper", "vlm", "device"):
+        for name in ("minilm", "whisper", "vlm", "device"):
             resource = getattr(self, name)
             if resource is not None:
                 try:
-                    resource.release()
+                    if name == "minilm":
+                        resource.close()
+                    else:
+                        resource.release()
                 except Exception:
                     _LOG.exception("Error releasing %s", name)
                 finally:
@@ -191,7 +208,7 @@ class LiteRTLMBackend:
             raise ValueError("max_input_tokens requires LiteRT-LM Engine.tokenize; upgrade litert-lm")
         # Native prefill rejects input >= context. Also reserve the requested
         # output budget, rather than letting generation run out of KV space.
-        limit = min(request.max_input_tokens, self.max_num_tokens - request.max_tokens - 1)
+        limit = min(request.max_input_tokens, 4096, self.max_num_tokens - request.max_tokens - 1)
         if limit < 1:
             raise ValueError("The configured LiteRT context leaves no room for input and output")
         # Validate all original call/result dependencies before dropping history.
@@ -245,9 +262,9 @@ class LiteRTLMBackend:
             if isinstance(item, dict) and item.get("type") == "text"
         ) if isinstance(chunk, dict) else ""
 
-    def chat(self, request, emit=None, cancelled=None):
+    def chat(self, request, emit=None, cancelled=None, tools_prepared=False):
         try:
-            return self._chat(request, emit, cancelled)
+            return self._chat(request, emit, cancelled, tools_prepared)
         except RuntimeError as exc:
             _LOG.exception("LiteRT inference failed; model=%s context_tokens=%d", request.model, self.max_num_tokens)
             raise LiteRTInferenceError(
@@ -257,12 +274,12 @@ class LiteRTLMBackend:
                 "prompt/history. Larger contexts require more RAM."
             ) from exc
 
-    def _chat(self, request, emit=None, cancelled=None):
+    def _chat(self, request, emit=None, cancelled=None, tools_prepared=False):
         if self.engine is None:
             raise RuntimeError("LiteRT-LM is not ready")
         if request.max_input_tokens is None:
             request = request.model_copy(update={"max_input_tokens": self.max_input_tokens})
-        if request.tools and not any(
+        if not tools_prepared and request.tools and not any(
             message.get("role") == "tool" or message.get("tool_calls")
             for message in request.messages
         ):
@@ -399,6 +416,9 @@ class Runtime:
             if not self.litert_ready:
                 detail = self.litert_error or "LiteRT-LM model is not configured"
                 raise BusyError(f"{LLM_MODEL} is unavailable: {detail}")
+            if request.tools and isinstance(self.backend, HailoBackend):
+                request = await self.call(self.backend.select_tools, request)
+                return await self.call_litert(self.litert_backend.chat, request, None, None, True)
             return await self.call_litert(self.litert_backend.chat, request)
         if request.model != VLM_MODEL:
             raise ValueError(f"Unknown model: {request.model}")
@@ -466,6 +486,7 @@ class Runtime:
             + ([LLM_MODEL] if self.litert_ready else []),
             "model_paths": self.backend.paths,
             "artifact_paths": getattr(self.backend, "artifact_paths", {}),
+            "minilm_ready": bool(self.ready and getattr(self.backend, "minilm", None)),
         }
 
     async def close(self):

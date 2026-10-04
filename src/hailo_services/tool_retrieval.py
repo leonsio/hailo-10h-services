@@ -1,8 +1,8 @@
-"""Small, deterministic first-pass retrieval for Home Assistant tool schemas.
+"""Retrieve relevant Home Assistant tool schemas before passing them to Gemma.
 
 The incoming HA request may contain a large number of nearly identical tools or
 large enums of entity IDs. Keep only tools and enum values that match the latest
-user turn. This is deliberately lexical: it does not claim to run the MiniLM HEF.
+user turn. The optional encoder runs MiniLM on the Hailo accelerator.
 """
 
 from __future__ import annotations
@@ -126,7 +126,7 @@ def _prune_enums(node, query: set[str], stats: dict, limit: int = 12):
             _prune_enums(value, query, stats, limit)
 
 
-def retrieve_tools(messages, tools, *, max_tools: int = 12, enum_limit: int = 12):
+def retrieve_tools(messages, tools, *, max_tools: int = 12, enum_limit: int = 12, encoder=None):
     """Return a copy of tools with irrelevant definitions and enum values removed.
 
     If no reliable lexical hit exists, the full tool list is preserved. A forced
@@ -136,6 +136,26 @@ def retrieve_tools(messages, tools, *, max_tools: int = 12, enum_limit: int = 12
     if not tools:
         return tools, {"tools_before": 0, "tools_after": 0, "enum_values_removed": 0}
     query = _tokens(latest_user_text(messages))
+    if encoder is not None and latest_user_text(messages).strip():
+        import numpy as np
+
+        vector = encoder.embed(latest_user_text(messages))
+        ranked = []
+        for index, tool in enumerate(tools):
+            fn = tool.get("function", {})
+            description = " ".join((fn.get("name", ""), fn.get("description", ""),
+                                    _text(fn.get("parameters", {}))[:1400]))
+            similarity = float(np.dot(vector, encoder.embed(description)))
+            # Exact matches remain useful for entity IDs and proper names.
+            ranked.append((similarity + min(_score(query, tool), 12) * 0.025, index, tool))
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        chosen = [item[2] for item in ranked[:max_tools]]
+        stats = {"tools_before": len(tools), "tools_after": len(chosen), "enum_values_removed": 0}
+        compact = copy.deepcopy(chosen)
+        for tool in compact:
+            _prune_enums(tool.get("function", {}).get("parameters", {}), query, stats, enum_limit)
+        return compact, stats
+
     ranked = [(_score(query, tool), index, tool) for index, tool in enumerate(tools)]
     hits = [item for item in ranked if item[0] > 0]
     if not hits:
