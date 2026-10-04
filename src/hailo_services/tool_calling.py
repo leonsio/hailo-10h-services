@@ -133,6 +133,33 @@ def native_messages(messages):
     return converted
 
 
+def _expand_name_list_arguments(arguments, schema, parallel_tool_calls):
+    """Repair Gemma's common HA multi-target shape without inventing arguments.
+
+    Home Assistant intent schemas use name: string for one target, while Gemma
+    may emit name: [..] when the user asks to control several devices. A
+    singleton list can be normalized directly. Multiple names are represented
+    as independent tool calls only when the client explicitly allows parallel
+    calls. All expanded argument objects are still validated against the
+    caller-provided JSON schema afterwards.
+    """
+    properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+    name_schema = properties.get("name", {}) if isinstance(properties, dict) else {}
+    names = arguments.get("name") if isinstance(arguments, dict) else None
+    if not (
+        isinstance(names, list)
+        and isinstance(name_schema, dict)
+        and name_schema.get("type") == "string"
+    ):
+        return [arguments]
+    if not names or not all(isinstance(value, str) for value in names):
+        return [arguments]
+    if len(names) > 1 and not parallel_tool_calls:
+        raise ValueError(
+            "Model returned multiple device names while parallel_tool_calls is disabled"
+        )
+    return [{**arguments, "name": value} for value in names]
+
 def response_message(response, request, text):
     """Validate generated function names and arguments before returning actions."""
     if hasattr(response, "to_json"):
@@ -152,13 +179,25 @@ def response_message(response, request, text):
         if not isinstance(name, str) or name not in tools:
             raise ValueError("Model requested an unavailable function")
         arguments = arguments_object(function.get("arguments"))
-        try:
-            Draft202012Validator(tools[name].get("parameters", {})).validate(arguments)
-        except ValidationError as exc:
-            raise ValueError(f"Model returned invalid arguments for {name}: {exc.message}") from exc
-        normalized.append({"id": "call_" + uuid.uuid4().hex, "type": "function", "function": {
-            "name": name, "arguments": json.dumps(arguments, ensure_ascii=False),
-        }})
+        schema = tools[name].get("parameters", {})
+        expanded_arguments = _expand_name_list_arguments(
+            arguments, schema, request.parallel_tool_calls
+        )
+        for expanded in expanded_arguments:
+            try:
+                Draft202012Validator(schema).validate(expanded)
+            except ValidationError as exc:
+                raise ValueError(
+                    f"Model returned invalid arguments for {name}: {exc.message}"
+                ) from exc
+            normalized.append({
+                "id": "call_" + uuid.uuid4().hex,
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": json.dumps(expanded, ensure_ascii=False),
+                },
+            })
     if not normalized:
         if request.tool_choice == "required" or isinstance(request.tool_choice, dict):
             raise ValueError("Model did not return the required tool call")
