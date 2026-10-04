@@ -29,7 +29,8 @@ function controls() {
   $("send-chat").disabled = chatBusy || !config;
   $("clear-chat").disabled = chatBusy;
   $("prompt").disabled = chatBusy;
-  $("image").disabled = chatBusy;
+  $("chat-model").disabled = chatBusy;
+  $("image").disabled = chatBusy || $("chat-model").value === config?.llm_model;
   $("record").disabled = !config || !canRecord() || !!recording || starting || stopping || audioBusy;
   $("stop").disabled = !recording || stopping;
   $("audio-file").disabled = !!recording || starting || stopping || audioBusy;
@@ -57,7 +58,7 @@ async function refreshStatus() {
 function bubble(role, text, image) {
   $("conversation").querySelector(".empty")?.remove();
   const node = document.createElement("div"); node.className = `message ${role}`;
-  const title = document.createElement("strong"); title.textContent = role === "user" ? "DU" : "QWEN2-VL";
+  const title = document.createElement("strong"); title.textContent = role === "user" ? "DU" : (config?.model_labels?.[$("chat-model").value] || "ASSISTANT");
   const content = document.createElement("span"); content.textContent = text;
   node.append(title, content);
   if (image) { const img = document.createElement("img"); img.src = image; img.alt = "Gesendetes Bild"; node.append(img); }
@@ -85,7 +86,9 @@ $("chat-form").addEventListener("submit", async (event) => {
   chatBusy = true; controls(); note("chat-note", "Antwort wird erzeugt …");
   let userNode;
   try {
+    const model = $("chat-model").value;
     const file = $("image").files[0];
+    if (file && model === config.llm_model) throw new Error("Gemma verarbeitet Text. Für Bilder bitte Qwen2-VL wählen.");
     if (file && !["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new Error("Bitte JPEG, PNG oder WebP auswählen.");
     if (file && file.size * 4 / 3 > config.max_body - 1024) throw new Error("Bild ist zu groß für den Service.");
     const image = file ? await readImage(file) : null;
@@ -94,7 +97,7 @@ $("chat-form").addEventListener("submit", async (event) => {
     if (messages.length > 31) throw new Error("Chat ist voll. Bitte einen neuen Chat starten.");
     const images = messages.flatMap(m => Array.isArray(m.content) ? m.content : []).filter(p => p.type === "image_url");
     if (images.length > 4) throw new Error("Maximal vier Bilder pro Chat. Bitte einen neuen Chat starten.");
-    const body = JSON.stringify({ model: config.vlm_model, messages, max_tokens: Number($("max-tokens").value) });
+    const body = JSON.stringify({ model, messages, max_tokens: Number($("max-tokens").value) });
     if (new Blob([body]).size > config.max_body) throw new Error("Chat ist zu groß. Bitte einen neuen Chat starten.");
     userNode = bubble("user", prompt, image);
     const start = performance.now();
@@ -224,6 +227,11 @@ async function init() {
   await refreshStatus(); setInterval(refreshStatus, 5000);
   try {
     config = await request("ui/config");
+    for (const model of config.chat_models || [config.vlm_model]) {
+      if (model === config.vlm_model) continue;
+      $("chat-model").add(new Option(`${model} · LiteRT-LM / CPU`, model));
+    }
+    config.model_labels = { [config.vlm_model]: "QWEN2-VL", [config.llm_model]: "GEMMA 4 E2B" };
     $("auth-section").hidden = !config.auth_required;
     $("record-progress").max = config.recording_seconds;
     if ([...$("language").options].some(o => o.value === config.language)) $("language").value = config.language;
@@ -231,6 +239,15 @@ async function init() {
     note("mic-hint", canRecord() ? `Maximal ${config.recording_seconds} Sekunden. Aufnahme als Mono-WAV; kein Zusatzprogramm nötig.` :
       "Mikrofonaufnahme braucht HTTPS oder localhost und einen Browser mit AudioWorklet. Bei HTTP über eine LAN-IP bitte Audiodatei hochladen oder SSH-Tunnel verwenden.", !canRecord());
     note("audio-name", `WAV / FLAC / OGG · maximal ${config.max_audio_seconds} s und ${(config.max_body / 1024 / 1024).toFixed(1)} MB.`);
+    $("chat-model").addEventListener("change", () => {
+      if ($("chat-model").value === config.llm_model && $("image").files.length) {
+        $("image").value = ""; $("image-preview").hidden = true;
+      }
+      note("chat-note", $("chat-model").value === config.llm_model
+        ? "Gemma 4 E2B läuft über LiteRT-LM auf der CPU. Bildanalyse erfolgt mit Qwen2-VL."
+        : "Qwen2-VL verarbeitet Text und Bilder über Hailo.");
+      controls();
+    });
   } catch (error) { note("status-note", `Seitenkonfiguration konnte nicht geladen werden: ${error.message}`, true); }
   controls();
 }

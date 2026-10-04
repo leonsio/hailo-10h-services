@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 VLM_MODEL = "Qwen2-VL-2B-Instruct"
 STT_MODEL = "whisper-base"
+LLM_MODEL = "gemma-4-E2B-it"
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class Settings:
     max_body: int = 16 * 1024 * 1024
     max_audio_seconds: int = 120
     debug_log: bool = False
+    litert_model_path: str = ""
     mqtt_host: str = ""
     mqtt_port: int = 1883
     mqtt_username: str = ""

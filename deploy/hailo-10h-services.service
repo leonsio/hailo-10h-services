@@ -27,7 +27,7 @@ PrivateTmp=true
 ProtectSystem=full
 # ProtectSystem also covers /usr/local; ACLs alone cannot permit downloads there.
 ReadWritePaths=/usr/local/hailo/resources/models/hailo10h
-ProtectHome=true
+ProtectHome=read-only
 UMask=0022
 
 [Install]

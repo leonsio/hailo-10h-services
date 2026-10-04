@@ -379,6 +379,49 @@ sudo systemctl restart hailo-10h-services
 sudo journalctl -u hailo-10h-services -f
 ```
 
+### Optional Gemma 4 E2B through LiteRT-LM
+
+The service can also keep a LiteRT-LM `Engine` resident and route text-only
+OpenAI-compatible chat requests to it. LiteRT-LM runs explicitly on CPU in its
+own single-worker queue; Qwen2-VL and Whisper continue to use the Hailo `SHARED`
+device. This uses LiteRT-LM's Python API rather than starting a second HTTP
+server. The model is loaded once at service startup and each API request gets a
+fresh conversation populated from the supplied message history.
+
+Configure `/etc/hailo-10h-services.env`:
+
+```bash
+HAILO_LITERT_MODEL_PATH=/home/leonsio/.litert-lm/models/gemma-4-E2B-it.litertlm
+```
+
+Then run the installer/update script so the service virtual environment has
+`litert-lm` and the service account can read the model. Restart and check
+`/health`; the `litert_lm.ready` field and `gemma-4-E2B-it` entry in `/v1/models`
+should be present. If LiteRT-LM cannot load, Hailo service startup still
+completes and the reason appears in `litert_lm.error` and the service log.
+Leave the path empty to disable Gemma.
+
+Chat requests select the backend using the model field:
+
+```json
+{"model":"gemma-4-E2B-it","messages":[{"role":"user","content":"Hallo!"}],"max_tokens":128}
+```
+
+Use `Qwen2-VL-2B-Instruct` for text and image analysis. Gemma is text-only.
+Home Assistant or another OpenAI-compatible client can point to the same service
+base URL (`https://<raspberry-pi>:8443/v1` with the default HTTPS setup or
+`http://<raspberry-pi>:8090/v1` without HTTPS), use the service API key, and
+select `gemma-4-E2B-it` or `Qwen2-VL-2B-Instruct`. For a self-signed certificate,
+the client must trust that certificate. LiteRT-LM and
+Gemma share system RAM with the service; verify memory headroom on the Pi before
+raising the request queue size.
+
+For Home Assistant, use its **llama.cpp** conversation integration and enter
+the service URL and API key; that integration accepts OpenAI-compatible chat
+completion servers and lets you choose the model. Home Assistant's built-in
+OpenAI integration only supports OpenAI's own API, so it cannot be pointed at
+this local service. See the [llama.cpp integration instructions](https://www.home-assistant.io/integrations/llama_cpp/).
+
 Sources used for the implementation:
 
 - [Hailo GenAI examples](https://github.com/hailo-ai/hailo-apps/tree/main/hailo_apps/python/gen_ai_apps)

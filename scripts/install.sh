@@ -45,6 +45,19 @@ if ! "${SERVICE_DIR}/venv/bin/python" -c 'import hailo_platform.genai' 2>/dev/nu
 fi
 "${SERVICE_DIR}/venv/bin/pip" install --upgrade pip setuptools wheel
 "${SERVICE_DIR}/venv/bin/pip" install "${SOURCE_DIR}" 'PyYAML>=6,<7' 'python-dotenv>=1,<2' 'opencv-python-headless==4.10.0.84'
+if [[ ! -f /etc/hailo-10h-services.env ]]; then
+  install -m 0600 "${SOURCE_DIR}/deploy/hailo-10h-services.env.example" /etc/hailo-10h-services.env
+  SERVICE_KEY=$("${SERVICE_DIR}/venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(32))')
+  sed -i "s/^HAILO_API_KEY=$/HAILO_API_KEY=${SERVICE_KEY}/" /etc/hailo-10h-services.env
+fi
+# LiteRT-LM is optional. Install it into the service's interpreter when a model
+# path is configured; a package installed only in another user's venv is not visible.
+LITERT_MODEL_PATH=$(sed -n 's/^HAILO_LITERT_MODEL_PATH=//p' /etc/hailo-10h-services.env | tail -n 1)
+if [[ -n ${LITERT_MODEL_PATH} && -f ${LITERT_MODEL_PATH} ]]; then
+  if ! "${SERVICE_DIR}/venv/bin/python" -c 'import litert_lm' 2>/dev/null; then
+    "${SERVICE_DIR}/venv/bin/pip" install litert-lm
+  fi
+fi
 # Install only the official downloader/config helpers, avoiding unrelated camera capture,
 # audio capture, TTS, GStreamer and PyTorch dependency bundles.
 if [[ ! -d ${SERVICE_DIR}/hailo-apps/.git ]]; then
@@ -58,6 +71,14 @@ install -d -m 0755 /usr/local/hailo/resources/models/hailo10h
 setfacl -m u:hailo-services:rx /usr/local/hailo /usr/local/hailo/resources /usr/local/hailo/resources/models
 setfacl -R -m u:hailo-services:rwX /usr/local/hailo/resources/models/hailo10h
 setfacl -m d:u:hailo-services:rwx /usr/local/hailo/resources/models/hailo10h
+if [[ -n ${LITERT_MODEL_PATH} && -f ${LITERT_MODEL_PATH} ]]; then
+  LITERT_DIR=$(dirname -- "${LITERT_MODEL_PATH}")
+  while [[ ${LITERT_DIR} != / && ${LITERT_DIR} != /home ]]; do
+    setfacl -m u:hailo-services:x "${LITERT_DIR}"
+    LITERT_DIR=$(dirname -- "${LITERT_DIR}")
+  done
+  setfacl -m u:hailo-services:r "${LITERT_MODEL_PATH}"
+fi
 # Typical Hailo-10H character device name. Preserve existing device groups/modes.
 install -d -m 0755 /etc/udev/rules.d
 cat > /etc/udev/rules.d/71-hailo-10h-services.rules <<'RULE'
@@ -71,11 +92,6 @@ for DEVICE_PATH in /dev/h1x*; do
 done
 if command -v udevadm >/dev/null; then
   udevadm control --reload-rules || true
-fi
-if [[ ! -f /etc/hailo-10h-services.env ]]; then
-  install -m 0600 "${SOURCE_DIR}/deploy/hailo-10h-services.env.example" /etc/hailo-10h-services.env
-  SERVICE_KEY=$("${SERVICE_DIR}/venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(32))')
-  sed -i "s/^HAILO_API_KEY=$/HAILO_API_KEY=${SERVICE_KEY}/" /etc/hailo-10h-services.env
 fi
 # Root reads the env file on behalf of the service; secrets need not be user-readable.
 install -m 0644 "${SOURCE_DIR}/deploy/hailo-10h-services.service" /etc/systemd/system/hailo-10h-services.service

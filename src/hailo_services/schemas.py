@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -7,7 +7,7 @@ from .config import VLM_MODEL
 
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    model: Literal["Qwen2-VL-2B-Instruct"] = VLM_MODEL
+    model: str = VLM_MODEL
     messages: list[dict[str, Any]] = Field(min_length=1, max_length=32)
     max_tokens: int = Field(default=256, ge=1, le=1024)
     temperature: float = Field(default=0.1, ge=0, le=1)

@@ -4,8 +4,9 @@ import asyncio
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
-from .config import STT_MODEL, VLM_MODEL, Settings
+from .config import LLM_MODEL, STT_MODEL, VLM_MODEL, Settings
 from .media import image_frame
 from .models import prepare_model_version
 
@@ -116,31 +117,138 @@ class HailoBackend:
                     setattr(self, name, None)
 
 
+class LiteRTLMBackend:
+    """Resident LiteRT-LM Python Engine for text-only Gemma requests."""
+
+    def __init__(self, model_path):
+        self.model_path = str(Path(model_path).expanduser())
+        self.engine_context = None
+        self.engine = None
+        self.litert_lm = None
+
+    def start(self):
+        path = Path(self.model_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"LiteRT-LM model not found: {path}")
+        import litert_lm
+
+        self.litert_lm = litert_lm
+        self.engine_context = litert_lm.Engine(
+            str(path), backend=litert_lm.Backend.CPU()
+        )
+        self.engine = self.engine_context.__enter__()
+        _LOG.info("Loaded LiteRT-LM model %s on CPU", path)
+
+    @staticmethod
+    def _messages(request):
+        messages = []
+        for message in request.messages:
+            content = message["content"]
+            if not isinstance(content, str):
+                if any(item.get("type") == "image_url" for item in content):
+                    raise ValueError(f"Model {LLM_MODEL} accepts text only")
+                content = "\n".join(item["text"] for item in content)
+            messages.append({"role": message["role"], "content": content})
+        if not messages or messages[-1]["role"] != "user":
+            raise ValueError("The final chat message for Gemma must be from the user")
+        return messages
+
+    @staticmethod
+    def _chunk_text(chunk):
+        return "".join(
+            item.get("text", "")
+            for item in chunk.get("content", [])
+            if isinstance(item, dict) and item.get("type") == "text"
+        ) if isinstance(chunk, dict) else ""
+
+    def chat(self, request, emit=None, cancelled=None):
+        if self.engine is None:
+            raise RuntimeError("LiteRT-LM is not ready")
+        messages = self._messages(request)
+        with self.engine.create_conversation(
+            messages=messages[:-1],
+            sampler_config=self.litert_lm.SamplerConfig(
+                temperature=request.temperature, seed=request.seed
+            ),
+            max_output_tokens=request.max_tokens,
+        ) as conversation:
+            prompt = messages[-1]["content"]
+            if emit is None:
+                response = conversation.send_message(
+                    prompt, max_output_tokens=request.max_tokens
+                )
+                return self._chunk_text(response).strip()
+            output = []
+            for chunk in conversation.send_message_async(
+                prompt, max_output_tokens=request.max_tokens
+            ):
+                if cancelled is not None and cancelled.is_set():
+                    break
+                text = self._chunk_text(chunk)
+                if text:
+                    output.append(text)
+                    emit(text)
+            return "".join(output).strip()
+
+    def close(self):
+        if self.engine_context is not None:
+            try:
+                self.engine_context.__exit__(None, None, None)
+            finally:
+                self.engine = self.engine_context = self.litert_lm = None
+
+
 class Runtime:
-    def __init__(self, settings: Settings, backend=None):
+    def __init__(self, settings: Settings, backend=None, litert_backend=None):
         self.settings = settings
         self.backend = backend if backend is not None else HailoBackend(settings)
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hailo-owner")
         self.pending = 0
         self.ready = False
+        self.litert_backend = litert_backend
+        if self.litert_backend is None and settings.litert_model_path:
+            self.litert_backend = LiteRTLMBackend(settings.litert_model_path)
+        self.litert_executor = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="litert-lm-owner")
+            if self.litert_backend is not None else None
+        )
+        self.litert_pending = 0
+        self.litert_ready = False
+        self.litert_error = None
 
     async def start(self):
         await asyncio.get_running_loop().run_in_executor(self.executor, self.backend.start)
         self.ready = True
+        if self.litert_backend is not None:
+            try:
+                await asyncio.get_running_loop().run_in_executor(
+                    self.litert_executor, self.litert_backend.start
+                )
+                self.litert_ready = True
+            except Exception as exc:
+                self.litert_error = f"{type(exc).__name__}: {exc}"
+                _LOG.exception("LiteRT-LM startup failed; Hailo models remain available")
 
-    def submit(self, function, *args):
+    def submit(self, function, *args, executor=None, litert=False):
         if not self.ready:
             raise BusyError("Runtime is not ready")
-        if self.pending >= self.settings.queue_size:
+        pending = self.litert_pending if litert else self.pending
+        if pending >= self.settings.queue_size:
             raise BusyError("Inference queue is full")
-        self.pending += 1
-        future = asyncio.get_running_loop().run_in_executor(self.executor, function, *args)
+        if litert:
+            self.litert_pending += 1
+        else:
+            self.pending += 1
+        future = asyncio.get_running_loop().run_in_executor(executor or self.executor, function, *args)
         # A timed out/disconnected client must NOT release capacity before native work ends.
-        future.add_done_callback(self._completed)
+        future.add_done_callback(lambda completed: self._completed(completed, litert))
         return future
 
-    def _completed(self, future):
-        self.pending -= 1
+    def _completed(self, future, litert=False):
+        if litert:
+            self.litert_pending -= 1
+        else:
+            self.pending -= 1
         if not future.cancelled():
             future.exception()  # Observe late exceptions after client cancellation/timeout.
 
@@ -149,17 +257,38 @@ class Runtime:
         return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 
     async def chat(self, request):
+        if request.model == LLM_MODEL:
+            if not self.litert_ready:
+                detail = self.litert_error or "LiteRT-LM model is not configured"
+                raise BusyError(f"{LLM_MODEL} is unavailable: {detail}")
+            return await self.call_litert(self.litert_backend.chat, request)
+        if request.model != VLM_MODEL:
+            raise ValueError(f"Unknown model: {request.model}")
         return await self.call(self.backend.chat, request)
+
+    async def call_litert(self, function, *args):
+        future = self.submit(
+            function, *args, executor=self.litert_executor, litert=True
+        )
+        return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 
     async def stream(self, request):
         loop = asyncio.get_running_loop()
         queue = asyncio.Queue()  # Bounded by request.max_tokens <= 1024.
         cancelled = threading.Event()
+        litert = request.model == LLM_MODEL
+        if request.model != VLM_MODEL and not litert:
+            raise ValueError(f"Unknown model: {request.model}")
+        if litert and not self.litert_ready:
+            detail = self.litert_error or "LiteRT-LM model is not configured"
+            raise BusyError(f"{LLM_MODEL} is unavailable: {detail}")
         future = self.submit(
-            self.backend.chat,
+            self.litert_backend.chat if litert else self.backend.chat,
             request,
             lambda chunk: loop.call_soon_threadsafe(queue.put_nowait, chunk),
             cancelled,
+            executor=self.litert_executor if litert else self.executor,
+            litert=litert,
         )
         future.add_done_callback(lambda _: queue.put_nowait(None))
         deadline = loop.time() + self.settings.request_timeout
@@ -181,7 +310,15 @@ class Runtime:
             "ready": self.ready,
             "group_id": "SHARED",
             "pending": self.pending,
-            "models": [VLM_MODEL, STT_MODEL] if self.ready else [],
+            "litert_lm": {
+                "ready": self.litert_ready,
+                "model": LLM_MODEL if self.litert_backend else None,
+                "model_path": getattr(self.litert_backend, "model_path", None),
+                "pending": self.litert_pending,
+                "error": self.litert_error,
+            },
+            "models": ([VLM_MODEL, STT_MODEL] if self.ready else [])
+            + ([LLM_MODEL] if self.litert_ready else []),
             "model_paths": self.backend.paths,
         }
 
@@ -190,5 +327,11 @@ class Runtime:
         try:
             # Queued work completes before releasing persistent models.
             await asyncio.get_running_loop().run_in_executor(self.executor, self.backend.close)
+            if self.litert_backend is not None:
+                await asyncio.get_running_loop().run_in_executor(
+                    self.litert_executor, self.litert_backend.close
+                )
         finally:
             self.executor.shutdown(wait=True, cancel_futures=True)
+            if self.litert_executor is not None:
+                self.litert_executor.shutdown(wait=True, cancel_futures=True)

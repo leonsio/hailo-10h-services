@@ -29,7 +29,8 @@
   </section>
   <div class="playgrounds">
     <section aria-labelledby="chat-title">
-      <div class="section-title"><div><p class="eyebrow">QWEN2-VL</p><h2 id="chat-title">VLM-Chat</h2></div><button id="clear-chat" type="button" class="quiet">Neuer Chat</button></div>
+      <div class="section-title"><div><p class="eyebrow">LOKALE MODELLE</p><h2 id="chat-title">Chat</h2></div><button id="clear-chat" type="button" class="quiet">Neuer Chat</button></div>
+      <label for="chat-model">Modell</label><select id="chat-model"><option value="Qwen2-VL-2B-Instruct">Qwen2-VL-2B-Instruct · Hailo</option></select>
       <div id="conversation" class="conversation" role="log" aria-label="Chat-Verlauf"><p class="empty">Stelle eine Frage oder lade ein Bild zur Analyse hoch.</p></div>
       <form id="chat-form">
         <label for="prompt">Deine Nachricht</label><textarea id="prompt" rows="3" required placeholder="Was ist auf diesem Bild zu sehen?"></textarea>

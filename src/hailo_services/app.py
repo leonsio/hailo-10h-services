@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
-from .config import STT_MODEL, VLM_MODEL, Settings
+from .config import LLM_MODEL, STT_MODEL, VLM_MODEL, Settings
 from .media import audio_file, audio_metadata, decode_base64
 from .protocols import MQTTBridge, WyomingServer, dispatch
 from .runtime import BusyError, Runtime
@@ -129,21 +129,21 @@ class AccessAndSizeLimit:
         await call_app(scope, bounded_receive)
 
 
-def completion(text, identifier, created):
+def completion(text, identifier, created, model):
     return {
         "id": identifier,
         "object": "chat.completion",
         "created": created,
-        "model": VLM_MODEL,
+        "model": model,
         "choices": [
             {"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}
         ],
     }
 
 
-def create_app(settings=None, backend=None):
+def create_app(settings=None, backend=None, litert_backend=None):
     settings = settings or Settings.from_env()
-    runtime = Runtime(settings, backend)
+    runtime = Runtime(settings, backend, litert_backend)
     wyoming = WyomingServer(runtime, settings)
     mqtt = MQTTBridge(runtime, settings)
     mcp = MCPServer("Hailo-10H", version="0.1.0")
@@ -243,6 +243,8 @@ def create_app(settings=None, backend=None):
         return {
             "auth_required": bool(settings.api_key),
             "vlm_model": VLM_MODEL,
+            "llm_model": LLM_MODEL,
+            "chat_models": [VLM_MODEL] + ([LLM_MODEL] if runtime.litert_ready else []),
             "whisper_model": STT_MODEL,
             "language": settings.language,
             "max_body": settings.max_body,
@@ -278,7 +280,8 @@ def create_app(settings=None, backend=None):
             "data": [
                 {"id": model, "object": "model", "owned_by": "hailo"}
                 for model in (VLM_MODEL, STT_MODEL)
-            ],
+            ] + ([{"id": LLM_MODEL, "object": "model", "owned_by": "litert-lm"}]
+                 if runtime.litert_ready else []),
         }
 
     @app.post("/v1/chat/completions")
@@ -290,12 +293,12 @@ def create_app(settings=None, backend=None):
             for part in (message["content"] if isinstance(message["content"], list) else [])
         )
         _debug(settings,
-               "protocol=http operation=vlm_chat request_id=%s model=%s messages=%d images=%d max_tokens=%d stream=%s",
+               "protocol=http operation=chat_completion request_id=%s model=%s messages=%d images=%d max_tokens=%d stream=%s",
                http_request.scope.get("state", {}).get("request_id", "-"),
                request.model, len(request.messages), image_count,
                request.max_tokens, request.stream)
         if not request.stream:
-            return completion(await runtime.chat(request), identifier, created)
+            return completion(await runtime.chat(request), identifier, created, request.model)
 
         async def events():
             def event(delta, finish=None):
@@ -306,7 +309,7 @@ def create_app(settings=None, backend=None):
                             "id": identifier,
                             "object": "chat.completion.chunk",
                             "created": created,
-                            "model": VLM_MODEL,
+                            "model": request.model,
                             "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
                         }
                     )

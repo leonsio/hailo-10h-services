@@ -9,7 +9,9 @@ import threading
 import time
 import types
 import zlib
+from concurrent.futures import Future
 from dataclasses import replace
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -57,6 +59,42 @@ class FakeBackend:
     def close(self):
         self.closed = True
         self.threads.append(threading.get_ident())
+
+
+class FakeLiteRTBackend:
+    model_path = "/fake/gemma.litertlm"
+
+    def __init__(self):
+        self.started = self.closed = False
+        self.calls = []
+
+    def start(self):
+        self.started = True
+
+    def chat(self, request, emit=None, cancelled=None):
+        self.calls.append(request)
+        if emit:
+            emit("Gemma ")
+            emit("antwortet")
+        return "Gemma antwortet"
+
+    def close(self):
+        self.closed = True
+
+
+class InlineExecutor:
+    """Deterministic executor for routing tests that do not exercise threading."""
+
+    def submit(self, function, *args, **kwargs):
+        future = Future()
+        try:
+            future.set_result(function(*args, **kwargs))
+        except BaseException as exc:
+            future.set_exception(exc)
+        return future
+
+    def shutdown(self, wait=True, cancel_futures=False):
+        pass
 
 
 def wav(rate=16000, channels=1):
@@ -111,6 +149,108 @@ def test_http_ws_audio_and_resident_owner():
     assert backend.closed and len(set(backend.threads)) == 1
 
 
+def test_litert_lm_model_routes_through_shared_chat_api_and_streams():
+    from hailo_services.config import LLM_MODEL
+
+    hailo = FakeBackend()
+    gemma = FakeLiteRTBackend()
+    runtime = Runtime(settings(), hailo, gemma)
+    runtime.executor = InlineExecutor()
+    runtime.litert_executor = InlineExecutor()
+
+    async def exercise_runtime():
+        await runtime.start()
+        payload = ChatRequest(
+            model=LLM_MODEL, messages=[{"role": "user", "content": "Hallo"}]
+        )
+        assert await runtime.chat(payload) == "Gemma antwortet"
+        chunks = [chunk async for chunk in runtime.stream(payload)]
+        assert chunks == ["Gemma ", "antwortet"]
+        status = runtime.status()
+        assert status["litert_lm"]["ready"] is True
+        assert status["models"] == [VLM_MODEL, "whisper-base", LLM_MODEL]
+        assert not hailo.calls
+        assert len(gemma.calls) == 2
+        await runtime.close()
+
+    asyncio.run(exercise_runtime())
+    assert gemma.started and gemma.closed
+
+
+def test_litert_backend_uses_python_engine_and_preserves_chat_history(tmp_path, monkeypatch):
+    from hailo_services.config import LLM_MODEL
+    from hailo_services.runtime import LiteRTLMBackend
+
+    model = tmp_path / "gemma.litertlm"
+    model.touch()
+    calls = {}
+
+    class Conversation:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def send_message(self, prompt, **kwargs):
+            calls["prompt"] = prompt
+            calls["send_kwargs"] = kwargs
+            return {"content": [{"type": "text", "text": "Antwort"}]}
+
+        def send_message_async(self, prompt, **kwargs):
+            yield {"content": [{"type": "text", "text": "Ant"}]}
+            yield {"content": [{"type": "text", "text": "wort"}]}
+
+    class Engine:
+        def __init__(self, path, **kwargs):
+            calls["engine"] = (path, kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            calls["engine_closed"] = True
+
+        def create_conversation(self, **kwargs):
+            calls["conversation"] = kwargs
+            return Conversation()
+
+    fake_module = SimpleNamespace(
+        Engine=Engine,
+        Backend=SimpleNamespace(CPU=lambda: "cpu"),
+        SamplerConfig=lambda **kwargs: kwargs,
+    )
+    monkeypatch.setitem(sys.modules, "litert_lm", fake_module)
+    backend = LiteRTLMBackend(model)
+    backend.start()
+    request = ChatRequest(
+        model=LLM_MODEL,
+        max_tokens=64,
+        temperature=0.2,
+        seed=7,
+        messages=[
+            {"role": "system", "content": "Sei knapp."},
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Hallo"},
+            {"role": "user", "content": "Weiter"},
+        ],
+    )
+    assert backend.chat(request) == "Antwort"
+    assert calls["engine"] == (str(model), {"backend": "cpu"})
+    assert calls["conversation"]["messages"] == [
+        {"role": "system", "content": "Sei knapp."},
+        {"role": "user", "content": "Hi"},
+        {"role": "assistant", "content": "Hallo"},
+    ]
+    assert calls["conversation"]["max_output_tokens"] == 64
+    assert calls["conversation"]["sampler_config"] == {"temperature": 0.2, "seed": 7}
+    streamed = []
+    assert backend.chat(request, emit=streamed.append) == "Antwort"
+    assert streamed == ["Ant", "wort"]
+    backend.close()
+    assert calls["engine_closed"]
+
+
 def test_optional_http_whisper_debug_logs_protocol_and_audio_metadata(caplog):
     backend = FakeBackend()
     with caplog.at_level(logging.DEBUG, logger="hailo_services.app"):
@@ -163,8 +303,7 @@ def test_auth_limits_and_unsupported_parameters():
                 "/v1/chat/completions",
                 json={"model": "wrong", "messages": [{"role": "user", "content": "hi"}]},
                 headers=headers,
-            ).status_code
-            == 422
+            ).status_code == 400
         )
         assert (
             client.post(
