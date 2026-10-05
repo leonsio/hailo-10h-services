@@ -124,13 +124,13 @@ swap and 32 GiB disk. Use more RAM when enabling CPU Gemma. It installs no Docke
 and no kernel driver in LXC. Host networking, storage and Hailo driver/firmware
 must already work. The userspace DEB must be `hailort` or `h10-hailort` 5.4.0.
 
-As in the native Frigate setup, put these packages **on the Proxmox host**:
+Put these packages **on the Proxmox host**:
 
 - `/root/hailort_5.4.0_arm64.deb`
 - `/root/hailort-5.4.0-cp313-cp313-linux_aarch64.whl`
 
 Supply an existing Debian 13 ARM64 template volume. The template filename below
-is the earlier Frigate assumption; replace it with the actual installed template
+is an example; replace it with the actual installed template
 reported by `pveam list local`. The installer does not guess or download a
 possibly unavailable ARM64 template.
 
@@ -154,7 +154,7 @@ character device must exist. Proxmox `dev0` handles device permissions for the
 unprivileged container. The installer grants the service account a device ACL,
 checks `hailortcli --version` and `hailortcli fw-control identify`, and verifies
 GenAI imports. Confirm identify reports HAILO10H and firmware 5.4.0. No DKMS,
-GPU passthrough or changes to Frigate are needed. Sharing still requires
+or GPU passthrough is needed. Sharing still requires
 compatible runtimes and `SHARED` clients across all participating processes.
 
 A dedicated `/opt/hailort-venv` holds the vendor wheel; the existing native
