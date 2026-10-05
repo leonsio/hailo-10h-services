@@ -182,3 +182,24 @@ def test_unavailable_environmental_data_reports_no_current_data():
     ]
     response = ha_weather_routing._weather_response(entities, "Wie ist das Wetter draußen?")
     assert response == "Aktuell sind die Wetterdaten in Home Assistant nicht verfügbar."
+
+
+def test_multiple_weather_sources_remain_an_llm_decision():
+    entities = [
+        {"name": name, "domain": "weather", "state": "sunny", "area": area,
+         "attributes": {"temperature": temperature, "temperature_unit": "°C"}}
+        for name, area, temperature in [("North weather", "North", 12), ("South weather", "South", 18)]
+    ]
+    assert ha_weather_routing._weather_response(entities, "Wie ist das Wetter draußen?") is None
+
+
+def test_unavailable_weather_source_does_not_hide_available_environment_sensor():
+    entities = [
+        {"name": "Weather", "domain": "weather", "state": "unavailable", "area": "Garden",
+         "attributes": {"temperature": 99, "temperature_unit": "°C"}},
+        {"name": "Ambient temperature", "domain": "sensor", "state": "12", "area": "Garden",
+         "attributes": {"device_class": "temperature", "unit_of_measurement": "°C"}},
+    ]
+    answer = ha_weather_routing._weather_response(entities, "Wie ist das Wetter draußen?")
+    assert "12 °C" in answer
+    assert "99" not in answer

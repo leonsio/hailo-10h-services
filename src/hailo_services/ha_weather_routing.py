@@ -398,9 +398,23 @@ def _pick_weather_group(entities: list[dict], query: str) -> list[dict] | None:
     relevant = [entity for entity in entities if _environmental_sensor(entity)]
     if not relevant:
         return []
-    weather_entities = [entity for entity in relevant if entity.get("domain") == "weather"]
+    weather_entities = [
+        entity for entity in relevant
+        if entity.get("domain") == "weather"
+        and str(entity.get("state", "")).casefold() not in _INVALID_STATES
+    ]
+    if len(weather_entities) > 1:
+        # Neither catalogue order nor provider order determines the user's source.
+        return None
     if weather_entities:
-        return weather_entities[:1] if len(weather_entities) == 1 else weather_entities
+        weather = weather_entities[0]
+        area = weather.get("area")
+        companions = [
+            entity for entity in relevant
+            if area and entity.get("area") == area and entity.get("domain") == "sensor"
+        ]
+        return [weather, *companions]
+    relevant = [entity for entity in relevant if entity.get("domain") != "weather"]
     groups: dict[str, list[dict]] = {}
     for entity in relevant:
         area = str(entity.get("area") or "")
