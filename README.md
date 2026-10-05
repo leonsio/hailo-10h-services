@@ -45,7 +45,7 @@ See [Docker setup and package placement](doc/installation.md#docker-compose).
 
 Run `scripts/install-proxmox-lxc.sh` **on the Proxmox host** to create a Debian 13
 container, pass through the Hailo device and install HailoRT plus this service.
-Uses the same `/root` DEB/Wheel paths as the native Frigate LXC setup.
+Place the HailoRT DEB and matching Python wheel under `/root` on the host.
 See [LXC setup and command example](doc/installation.md#proxmox-lxc-on-arm64).
 
 ## Usage
