@@ -24,12 +24,32 @@ Static Context: An overview of the areas and the devices in this smart home:
 - names: Oberlicht
   domain: light
   areas: Küche
+- names: Kaffeemaschine
+  domain: switch
+  areas: Küche
 - names: Oberlicht
   domain: light
   areas: Ankleide
 
 When controlling Home Assistant always call the intent tools.
 """
+
+TURN_ON = {
+    "type": "function",
+    "function": {
+        "name": "intent__HassTurnOn",
+        "description": "Turns on/opens a device or entity.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "area": {"type": "string"},
+                "domain": {"type": "array", "items": {"type": "string"}},
+            },
+            "additionalProperties": False,
+        },
+    },
+}
 
 TURN_OFF = {
     "type": "function",
@@ -81,7 +101,7 @@ def test_kitchen_light_command_is_ha_relevant():
     assert relevance["tool_lexical_max"] > 0
 
 
-def test_direct_area_turn_off_skips_llm_target_selection():
+def test_direct_area_turn_off_selects_light_from_mixed_domain_area():
     req = request("Schalte das Licht in der Küche aus", tools=[TURN_OFF])
     result = direct_action_response(req)
     assert result is not None
@@ -91,6 +111,62 @@ def test_direct_area_turn_off_skips_llm_target_selection():
         "area": "Küche",
         "domain": ["light"],
     }
+
+
+def test_direct_area_turn_on_matches_reported_home_assistant_request():
+    req = request("schalte das Licht in der Küche an", tools=[TURN_ON])
+    result = direct_action_response(req)
+    assert result is not None
+    call = result["tool_calls"][0]
+    assert call["function"]["name"] == "intent__HassTurnOn"
+    assert json.loads(call["function"]["arguments"]) == {
+        "area": "Küche",
+        "domain": ["light"],
+    }
+
+
+def test_direct_area_switch_command_selects_switch_not_light():
+    req = request("Schalte den Schalter in der Küche aus", tools=[TURN_OFF])
+    result = direct_action_response(req)
+    assert result is not None
+    call = result["tool_calls"][0]
+    assert json.loads(call["function"]["arguments"]) == {
+        "area": "Küche",
+        "domain": ["switch"],
+    }
+
+
+def test_direct_area_resolution_can_use_full_source_catalogue():
+    source = request("Schalte das Licht in der Küche aus", tools=[TURN_OFF])
+    reduced_system = """Du bist Sprach Assistent für Home Assistant.
+
+Static Context: Relevant entities for the current user request:
+- names: Kaffeemaschine
+  domain: switch
+  areas: Küche
+
+When controlling Home Assistant always call the intent tools.
+"""
+    prepared = request(
+        "Schalte das Licht in der Küche aus",
+        tools=[TURN_OFF],
+        system=reduced_system,
+    )
+    result = direct_action_response(prepared, source_messages=source.messages)
+    assert result is not None
+    call = result["tool_calls"][0]
+    assert json.loads(call["function"]["arguments"]) == {
+        "area": "Küche",
+        "domain": ["light"],
+    }
+
+
+def test_mixed_domain_area_without_explicit_domain_does_not_bypass_llm():
+    req = request("Schalte alle Geräte in der Küche aus", tools=[TURN_OFF])
+    trace = {}
+    assert direct_action_response(req, trace=trace) is None
+    assert trace["direct_action_reason"] == "area_domain_ambiguous"
+    assert trace["candidate_domains"] == ["light", "switch"]
 
 
 def test_direct_explicit_device_uses_name_and_domain():
