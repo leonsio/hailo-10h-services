@@ -20,4 +20,5 @@ jobs:
           node-version: '22'
       - run: node --test tests/test_web.cjs
       - run: bash -n scripts/install.sh
+      - run: bash -n scripts/update.sh
       - run: bash -n scripts/enable-https.sh
