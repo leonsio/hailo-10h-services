@@ -1,4 +1,4 @@
-import hailo_services.ha_weather_routing as weather
+from hailo_services import ha_weather_routing
 
 
 ENTITIES = [
@@ -12,25 +12,30 @@ ENTITIES = [
 
 
 def test_generic_garden_temperature_is_a_read_measurement():
-    assert weather._ambient_temperature_query("Welche Temperatur ist im Garten?")
-    assert not weather._ambient_temperature_query("Stelle das Thermostat im Garten auf 22 Grad")
+    assert ha_weather_routing._ambient_temperature_query("Welche Temperatur ist im Garten?")
+    assert not ha_weather_routing._ambient_temperature_query(
+        "Stelle das Thermostat im Garten auf 22 Grad"
+    )
 
 
 def test_outdoor_temperature_is_not_expanded_to_full_weather_summary():
-    assert weather._ambient_temperature_query("Welche Temperatur ist draußen?")
-    assert not weather._weather_query("Welche Temperatur ist draußen?")
+    assert ha_weather_routing._ambient_temperature_query("Welche Temperatur ist draußen?")
+    assert not ha_weather_routing._weather_query("Welche Temperatur ist draußen?")
 
 
 def test_garden_temperature_prefers_weather_station_over_grill_and_device_temperature():
-    sources = weather._temperature_sources(ENTITIES, "Welche Temperatur ist im Garten?")
+    sources = ha_weather_routing._temperature_sources(
+        ENTITIES,
+        "Welche Temperatur ist im Garten?",
+    )
     assert sources == [
         {"name": "Wetterstation Temperatur", "domain": "sensor", "area": "Garten"}
     ]
 
 
 def test_weather_query_uses_only_weather_station_entities():
-    assert weather._weather_query("Wie ist das Wetter draußen?")
-    sources = weather._weather_sources(ENTITIES, "Wie ist das Wetter draußen?")
+    assert ha_weather_routing._weather_query("Wie ist das Wetter draußen?")
+    sources = ha_weather_routing._weather_sources(ENTITIES, "Wie ist das Wetter draußen?")
     assert [item["name"] for item in sources] == [
         "Wetterstation Temperatur",
         "Wetterstation Rel. Luftfeuchte",
@@ -48,7 +53,10 @@ def test_off_climate_is_not_accepted_as_current_generic_temperature():
             "attributes": {"current_temperature": "31.0", "unit_of_measurement": "°C"},
         }
     ]
-    response = weather._temperature_response(entities, "Welche Temperatur ist im Garten?")
+    response = ha_weather_routing._temperature_response(
+        entities,
+        "Welche Temperatur ist im Garten?",
+    )
     assert response == "Aktuell habe ich keine aktuellen Temperaturdaten für Garten."
     assert "31" not in response
 
@@ -67,7 +75,10 @@ def test_climate_target_setpoint_is_never_used_as_current_temperature():
             },
         }
     ]
-    response = weather._temperature_response(entities, "Welche Temperatur ist im Garten?")
+    response = ha_weather_routing._temperature_response(
+        entities,
+        "Welche Temperatur ist im Garten?",
+    )
     assert response == "Aktuell habe ich keine aktuellen Temperaturdaten für Garten."
     assert "110" not in response
 
@@ -96,7 +107,7 @@ def test_weather_response_combines_live_station_values_without_llm():
             "attributes": {"unit_of_measurement": "°C"},
         },
     ]
-    response = weather._weather_response(entities)
+    response = ha_weather_routing._weather_response(entities)
     assert "12,4 °C" in response
     assert "81 %" in response
     assert "9,2 °C" in response
@@ -112,6 +123,6 @@ def test_unavailable_weather_data_reports_no_current_data():
             "attributes": {"unit_of_measurement": "°C"},
         }
     ]
-    assert weather._weather_response(entities) == (
+    assert ha_weather_routing._weather_response(entities) == (
         "Aktuell sind die Wetterdaten in Home Assistant nicht verfügbar."
     )
