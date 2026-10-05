@@ -1,6 +1,5 @@
 import importlib
 
-
 ha_weather_routing = importlib.import_module("hailo_services.ha_weather_routing")
 
 ENTITIES = [
