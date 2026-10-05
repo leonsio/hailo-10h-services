@@ -33,13 +33,15 @@ function page() {
   }
   const config = { auth_required: true, vlm_model: 'Qwen2-VL-2B-Instruct', whisper_model: 'whisper-base', max_body: 16 * 1024 * 1024, recording_seconds: 1, max_audio_seconds: 120, language: 'de' };
   const context = vm.createContext({
-    document: { hidden: false, getElementById: id => elements[id], createElement: () => new Element(), addEventListener() {} },
+    localStorage: { getItem() { return null; }, setItem() {} },
+    document: { documentElement: {}, querySelectorAll() { return []; }, hidden: false, getElementById: id => elements[id], createElement: () => new Element(), addEventListener() {} },
     window: { isSecureContext: true, AudioContext, AudioWorkletNode, addEventListener() {} },
     navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => tracks }) } },
+    Option: class { constructor(text, value) { this.text = text; this.value = value; } },
     AudioContext, AudioWorkletNode, Blob, URL, FormData, performance, console, setInterval: () => 1, clearInterval() {},
     fetch: async (url, options = {}) => {
       calls.push({ url, options });
-      return { ok: true, json: async () => url === 'ui/config' ? config : url === 'health' ? { ready: true, group_id: 'SHARED', models: ['qwen', 'whisper'], pending: 0 } : url === 'v1/audio/transcriptions' ? { text: 'Hallo Welt' } : { choices: [{ message: { content: 'Antwort' } }] } };
+      return { ok: true, json: async () => url.startsWith('ui/locales/') ? JSON.parse(fs.readFileSync(path.join(web, '../locales', url.split('/').pop()), 'utf8')) : url === 'ui/config' ? config : url === 'health' ? { ready: true, group_id: 'SHARED', models: ['qwen', 'whisper'], pending: 0 } : url === 'v1/audio/transcriptions' ? { text: 'Hallo Welt' } : { choices: [{ message: { content: 'Antwort' } }] } };
     },
   });
   vm.runInContext(fs.readFileSync(path.join(web, 'app.js'), 'utf8'), context);
@@ -113,4 +115,30 @@ test('Chat sends history safely; failed requests do not enter history or lose th
   assert.equal(p.elements.prompt.value, 'Retry me');
   assert.equal(p.elements['send-chat'].disabled, false);
   assert.match(p.elements['chat-note'].textContent, /ungültig/);
+});
+
+test('Browser language is primary, explicit override wins, unsupported languages use service fallback', async () => {
+  const p = page(); await p.ready();
+  p.context.navigator.languages = ['fr-FR', 'en-US', 'de-DE'];
+  assert.equal(p.run('chooseLanguage("auto")'), 'en');
+  await p.run('loadLanguage("auto")');
+  assert.equal(p.run('uiLanguage'), 'en');
+  assert.equal(p.run('tr("ui_1")'), 'Ready');
+  await p.run('loadLanguage("ru")');
+  assert.equal(p.run('uiLanguage'), 'ru');
+  assert.equal(p.run('tr("ui_1")'), 'Готово');
+  p.context.navigator.languages = ['zh-CN'];
+  p.run('config.service_language = "en"');
+  assert.equal(p.run('chooseLanguage("auto")'), 'en');
+  assert.equal(p.run('chooseLanguage("de")'), 'de');
+});
+
+test('Every translated DOM key exists in every locale', () => {
+  const source = fs.readFileSync(path.join(web, 'index.html'), 'utf8');
+  const keys = [...source.matchAll(/data-i18n(?:-[a-z]+)?="([^"]+)"/g)].map(m => m[1]);
+  assert.ok(keys.length > 40);
+  for (const language of ['de', 'en', 'ru']) {
+    const data = JSON.parse(fs.readFileSync(path.join(web, `../locales/${language}.json`), 'utf8'));
+    for (const key of keys) assert.equal(typeof data.ui[key], 'string', `${language}:${key}`);
+  }
 });

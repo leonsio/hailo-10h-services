@@ -14,71 +14,18 @@ import re
 import uuid
 from functools import wraps
 
+from .i18n import current_language, labels, lexicon, normalize_matching, t
 from .tool_retrieval import _static_context_parts, latest_user_text
 
 _LOG = logging.getLogger(__name__)
 _LIVE_TOOL = "homeassistant__GetLiveContext"
-_FINAL_SYSTEM = (
-    "Beantworte die Nutzerfrage kurz und ausschließlich anhand der folgenden "
-    "Home-Assistant-Live-Daten. Erfinde keine Zustände oder Werte."
-)
-_DOMAIN_WORDS = {
-    "light": {"licht", "lichter", "lampe", "lampen", "led"},
-    "switch": {"schalter", "switch"},
-    "cover": {"rollladen", "rolllaeden", "jalousie", "jalousien", "markise"},
-    "lock": {"schloss", "schloesser", "tuerschloss", "turschloss", "lock"},
-    "climate": {"thermostat", "heizung", "klima", "klimaanlage"},
-    "vacuum": {"staubsauger", "saugroboter", "vacuum"},
-}
-_STATE_ALIASES = {
-    "an": "on",
-    "on": "on",
-    "ein": "on",
-    "aus": "off",
-    "off": "off",
-    "offen": "open",
-    "geoeffnet": "open",
-    "geschlossen": "closed",
-    "zu": "closed",
-    "gesperrt": "locked",
-    "verriegelt": "locked",
-    "locked": "locked",
-    "entsperrt": "unlocked",
-    "entriegelt": "unlocked",
-    "unlocked": "unlocked",
-}
-_STATE_LABELS = {
-    "on": "an",
-    "off": "aus",
-    "open": "offen",
-    "closed": "geschlossen",
-    "locked": "gesperrt",
-    "unlocked": "entsperrt",
-    "home": "zu Hause",
-    "not_home": "nicht zu Hause",
-    "idle": "inaktiv",
-    "cleaning": "reinigt",
-    "docked": "an der Ladestation",
-    "unavailable": "nicht verfügbar",
-    "unknown": "unbekannt",
-}
-_DOMAIN_LABELS = {
-    "light": ("Licht", "Lichter"),
-    "switch": ("Schalter", "Schalter"),
-    "cover": ("Rollladen", "Rollläden"),
-    "lock": ("Schloss", "Schlösser"),
-    "vacuum": ("Staubsauger", "Staubsauger"),
-    "climate": ("Thermostat", "Thermostate"),
-    "sensor": ("Sensor", "Sensoren"),
-    "binary_sensor": ("Sensor", "Sensoren"),
-}
+_FINAL_SYSTEM_KEY = 'ha_state_routing.22'
+_DOMAIN_WORDS = lexicon('ha_state_routing._DOMAIN_WORDS')
+_STATE_ALIASES = lexicon('ha_state_routing._STATE_ALIASES')
 
 
 def _normalized(value: str) -> str:
-    text = str(value).casefold().replace("ß", "ss")
-    text = text.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
-    text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
-    return re.sub(r"\s+", " ", text).strip()
+    return normalize_matching(value)
 
 
 def _contains(text: str, phrase: str) -> bool:
@@ -87,9 +34,7 @@ def _contains(text: str, phrase: str) -> bool:
 
 def _has_action_verb(text: str) -> bool:
     return bool(re.search(
-        r"\b(schalt\w*|mach\w*|einschalten|ausschalten|anschalten|anmachen|"
-        r"ausmachen|aktiviere\w*|deaktiviere\w*|stell\w*|setze\w*|oeffne\w*|"
-        r"schliesse\w*|verriegel\w*|entriegel\w*)\b",
+        lexicon('ha_state_routing.pattern.37.8'),
         _normalized(text),
     ))
 
@@ -107,18 +52,20 @@ def _query_kind(text: str) -> str | None:
     normalized = _normalized(text)
     if not normalized or _has_action_verb(normalized):
         return None
-    if re.search(r"\b(wie viele|wieviele)\b", normalized) and _expected_state(normalized):
+    if re.search(lexicon('ha_state_routing.pattern.57.17'), normalized) and _expected_state(normalized):
         return "count"
-    if re.search(r"\b(welche|welcher|welches)\b", normalized) and _expected_state(normalized):
+    if re.search(lexicon('ha_state_routing.pattern.59.17'), normalized) and _expected_state(normalized):
         return "list"
-    if re.search(r"\b(temperatur|wie warm|wie kalt)\b", normalized):
+    if re.search(lexicon('ha_state_routing.pattern.61.17'), normalized):
         return "temperature"
-    if re.search(r"\b(luftfeuchtigkeit|feuchtigkeit)\b", normalized):
+    if re.search(lexicon('ha_state_routing.pattern.63.17'), normalized):
         return "humidity"
-    if re.search(r"\b(status|zustand|modus)\b", normalized):
+    if re.search(lexicon('ha_state_routing.match.63.17'), normalized):
         return "status"
-    if _expected_state(normalized) and re.search(r"\b(ist|sind|steht|stehen)\b", normalized):
-        return "all" if re.search(r"\balle\b", normalized) else "boolean"
+    if _expected_state(normalized) and (
+        re.search(lexicon('ha_state_routing.match.66.18'), normalized) or _query_domain(normalized)
+    ):
+        return "all" if re.search(lexicon('ha_state_routing.match.68.34'), normalized) else "boolean"
     return None
 
 
@@ -162,10 +109,10 @@ def _query_domain(query: str) -> str | None:
 
 def _measurement_members(members, kind: str):
     if kind == "temperature":
-        hints = {"temperatur", "temperature", "thermostat"}
+        hints = lexicon('ha_state_routing.words.112.16')
         preferred_domains = {"sensor", "climate"}
     elif kind == "humidity":
-        hints = {"luftfeuchtigkeit", "feuchtigkeit", "humidity"}
+        hints = lexicon('ha_state_routing.words.115.16')
         preferred_domains = {"sensor", "climate"}
     else:
         return []
@@ -381,15 +328,15 @@ def _live_entities(results, calls):
 
 
 def _state_label(state: str) -> str:
-    return _STATE_LABELS.get(str(state).casefold(), str(state))
+    return labels("states").get(str(state).casefold(), str(state))
 
 
 def _domain_label(entities, count: int) -> str:
     domains = {entity.get("domain", "") for entity in entities if entity.get("domain")}
     if len(domains) == 1:
-        singular, plural = _DOMAIN_LABELS.get(next(iter(domains)), ("Gerät", "Geräte"))
+        singular, plural = labels("domains").get(next(iter(domains)), (t("device.singular"), t("device.plural")))
         return singular if count == 1 else plural
-    return "Gerät" if count == 1 else "Geräte"
+    return t("device.singular") if count == 1 else t("device.plural")
 
 
 def _format_number(value: str) -> str:
@@ -398,15 +345,21 @@ def _format_number(value: str) -> str:
     except (TypeError, ValueError):
         return str(value)
     rendered = f"{number:g}"
-    return rendered.replace(".", ",")
+    return rendered if current_language() == "en" else rendered.replace(".", ",")
 
 
 def _measurement_value(entity, kind: str):
     attrs = entity.get("attributes", {})
     if kind == "temperature":
-        value = attrs.get("current_temperature") or attrs.get("temperature")
+        value = attrs.get("current_temperature")
+        if entity.get("domain") == "climate" and value in {None, ""}:
+            return None
+        if value is None:
+            value = attrs.get("temperature")
     else:
-        value = attrs.get("current_humidity") or attrs.get("humidity")
+        value = attrs.get("current_humidity")
+        if value is None:
+            value = attrs.get("humidity")
     if value is None:
         state = entity.get("state", "")
         try:
@@ -439,14 +392,14 @@ def deterministic_live_response(request):
         if not values:
             return None
         if len(values) == 1:
-            noun = "Temperatur" if kind == "temperature" else "Luftfeuchtigkeit"
-            return f"Die {noun} beträgt {values[0][1]}."
+            noun = t("measurement." + kind)
+            return t("measurement.value", noun=noun, value=values[0][1])
         return "; ".join(f"{name}: {value}" for name, value in values) + "."
 
     if kind == "status" or expected is None:
         if len(entities) == 1:
             entity = entities[0]
-            return f"{entity['name']} ist {_state_label(entity['state'])}."
+            return t('ha_state_routing.449' , v0=entity['name'], v1=_state_label(entity['state']))
         return "; ".join(
             f"{entity['name']}: {_state_label(entity['state'])}" for entity in entities
         ) + "."
@@ -457,10 +410,10 @@ def deterministic_live_response(request):
     expected_label = _state_label(expected)
 
     if kind == "count":
-        return f"{len(matching)} von {len(entities)} {label} sind {expected_label}."
+        return t('ha_state_routing.460' , v0=len(matching), v1=len(entities), label=label, expected_label=expected_label)
     if kind == "list":
         if not matching:
-            return f"Keine {label} sind {expected_label}."
+            return t('ha_state_routing.463' , label=label, expected_label=expected_label)
         return f"{expected_label.capitalize()}: " + ", ".join(
             entity["name"] for entity in matching
         ) + "."
@@ -468,23 +421,22 @@ def deterministic_live_response(request):
     if len(entities) == 1:
         entity = entities[0]
         if matching:
-            return f"Ja, {entity['name']} ist {expected_label}."
-        return f"Nein, {entity['name']} ist {_state_label(entity['state'])}."
+            return t('ha_state_routing.471' , v0=entity['name'], expected_label=expected_label)
+        return t('ha_state_routing.472' , v0=entity['name'], v1=_state_label(entity['state']))
 
     if not other:
-        return f"Ja, alle {len(entities)} {label} sind {expected_label}."
+        return t('ha_state_routing.475' , v0=len(entities), label=label, expected_label=expected_label)
     if not matching:
         states = "; ".join(
             f"{entity['name']}: {_state_label(entity['state'])}" for entity in entities
         )
-        return f"Nein, keines der {len(entities)} {label} ist {expected_label}. {states}."
+        return t('ha_state_routing.480' , v0=len(entities), label=label, expected_label=expected_label, states=states)
     matching_names = ", ".join(entity["name"] for entity in matching)
     other_states = "; ".join(
         f"{entity['name']}: {_state_label(entity['state'])}" for entity in other
     )
     return (
-        f"Teilweise: {len(matching)} von {len(entities)} {label} sind {expected_label}: "
-        f"{matching_names}. Abweichend: {other_states}."
+        t('ha_state_routing.486' , v0=len(matching), v1=len(entities), label=label, expected_label=expected_label, matching_names=matching_names, other_states=other_states)
     )
 
 
@@ -496,10 +448,10 @@ def compact_live_followup_request(request):
     question, _, results = followup
     live_text = "\n".join(str(result) for result in results)
     messages = [
-        {"role": "system", "content": _FINAL_SYSTEM},
+        {"role": "system", "content": t(_FINAL_SYSTEM_KEY)},
         {
             "role": "user",
-            "content": f"Frage: {question}\nHome-Assistant-Live-Daten:\n{live_text}",
+            "content": t('ha_state_routing.502' , question=question, live_text=live_text),
         },
     ]
     prepared = request.model_copy(update={

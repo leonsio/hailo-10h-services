@@ -1,0 +1,488 @@
+{
+  "text": {
+    "ha_state_routing.22": "Answer briefly using only the following live Home Assistant data. Do not invent states or values.",
+    "ha_state_routing.486": "Partly: {v0} of {v1} {label} are {expected_label}: {matching_names}. Other states: {other_states}.",
+    "ha_state_routing.392": "devices",
+    "ha_state_routing.460": "{v0} of {v1} {label} are {expected_label}.",
+    "ha_state_routing.472": "No, {v0} is {v1}.",
+    "ha_state_routing.475": "Yes, all {v0} {label} are {expected_label}.",
+    "ha_state_routing.480": "No, none of the {v0} {label} are {expected_label}. {states}.",
+    "ha_state_routing.449": "{v0} is {v1}.",
+    "ha_state_routing.463": "No {label} are {expected_label}.",
+    "ha_state_routing.471": "Yes, {v0} is {expected_label}.",
+    "ha_state_routing.502": "Question: {question}\nLive Home Assistant data:\n{live_text}",
+    "ha_state_routing.390": "devices",
+    "ha_state_routing.442": "humidity",
+    "ha_prompt_compiler.384": "Home Assistant. Use only supplied tools. Do not invent devices or values.",
+    "ha_prompt_compiler.385": "Use area for area targets, name for a specific device. Answer briefly.",
+    "ha_prompt_compiler.389": "Call GetLiveContext for current states or values.",
+    "ha_prompt_compiler.393": "Task: {capability}",
+    "ha_prompt_compiler.406": "Do not execute a group action without an unambiguous area.",
+    "ha_prompt_compiler.391": "Call a supplied tool for the requested action.",
+    "ha_prompt_compiler.400": "Context: ",
+    "ha_prompt_compiler.402": "Devices: ",
+    "ha_state_routing_fixes.164": "Home Assistant could not find matching exposed devices.",
+    "ha_state_routing_fixes.159": "I could not find matching lights in “{area}”.",
+    "ha_state_routing_fixes.161": "I could not find matching devices in “{area}”.",
+    "ha_state_routing_fixes.163": "I could not find “{name}” in Home Assistant.",
+    "ha_action_verification.236": "Some devices did not reach the requested state: {names_text}.",
+    "ha_action_verification.212": "Done.",
+    "ha_weather_routing.421": "No current temperature data is available{suffix}.",
+    "ha_weather_routing.429": "The current temperature is {best_value}.",
+    "ha_weather_routing.520": "No suitable current weather data is available in Home Assistant.",
+    "ha_weather_routing.548": "Weather data is currently unavailable in Home Assistant.",
+    "ha_weather_routing.589": "Answer the question about current ambient temperature.",
+    "ha_weather_routing.591": "Answer the current weather question.",
+    "ha_weather_routing.420": " for {area}",
+    "ha_weather_routing.425": "The current temperature is {best_value}.",
+    "ha_weather_routing.551": "Outside it is {condition}",
+    "ha_weather_routing.555": "humidity is {humidity}",
+    "ha_weather_routing.558": "The dew point is {dew_point}.",
+    "ha_weather_routing.597": "{task} Use only the following live Home Assistant data. Prefer room, outdoor or ambient air measurements. Internal device, process, battery, motor, water, cooking and probe temperatures are not ambient temperature. For climate only current_temperature is a measurement; temperature is a setpoint. State clearly when data is ambiguous or unavailable. Do not invent anything.",
+    "ha_weather_routing.608": "Question: {query}\nLive candidates:\n",
+    "ha_weather_routing.553": "Outside it is ",
+    "litert_optimizations.122": "Done.",
+    "measurement.temperature": "temperature",
+    "measurement.humidity": "humidity",
+    "device.singular": "device",
+    "device.plural": "devices",
+    "measurement.value": "The {noun} is {value}.",
+    "prompt.reply_language": "Answer in English."
+  },
+  "ui": {
+    "ui_0": "API key missing or invalid.",
+    "ui_1": "Ready",
+    "ui_2": "Not ready",
+    "ui_3": "Connected",
+    "ui_4": "Disconnected",
+    "ui_5": "Updated: {v0} · Refresh every 5 seconds.",
+    "ui_6": "Unreachable",
+    "ui_7": "Service unreachable: {v0}",
+    "ui_8": "YOU",
+    "ui_9": "Submitted image",
+    "ui_10": "Could not read image.",
+    "ui_11": "Generating response …",
+    "ui_12": "Gemma processes text. Select Qwen2-VL for images.",
+    "ui_13": "Select JPEG, PNG or WebP.",
+    "ui_14": "Image exceeds service size limit.",
+    "ui_15": "Chat is full. Start a new chat.",
+    "ui_16": "Maximum four images per chat. Start a new chat.",
+    "ui_17": "Chat exceeds size limit. Start a new chat.",
+    "ui_18": "Service returned no chat response.",
+    "ui_19": "Response in {v0} s.",
+    "ui_20": "New chat started.",
+    "ui_21": "No audio recorded. Please try again.",
+    "ui_22": "Recorded {v0} seconds. Play or transcribe now.",
+    "ui_23": "Opening microphone …",
+    "ui_24": "Recording cancelled: page is in the background.",
+    "ui_25": "Service size limit too small for recording.",
+    "ui_26": "Recording …",
+    "ui_27": "Microphone access denied. Allow it in browser settings.",
+    "ui_28": "Audio file too large.",
+    "ui_29": "Audio ready. Service will check duration and format.",
+    "ui_30": "Transcribing speech …",
+    "ui_31": "Transcription completed in {v0} s.",
+    "ui_32": "API access verified. Key stays in this page memory only.",
+    "ui_33": "Maximum {v0} seconds. Mono WAV recording; no extra software required.",
+    "ui_34": "Microphone requires HTTPS or localhost and AudioWorklet support. On a LAN HTTP address upload an audio file or configure HTTPS.",
+    "ui_35": "Could not load service configuration: {v0}",
+    "ui_36": "Check status. Understand images. Transcribe speech.",
+    "ui_37": "Connecting …",
+    "ui_38": "Service status",
+    "ui_39": "Refresh",
+    "ui_40": "Hailo group",
+    "ui_41": "Queued / active jobs",
+    "ui_42": "Loaded models",
+    "ui_43": "Status refreshes every 5 seconds.",
+    "ui_44": "Model files & raw status",
+    "ui_45": "API access",
+    "ui_46": "API key",
+    "ui_47": "HAILO_API_KEY from service configuration",
+    "ui_48": "Check access",
+    "ui_49": "The key stays only in page memory and is not saved.",
+    "ui_50": "LOCAL MODELS",
+    "ui_51": "New chat",
+    "ui_52": "Model",
+    "ui_53": "Chat history",
+    "ui_54": "Ask a question or upload an image to analyze.",
+    "ui_55": "Your message",
+    "ui_56": "What is in this image?",
+    "ui_57": "Image (optional)",
+    "ui_58": "Max. tokens",
+    "ui_59": "Selected image preview",
+    "ui_60": "Send message",
+    "ui_61": "Test speech",
+    "ui_62": "Record a short clip, listen and transcribe it.",
+    "ui_63": "Recording duration",
+    "ui_64": "Start recording",
+    "ui_65": "Stop",
+    "ui_66": "Or upload audio (WAV / FLAC / OGG)",
+    "ui_67": "No recording selected.",
+    "ui_68": "Language",
+    "ui_69": "German",
+    "ui_70": "English",
+    "ui_71": "Service default",
+    "ui_72": "French",
+    "ui_73": "Spanish",
+    "ui_74": "Russian",
+    "ui_75": "Transcribe",
+    "ui_76": "Transcript",
+    "ui_77": "Recognized text appears here.",
+    "ui_78": "Processed on your Hailo service",
+    "ui_79": "Audio is sent only when you click Transcribe.",
+    "ui_80": "Interface language",
+    "ui_81": "Automatic (browser)",
+    "ui_82": "General language",
+    "ui_extra_0": "Microphone requires HTTPS or localhost and AudioWorklet support. On a LAN HTTP address upload an audio file or use an SSH tunnel.",
+    "ui_extra_1": "WAV / FLAC / OGG · maximum {v0} s and {v1} MB.",
+    "ui_extra_2": "Gemma 4 E2B runs through LiteRT-LM on the CPU. Qwen2-VL analyzes images.",
+    "ui_extra_3": "Qwen2-VL processes text and images on Hailo.",
+    "ui_extra_4": "Could not load page configuration: {v0}",
+    "ui.language_settings": "Language settings"
+  },
+  "aliases": {
+    "licht": [
+      "light",
+      "lights",
+      "lamp",
+      "lamps"
+    ],
+    "schalter": [
+      "switch",
+      "switches"
+    ],
+    "rollladen": [
+      "blind",
+      "blinds",
+      "shutter",
+      "shutters",
+      "curtain",
+      "curtains"
+    ],
+    "schloss": [
+      "lock",
+      "locks"
+    ],
+    "thermostat": [
+      "thermostat",
+      "thermostats"
+    ],
+    "heizung": [
+      "heating",
+      "heater"
+    ],
+    "klima": [
+      "air conditioning"
+    ],
+    "staubsauger": [
+      "vacuum",
+      "robot vacuum"
+    ],
+    "wetter": [
+      "weather"
+    ],
+    "wetterstation": [
+      "weather station"
+    ],
+    "welche temperatur": [
+      "what is the temperature",
+      "what temperature"
+    ],
+    "wie warm": [
+      "how warm",
+      "how cold"
+    ],
+    "temperatur": [
+      "temperature"
+    ],
+    "luftfeuchtigkeit": [
+      "humidity"
+    ],
+    "helligkeit": [
+      "brightness"
+    ],
+    "prozent": [
+      "percent",
+      "per cent"
+    ],
+    "grad": [
+      "degrees",
+      "degree"
+    ],
+    "farbe": [
+      "color",
+      "colour"
+    ],
+    "warmweiss": [
+      "warm white"
+    ],
+    "kaltweiss": [
+      "cool white",
+      "cold white"
+    ],
+    "dunkler": [
+      "darker",
+      "dim"
+    ],
+    "heller": [
+      "brighter"
+    ],
+    "stelle": [
+      "set"
+    ],
+    "einschalten": [
+      "turn on",
+      "switch on",
+      "enable"
+    ],
+    "ausschalten": [
+      "turn off",
+      "switch off",
+      "disable"
+    ],
+    "oeffne": [
+      "open"
+    ],
+    "schliesse": [
+      "close"
+    ],
+    "stoppe": [
+      "stop"
+    ],
+    "wie viele": [
+      "how many"
+    ],
+    "welche": [
+      "which"
+    ],
+    "ist": [
+      "is",
+      "are"
+    ],
+    "an": [
+      "on"
+    ],
+    "aus": [
+      "off"
+    ],
+    "offen": [
+      "opened"
+    ],
+    "geschlossen": [
+      "closed"
+    ],
+    "alle": [
+      "all"
+    ],
+    "status": [
+      "state",
+      "status",
+      "mode"
+    ],
+    "draussen": [
+      "outside",
+      "outdoors",
+      "outdoor"
+    ],
+    "garten": [
+      "garden"
+    ],
+    "zimmer": [
+      "room"
+    ],
+    "wohnzimmer": [
+      "living room"
+    ],
+    "kueche": [
+      "kitchen"
+    ],
+    "schlafzimmer": [
+      "bedroom"
+    ],
+    "haus": [
+      "house",
+      "home"
+    ],
+    "luft": [
+      "air"
+    ],
+    "wasser": [
+      "water"
+    ],
+    "akku": [
+      "battery"
+    ],
+    "geraet": [
+      "device"
+    ],
+    "motor": [
+      "motor"
+    ],
+    "backofen": [
+      "oven"
+    ],
+    "wechselrichter": [
+      "inverter"
+    ],
+    "druck": [
+      "pressure"
+    ],
+    "wind": [
+      "wind"
+    ],
+    "regen": [
+      "rain"
+    ],
+    "taupunkt": [
+      "dew point",
+      "dewpoint"
+    ],
+    "bitte": [
+      "please"
+    ],
+    "im": [
+      "in",
+      "in the"
+    ],
+    "auf": [
+      "to"
+    ],
+    "und": [
+      "and"
+    ],
+    "wie ist": [
+      "how is",
+      "what is"
+    ],
+    "rot": [
+      "red"
+    ],
+    "gruen": [
+      "green"
+    ],
+    "blau": [
+      "blue"
+    ],
+    "weiss": [
+      "white"
+    ],
+    "gelb": [
+      "yellow"
+    ],
+    "gruppe": [
+      "group",
+      "groups"
+    ],
+    "geraete": [
+      "devices"
+    ],
+    "liste": [
+      "list"
+    ],
+    "einkaufsliste": [
+      "shopping list"
+    ],
+    "uhrzeit": [
+      "time",
+      "what time is it"
+    ],
+    "datum": [
+      "date"
+    ],
+    "position": [
+      "position"
+    ],
+    "feuchtigkeit": [
+      "moisture"
+    ],
+    "anhalten": [
+      "halt"
+    ]
+  },
+  "routing": {},
+  "states": {
+    "on": "on",
+    "off": "off",
+    "open": "open",
+    "closed": "closed",
+    "locked": "locked",
+    "unlocked": "unlocked",
+    "home": "home",
+    "not_home": "away",
+    "idle": "idle",
+    "cleaning": "cleaning",
+    "docked": "docked",
+    "unavailable": "unavailable",
+    "unknown": "unknown"
+  },
+  "domains": {
+    "light": [
+      "light",
+      "lights"
+    ],
+    "switch": [
+      "switch",
+      "switches"
+    ],
+    "cover": [
+      "cover",
+      "covers"
+    ],
+    "lock": [
+      "lock",
+      "locks"
+    ],
+    "vacuum": [
+      "vacuum",
+      "vacuums"
+    ],
+    "climate": [
+      "thermostat",
+      "thermostats"
+    ],
+    "sensor": [
+      "sensor",
+      "sensors"
+    ],
+    "binary_sensor": [
+      "sensor",
+      "sensors"
+    ]
+  },
+  "weather": {
+    "sunny": "sunny",
+    "clear-night": "clear",
+    "cloudy": "cloudy",
+    "partlycloudy": "partly cloudy",
+    "rainy": "rainy",
+    "pouring": "pouring",
+    "snowy": "snowy",
+    "fog": "foggy",
+    "windy": "windy"
+  },
+  "wait": [
+    "Let me think for a moment.",
+    "I am looking into that.",
+    "Give me a moment to work that out."
+  ],
+  "language_name": "English",
+  "patterns": {
+    "state_location": "\\b(?:in\\s+the|in)\\s+(.+?)\\s+(?:on|off|open|closed|locked|unlocked)\\b"
+  },
+  "language_names": {
+    "de": "German",
+    "en": "English",
+    "fr": "French",
+    "es": "Spanish",
+    "it": "Italian",
+    "nl": "Dutch",
+    "pt": "Portuguese",
+    "pl": "Polish",
+    "ru": "Russian",
+    "uk": "Ukrainian",
+    "tr": "Turkish",
+    "zh": "Chinese",
+    "ja": "Japanese",
+    "ko": "Korean"
+  }
+}

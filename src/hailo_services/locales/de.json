@@ -1,0 +1,1026 @@
+{
+  "text": {
+    "ha_state_routing.22": "Beantworte die Nutzerfrage kurz und ausschließlich anhand der folgenden Home-Assistant-Live-Daten. Erfinde keine Zustände oder Werte.",
+    "ha_state_routing.486": "Teilweise: {v0} von {v1} {label} sind {expected_label}: {matching_names}. Abweichend: {other_states}.",
+    "ha_state_routing.392": "Geräte",
+    "ha_state_routing.460": "{v0} von {v1} {label} sind {expected_label}.",
+    "ha_state_routing.472": "Nein, {v0} ist {v1}.",
+    "ha_state_routing.475": "Ja, alle {v0} {label} sind {expected_label}.",
+    "ha_state_routing.480": "Nein, keines der {v0} {label} ist {expected_label}. {states}.",
+    "ha_state_routing.449": "{v0} ist {v1}.",
+    "ha_state_routing.463": "Keine {label} sind {expected_label}.",
+    "ha_state_routing.471": "Ja, {v0} ist {expected_label}.",
+    "ha_state_routing.502": "Frage: {question}\nHome-Assistant-Live-Daten:\n{live_text}",
+    "ha_state_routing.390": "Geräte",
+    "ha_state_routing.442": "Luftfeuchtigkeit",
+    "ha_prompt_compiler.384": "Home Assistant. Nutze nur bereitgestellte Tools. Erfinde keine Geräte oder Werte.",
+    "ha_prompt_compiler.385": "Bei Bereichszielen nutze area; bei einem bestimmten Gerät name. Antworte kurz.",
+    "ha_prompt_compiler.389": "Für aktuelle Zustände oder Werte GetLiveContext aufrufen.",
+    "ha_prompt_compiler.393": "Aufgabe: {capability}",
+    "ha_prompt_compiler.406": "Keine Sammelaktion ohne eindeutigen Bereich ausführen.",
+    "ha_prompt_compiler.391": "Für die angeforderte Steuerung ein bereitgestelltes Tool aufrufen.",
+    "ha_prompt_compiler.400": "Kontext: ",
+    "ha_prompt_compiler.402": "Geräte: ",
+    "ha_state_routing_fixes.164": "Home Assistant konnte keine passenden freigegebenen Geräte finden.",
+    "ha_state_routing_fixes.159": "Ich konnte im Bereich „{area}“ keine passenden Lichter finden.",
+    "ha_state_routing_fixes.161": "Ich konnte im Bereich „{area}“ keine passenden Geräte finden.",
+    "ha_state_routing_fixes.163": "Ich konnte „{name}“ in Home Assistant nicht finden.",
+    "ha_action_verification.236": "Nicht alle Geräte haben den gewünschten Zustand erreicht: {names_text}.",
+    "ha_action_verification.212": "Erledigt.",
+    "ha_weather_routing.421": "Aktuell habe ich keine aktuellen Temperaturdaten{suffix}.",
+    "ha_weather_routing.429": "Die aktuelle Temperatur beträgt {best_value}.",
+    "ha_weather_routing.520": "Aktuell habe ich keine passenden aktuellen Wetterdaten in Home Assistant.",
+    "ha_weather_routing.548": "Aktuell sind die Wetterdaten in Home Assistant nicht verfügbar.",
+    "ha_weather_routing.589": "Beantworte die Frage nach der aktuellen Umgebungstemperatur.",
+    "ha_weather_routing.591": "Beantworte die aktuelle Wetterfrage.",
+    "ha_weather_routing.420": " für {area}",
+    "ha_weather_routing.425": "Die aktuelle Temperatur beträgt {best_value}.",
+    "ha_weather_routing.551": "Draußen ist es {condition}",
+    "ha_weather_routing.555": "die Luftfeuchtigkeit beträgt {humidity}",
+    "ha_weather_routing.558": "Der Taupunkt liegt bei {dew_point}.",
+    "ha_weather_routing.597": "{task} Nutze ausschließlich die folgenden Home-Assistant-Live-Daten. Bevorzuge Messwerte, die semantisch die Raum-, Außen- oder Luftumgebung beschreiben. Interne Geräte-, Prozess-, Batterie-, Motor-, Wasser-, Koch- oder Fühlertemperaturen sind keine allgemeine Umgebungstemperatur. Bei climate ist nur current_temperature ein Istwert; temperature ist ein Sollwert. Wenn die Daten nicht eindeutig oder nicht aktuell sind, sage das klar. Erfinde nichts.",
+    "ha_weather_routing.608": "Frage: {query}\nLive-Kandidaten:\n",
+    "ha_weather_routing.553": "Draußen sind es ",
+    "litert_optimizations.122": "Erledigt.",
+    "measurement.temperature": "Temperatur",
+    "measurement.humidity": "Luftfeuchtigkeit",
+    "device.singular": "Gerät",
+    "device.plural": "Geräte",
+    "measurement.value": "Die {noun} beträgt {value}.",
+    "prompt.reply_language": "Antworte auf Deutsch."
+  },
+  "ui": {
+    "ui_0": "API-Schlüssel fehlt oder ist ungültig.",
+    "ui_1": "Bereit",
+    "ui_2": "Nicht bereit",
+    "ui_3": "Verbunden",
+    "ui_4": "Nicht verbunden",
+    "ui_5": "Stand: {v0} · Aktualisierung alle 5 Sekunden.",
+    "ui_6": "Nicht erreichbar",
+    "ui_7": "Service nicht erreichbar: {v0}",
+    "ui_8": "DU",
+    "ui_9": "Gesendetes Bild",
+    "ui_10": "Bild konnte nicht gelesen werden.",
+    "ui_11": "Antwort wird erzeugt …",
+    "ui_12": "Gemma verarbeitet Text. Für Bilder bitte Qwen2-VL wählen.",
+    "ui_13": "Bitte JPEG, PNG oder WebP auswählen.",
+    "ui_14": "Bild ist zu groß für den Service.",
+    "ui_15": "Chat ist voll. Bitte einen neuen Chat starten.",
+    "ui_16": "Maximal vier Bilder pro Chat. Bitte einen neuen Chat starten.",
+    "ui_17": "Chat ist zu groß. Bitte einen neuen Chat starten.",
+    "ui_18": "Service lieferte keine Chat-Antwort.",
+    "ui_19": "Antwort in {v0} s.",
+    "ui_20": "Neuer Chat gestartet.",
+    "ui_21": "Keine Audiodaten aufgenommen. Bitte erneut versuchen.",
+    "ui_22": "{v0} Sekunden aufgenommen. Jetzt anhören oder transkribieren.",
+    "ui_23": "Mikrofon wird geöffnet …",
+    "ui_24": "Aufnahme abgebrochen: Seite ist im Hintergrund.",
+    "ui_25": "Service-Größenlimit zu klein für eine Aufnahme.",
+    "ui_26": "Aufnahme läuft …",
+    "ui_27": "Mikrofonzugriff abgelehnt. Bitte in den Browser-Einstellungen erlauben.",
+    "ui_28": "Audiodatei ist zu groß.",
+    "ui_29": "Audiodatei bereit. Dauer und Format werden vom Service geprüft.",
+    "ui_30": "Sprache wird transkribiert …",
+    "ui_31": "Transkription in {v0} s abgeschlossen.",
+    "ui_32": "API-Zugang erfolgreich geprüft. Schlüssel bleibt nur im Speicher dieser Seite.",
+    "ui_33": "Maximal {v0} Sekunden. Aufnahme als Mono-WAV; kein Zusatzprogramm nötig.",
+    "ui_34": "Mikrofonaufnahme braucht HTTPS oder localhost und einen Browser mit AudioWorklet. Bei HTTP über eine LAN-IP bitte Audiodatei hochladen oder HTTPS einrichten.",
+    "ui_35": "Service-Konfiguration konnte nicht geladen werden: {v0}",
+    "ui_36": "Status prüfen. Bilder verstehen. Sprache transkribieren.",
+    "ui_37": "Verbinde …",
+    "ui_38": "Service-Status",
+    "ui_39": "Aktualisieren",
+    "ui_40": "Hailo-Gruppe",
+    "ui_41": "Warteschlange / aktive Aufträge",
+    "ui_42": "Geladene Modelle",
+    "ui_43": "Status wird alle 5 Sekunden aktualisiert.",
+    "ui_44": "Modelldateien & Rohstatus",
+    "ui_45": "API-Zugang",
+    "ui_46": "API-Schlüssel",
+    "ui_47": "HAILO_API_KEY aus der Service-Konfiguration",
+    "ui_48": "Zugang prüfen",
+    "ui_49": "Der Schlüssel bleibt nur im Speicher dieser Seite und wird nicht gespeichert.",
+    "ui_50": "LOKALE MODELLE",
+    "ui_51": "Neuer Chat",
+    "ui_52": "Modell",
+    "ui_53": "Chat-Verlauf",
+    "ui_54": "Stelle eine Frage oder lade ein Bild zur Analyse hoch.",
+    "ui_55": "Deine Nachricht",
+    "ui_56": "Was ist auf diesem Bild zu sehen?",
+    "ui_57": "Bild (optional)",
+    "ui_58": "Max. Tokens",
+    "ui_59": "Vorschau des ausgewählten Bildes",
+    "ui_60": "Nachricht senden",
+    "ui_61": "Sprache testen",
+    "ui_62": "Eine kurze Aufnahme machen, anhören und anschließend transkribieren.",
+    "ui_63": "Aufnahmedauer",
+    "ui_64": "Aufnahme starten",
+    "ui_65": "Stoppen",
+    "ui_66": "Oder Audiodatei hochladen (WAV / FLAC / OGG)",
+    "ui_67": "Noch keine Aufnahme ausgewählt.",
+    "ui_68": "Sprache",
+    "ui_69": "Deutsch",
+    "ui_70": "Englisch",
+    "ui_71": "Service-Standard",
+    "ui_72": "Französisch",
+    "ui_73": "Spanisch",
+    "ui_74": "Russisch",
+    "ui_75": "Transkribieren",
+    "ui_76": "Transkript",
+    "ui_77": "Der erkannte Text erscheint hier.",
+    "ui_78": "Verarbeitung auf deinem Hailo-Service",
+    "ui_79": "Audio wird erst mit „Transkribieren“ gesendet.",
+    "ui_80": "Oberflächensprache",
+    "ui_81": "Automatisch (Browser)",
+    "ui_82": "Allgemeine Sprache",
+    "ui_extra_0": "Mikrofonaufnahme braucht HTTPS oder localhost und einen Browser mit AudioWorklet. Bei HTTP über eine LAN-IP bitte Audiodatei hochladen oder SSH-Tunnel verwenden.",
+    "ui_extra_1": "WAV / FLAC / OGG · maximal {v0} s und {v1} MB.",
+    "ui_extra_2": "Gemma 4 E2B läuft über LiteRT-LM auf der CPU. Bildanalyse erfolgt mit Qwen2-VL.",
+    "ui_extra_3": "Qwen2-VL verarbeitet Text und Bilder über Hailo.",
+    "ui_extra_4": "Seitenkonfiguration konnte nicht geladen werden: {v0}",
+    "ui.language_settings": "Spracheinstellungen"
+  },
+  "aliases": {
+    "licht": [
+      "licht"
+    ],
+    "schalter": [
+      "schalter"
+    ],
+    "rollladen": [
+      "rollladen"
+    ],
+    "schloss": [
+      "schloss"
+    ],
+    "thermostat": [
+      "thermostat"
+    ],
+    "heizung": [
+      "heizung"
+    ],
+    "klima": [
+      "klima"
+    ],
+    "staubsauger": [
+      "staubsauger"
+    ],
+    "wetter": [
+      "wetter"
+    ],
+    "wetterstation": [
+      "wetterstation"
+    ],
+    "welche temperatur": [
+      "welche temperatur"
+    ],
+    "wie warm": [
+      "wie warm"
+    ],
+    "temperatur": [
+      "temperatur"
+    ],
+    "luftfeuchtigkeit": [
+      "luftfeuchtigkeit"
+    ],
+    "helligkeit": [
+      "helligkeit"
+    ],
+    "prozent": [
+      "prozent"
+    ],
+    "grad": [
+      "grad"
+    ],
+    "farbe": [
+      "farbe"
+    ],
+    "warmweiss": [
+      "warmweiss"
+    ],
+    "kaltweiss": [
+      "kaltweiss"
+    ],
+    "dunkler": [
+      "dunkler"
+    ],
+    "heller": [
+      "heller"
+    ],
+    "stelle": [
+      "stelle"
+    ],
+    "einschalten": [
+      "einschalten"
+    ],
+    "ausschalten": [
+      "ausschalten"
+    ],
+    "oeffne": [
+      "oeffne"
+    ],
+    "schliesse": [
+      "schliesse"
+    ],
+    "stoppe": [
+      "stoppe"
+    ],
+    "wie viele": [
+      "wie viele"
+    ],
+    "welche": [
+      "welche"
+    ],
+    "ist": [
+      "ist"
+    ],
+    "an": [
+      "an"
+    ],
+    "aus": [
+      "aus"
+    ],
+    "offen": [
+      "offen"
+    ],
+    "geschlossen": [
+      "geschlossen"
+    ],
+    "alle": [
+      "alle"
+    ],
+    "status": [
+      "status"
+    ],
+    "draussen": [
+      "draussen"
+    ],
+    "garten": [
+      "garten"
+    ],
+    "zimmer": [
+      "zimmer"
+    ],
+    "wohnzimmer": [
+      "wohnzimmer"
+    ],
+    "kueche": [
+      "kueche"
+    ],
+    "schlafzimmer": [
+      "schlafzimmer"
+    ],
+    "haus": [
+      "haus"
+    ],
+    "luft": [
+      "luft"
+    ],
+    "wasser": [
+      "wasser"
+    ],
+    "akku": [
+      "akku"
+    ],
+    "geraet": [
+      "geraet"
+    ],
+    "motor": [
+      "motor"
+    ],
+    "backofen": [
+      "backofen"
+    ],
+    "wechselrichter": [
+      "wechselrichter"
+    ],
+    "druck": [
+      "druck"
+    ],
+    "wind": [
+      "wind"
+    ],
+    "regen": [
+      "regen"
+    ],
+    "taupunkt": [
+      "taupunkt"
+    ],
+    "bitte": [
+      "bitte"
+    ],
+    "im": [
+      "im"
+    ],
+    "auf": [
+      "auf"
+    ],
+    "und": [
+      "und"
+    ],
+    "wie ist": [
+      "wie ist"
+    ],
+    "rot": [
+      "rot"
+    ],
+    "gruen": [
+      "gruen"
+    ],
+    "blau": [
+      "blau"
+    ],
+    "weiss": [
+      "weiss"
+    ],
+    "gelb": [
+      "gelb"
+    ],
+    "gruppe": [
+      "gruppe"
+    ],
+    "geraete": [
+      "geraete"
+    ],
+    "liste": [
+      "liste"
+    ],
+    "einkaufsliste": [
+      "einkaufsliste"
+    ],
+    "uhrzeit": [
+      "uhrzeit"
+    ],
+    "datum": [
+      "datum"
+    ],
+    "position": [
+      "position"
+    ],
+    "feuchtigkeit": [
+      "feuchtigkeit"
+    ],
+    "anhalten": [
+      "anhalten"
+    ]
+  },
+  "routing": {
+    "ha_state_routing._DOMAIN_WORDS": {
+      "light": {
+        "$set": [
+          "lampe",
+          "lampen",
+          "led",
+          "licht",
+          "lichter"
+        ]
+      },
+      "switch": {
+        "$set": [
+          "schalter",
+          "switch"
+        ]
+      },
+      "cover": {
+        "$set": [
+          "jalousie",
+          "jalousien",
+          "markise",
+          "rollladen",
+          "rolllaeden"
+        ]
+      },
+      "lock": {
+        "$set": [
+          "lock",
+          "schloesser",
+          "schloss",
+          "tuerschloss",
+          "turschloss"
+        ]
+      },
+      "climate": {
+        "$set": [
+          "heizung",
+          "klima",
+          "klimaanlage",
+          "thermostat"
+        ]
+      },
+      "vacuum": {
+        "$set": [
+          "saugroboter",
+          "staubsauger",
+          "vacuum"
+        ]
+      }
+    },
+    "ha_state_routing._STATE_ALIASES": {
+      "an": "on",
+      "on": "on",
+      "ein": "on",
+      "aus": "off",
+      "off": "off",
+      "offen": "open",
+      "geoeffnet": "open",
+      "geschlossen": "closed",
+      "zu": "closed",
+      "gesperrt": "locked",
+      "verriegelt": "locked",
+      "locked": "locked",
+      "entsperrt": "unlocked",
+      "entriegelt": "unlocked",
+      "unlocked": "unlocked"
+    },
+    "ha_prompt_compiler._CAPABILITIES": {
+      "state.query": "read current Home Assistant device state or value",
+      "light.brightness": "set lamp or light brightness percentage, brighter or darker",
+      "light.color": "set lamp or light color",
+      "light.temperature": "set warm white or cool white light color temperature",
+      "light.adjust": "adjust a light brightness color or color temperature",
+      "climate.temperature": "set thermostat heating cooling or room temperature",
+      "cover.position": "set blind shutter curtain awning or cover position percentage",
+      "cover.stop": "stop a moving blind shutter curtain awning or cover",
+      "vacuum.control": "start robot vacuum clean an area or return vacuum to base",
+      "todo.read": "read query or list todo shopping list items",
+      "todo.modify": "add remove or complete todo shopping list items",
+      "broadcast": "broadcast or announce a message in the home",
+      "datetime": "get current date or time"
+    },
+    "ha_prompt_compiler._SHORT_TOOL_DESCRIPTIONS": {
+      "homeassistant__GetLiveContext": "Read current Home Assistant state.",
+      "intent__HassTurnOn": "Turn on the target.",
+      "intent__HassTurnOff": "Turn off the target.",
+      "light__HassLightSet": "Set light properties.",
+      "climate__HassClimateSetTemperature": "Set target temperature.",
+      "intent__HassSetPosition": "Set cover position.",
+      "intent__HassStopMoving": "Stop cover movement.",
+      "vacuum__HassVacuumCleanArea": "Clean an area.",
+      "vacuum__HassVacuumReturnToBase": "Return vacuum to base.",
+      "vacuum__HassVacuumStart": "Start vacuum.",
+      "todo__get_items": "Read todo items.",
+      "todo__HassListAddItem": "Add todo item.",
+      "todo__HassListCompleteItem": "Complete todo item.",
+      "todo__HassListRemoveItem": "Remove todo item.",
+      "assist_satellite__HassBroadcast": "Broadcast a message.",
+      "llm__GetDateTime": "Get current date and time."
+    },
+    "ha_state_routing_fixes._HOME_LOCATIONS": {
+      "$set": [
+        "ganzen haus",
+        "gesamten haus",
+        "haus",
+        "home",
+        "zu hause",
+        "zuhause"
+      ]
+    },
+    "ha_routing._EXTRA_STOP_WORDS": {
+      "$set": [
+        "auf",
+        "fuer",
+        "für",
+        "mit",
+        "ohne",
+        "vom",
+        "von",
+        "wann",
+        "was",
+        "welche",
+        "welcher",
+        "welches",
+        "wer",
+        "wie",
+        "wo",
+        "zu",
+        "zum",
+        "zur"
+      ]
+    },
+    "ha_weather_routing._AMBIENT_WORDS": {
+      "$set": [
+        "air",
+        "ambient",
+        "aussen",
+        "draussen",
+        "indoor",
+        "innen",
+        "luft",
+        "outdoor",
+        "outside",
+        "raum",
+        "room",
+        "weather",
+        "wetter",
+        "wetterstation",
+        "zimmer"
+      ]
+    },
+    "ha_weather_routing._OUTDOOR_WORDS": {
+      "$set": [
+        "aussen",
+        "balcony",
+        "balkon",
+        "draussen",
+        "garden",
+        "garten",
+        "outdoor",
+        "outside",
+        "patio",
+        "terrace",
+        "terrasse"
+      ]
+    },
+    "ha_weather_routing._PROCESS_WORDS": {
+      "$set": [
+        "akku",
+        "backofen",
+        "batterie",
+        "battery",
+        "boiler",
+        "cell",
+        "coil",
+        "cpu",
+        "device",
+        "flow",
+        "food",
+        "fuehler",
+        "geraet",
+        "gpu",
+        "grill",
+        "inverter",
+        "kessel",
+        "motor",
+        "oven",
+        "pit",
+        "probe",
+        "sonde",
+        "spule",
+        "vorlauf",
+        "wasser",
+        "water",
+        "wechselrichter",
+        "zelle"
+      ]
+    },
+    "tool_retrieval._STOP_WORDS": {
+      "$set": [
+        "am",
+        "bitte",
+        "das",
+        "dem",
+        "den",
+        "der",
+        "des",
+        "die",
+        "doch",
+        "ein",
+        "eine",
+        "einem",
+        "einen",
+        "einer",
+        "er",
+        "es",
+        "fahr",
+        "fahre",
+        "im",
+        "in",
+        "ist",
+        "jetzt",
+        "mach",
+        "mache",
+        "macht",
+        "mal",
+        "mich",
+        "mir",
+        "oder",
+        "schalt",
+        "schalte",
+        "setze",
+        "sie",
+        "sind",
+        "stell",
+        "stelle",
+        "und",
+        "werden",
+        "wird"
+      ]
+    },
+    "tool_retrieval._SYNONYMS": {
+      "an": {
+        "$set": [
+          "on",
+          "turn"
+        ]
+      },
+      "aus": {
+        "$set": [
+          "off",
+          "turn"
+        ]
+      },
+      "einschalten": {
+        "$set": [
+          "light",
+          "on",
+          "switch",
+          "turn"
+        ]
+      },
+      "anschalten": {
+        "$set": [
+          "light",
+          "on",
+          "switch",
+          "turn"
+        ]
+      },
+      "anmachen": {
+        "$set": [
+          "light",
+          "on",
+          "switch",
+          "turn"
+        ]
+      },
+      "ausschalten": {
+        "$set": [
+          "light",
+          "off",
+          "switch",
+          "turn"
+        ]
+      },
+      "ausmachen": {
+        "$set": [
+          "light",
+          "off",
+          "switch",
+          "turn"
+        ]
+      },
+      "licht": {
+        "$set": [
+          "light"
+        ]
+      },
+      "lampe": {
+        "$set": [
+          "light"
+        ]
+      },
+      "lampen": {
+        "$set": [
+          "light"
+        ]
+      },
+      "öffnen": {
+        "$set": [
+          "cover",
+          "garage",
+          "open"
+        ]
+      },
+      "oeffnen": {
+        "$set": [
+          "cover",
+          "garage",
+          "open"
+        ]
+      },
+      "hoch": {
+        "$set": [
+          "cover",
+          "open",
+          "up"
+        ]
+      },
+      "hochfahren": {
+        "$set": [
+          "cover",
+          "open",
+          "up"
+        ]
+      },
+      "runter": {
+        "$set": [
+          "close",
+          "cover",
+          "down",
+          "shutter"
+        ]
+      },
+      "herunter": {
+        "$set": [
+          "close",
+          "cover",
+          "down",
+          "shutter"
+        ]
+      },
+      "schließen": {
+        "$set": [
+          "close",
+          "cover",
+          "shutter"
+        ]
+      },
+      "schliessen": {
+        "$set": [
+          "close",
+          "cover",
+          "shutter"
+        ]
+      },
+      "runterfahren": {
+        "$set": [
+          "close",
+          "cover",
+          "down"
+        ]
+      },
+      "herunterfahren": {
+        "$set": [
+          "close",
+          "cover",
+          "down"
+        ]
+      },
+      "temperatur": {
+        "$set": [
+          "climate",
+          "temperature"
+        ]
+      },
+      "wärmer": {
+        "$set": [
+          "climate",
+          "heat",
+          "temperature"
+        ]
+      },
+      "kaelter": {
+        "$set": [
+          "climate",
+          "cool",
+          "temperature"
+        ]
+      },
+      "kälter": {
+        "$set": [
+          "climate",
+          "cool",
+          "temperature"
+        ]
+      },
+      "heller": {
+        "$set": [
+          "brightness",
+          "light"
+        ]
+      },
+      "dunkler": {
+        "$set": [
+          "brightness",
+          "light"
+        ]
+      }
+    },
+    "ha_state_routing.pattern.61.17": "\\b(temperatur|wie warm|wie kalt)\\b",
+    "ha_state_routing.pattern.63.17": "\\b(luftfeuchtigkeit|feuchtigkeit)\\b",
+    "ha_state_routing.pattern.37.8": "\\b(schalt\\w*|mach\\w*|einschalten|ausschalten|anschalten|anmachen|ausmachen|aktiviere\\w*|deaktiviere\\w*|stell\\w*|setze\\w*|oeffne\\w*|schliesse\\w*|verriegel\\w*|entriegel\\w*)\\b",
+    "ha_state_routing.pattern.57.17": "\\b(wie viele|wieviele)\\b",
+    "ha_state_routing.pattern.59.17": "\\b(welche|welcher|welches)\\b",
+    "ha_prompt_compiler.pattern.157.17": "\\b(warmweiss|warm weiss|kaltweiss|kalt weiss|farbtemperatur)\\b",
+    "ha_prompt_compiler.pattern.179.17": "\\b(uhrzeit|datum|welcher tag|wie spaet)\\b",
+    "ha_prompt_compiler.pattern.152.34": "\\b(licht|lichter|lampe|lampen|led|beleuchtung)\\b",
+    "ha_prompt_compiler.pattern.154.8": "\\b(wie hell|heller|dunkler|helligkeit|brightness|prozent)\\b",
+    "ha_prompt_compiler.pattern.161.17": "\\b(temperatur|grad|waermer|kaelter)\\b",
+    "ha_prompt_compiler.pattern.162.8": "\\b(heizung|thermostat|klima|klimaanlage|temperatur)\\b",
+    "ha_prompt_compiler.pattern.176.21": "\\b(was|welche|zeige|lies|vorlesen|steht)\\b",
+    "ha_state_routing_fixes.pattern.20.4": "\\b(?:im|in\\s+der|in\\s+dem|in\\s+den|in)\\s+(.+?)(?:\\s+(?:ist|sind|steht|stehen))?\\s+(?:an|aus|offen|geschlossen|gesperrt|verriegelt|entsperrt|entriegelt|on|off|locked|unlocked)\\b",
+    "ha_routing.pattern.178.22": "\\b(ausschalten|ausmachen|deaktivieren|deaktiviere)\\b",
+    "ha_routing.pattern.179.25": "\\b(schalt\\w*|mach\\w*)\\b.*\\b(aus)\\b",
+    "ha_routing.pattern.184.22": "\\b(einschalten|anschalten|anmachen|aktivieren|aktiviere)\\b",
+    "ha_routing.pattern.185.25": "\\b(schalt\\w*|mach\\w*)\\b.*\\b(an|ein)\\b",
+    "ha_weather_routing.pattern.63.17": "\\b(thermostat|heizung|klima|klimaanlage|setpoint|solltemperatur)\\b",
+    "ha_weather_routing.pattern.125.17": "\\b(temperatur|temperature)\\b",
+    "ha_weather_routing.pattern.164.17": "\\b(luftfeuchte|humidity)\\b",
+    "ha_weather_routing.pattern.280.17": "\\b(temperatur|temperature)\\b",
+    "ha_weather_routing.pattern.67.12": "\\b(wie warm|wie kalt|welche temperatur|was fuer eine temperatur|temperatur ist|temperature|how warm|how cold)\\b",
+    "ha_weather_routing.pattern.160.17": "\\b(temperatur|temperature)\\b",
+    "ha_weather_routing.pattern.301.21": "\\b(luftfeuchte|humidity)\\b",
+    "ha_weather_routing.pattern.388.12": "\\b(temperatur|temperature|luftfeuchte|humidity|dew|dewpoint|taupunkt|frostpunkt|weather|wetter|druck|pressure|wind|regen|rain)\\b",
+    "ha_weather_routing.pattern.79.18": "\\b(wetter|wetterlage|weather)\\b",
+    "ha_weather_routing.pattern.80.21": "\\b(wie ist es|how is it)\\s+(draussen|aussen|outside)\\b",
+    "ha_pipeline.pattern.71.17": "\\b(und|oder|wenn|falls|nicht|um|mehr|weniger|heller|dunkler|color|colour|farbe|warmweiss|kaltweiss|if|unless|except|not|насколько|если|кроме|не)\\b",
+    "ha_pipeline.pattern.68.21": "\\b(stell\\w*|setze\\w*|mach\\w*)\\b",
+    "ha_state_routing.match.63.17": "\\b(status|zustand|modus)\\b",
+    "ha_state_routing.words.112.16": {
+      "$set": [
+        "temperatur",
+        "temperature",
+        "thermostat"
+      ]
+    },
+    "ha_state_routing.words.115.16": {
+      "$set": [
+        "feuchtigkeit",
+        "humidity",
+        "luftfeuchtigkeit"
+      ]
+    },
+    "ha_state_routing.match.66.18": "\\b(ist|sind|steht|stehen)\\b",
+    "ha_state_routing.match.68.34": "\\balle\\b",
+    "ha_prompt_compiler.domain_aliases": {
+      "light": {
+        "$set": [
+          "lampe",
+          "lampen",
+          "led",
+          "licht",
+          "lichter"
+        ]
+      },
+      "climate": {
+        "$set": [
+          "heizung",
+          "klima",
+          "klimaanlage",
+          "thermostat"
+        ]
+      },
+      "cover": {
+        "$set": [
+          "jalousie",
+          "jalousien",
+          "markise",
+          "rollladen",
+          "rolllaeden",
+          "vorhang"
+        ]
+      },
+      "vacuum": {
+        "$set": [
+          "saugroboter",
+          "staubsauger",
+          "vacuum"
+        ]
+      },
+      "lock": {
+        "$set": [
+          "lock",
+          "schloss",
+          "tuerschloss",
+          "turschloss"
+        ]
+      },
+      "switch": {
+        "$set": [
+          "schalter",
+          "switch"
+        ]
+      }
+    },
+    "ha_prompt_compiler.words.89.13": {
+      "$set": [
+        "lampe",
+        "lampen",
+        "led",
+        "licht",
+        "lichter"
+      ]
+    },
+    "ha_prompt_compiler.words.91.13": {
+      "$set": [
+        "jalousie",
+        "jalousien",
+        "markise",
+        "rollladen",
+        "rolllaeden",
+        "vorhang"
+      ]
+    },
+    "ha_prompt_compiler.match.173.17": "\\b(staubsauger|saugroboter|vacuum)\\b",
+    "ha_prompt_compiler.match.175.17": "\\b(einkaufsliste|todo|aufgabenliste|liste)\\b",
+    "ha_prompt_compiler.match.181.17": "\\b(durchsage|broadcast|sage .* bescheid|verkuende)\\b",
+    "ha_prompt_compiler.match.159.17": "\\b(farbe|rot|gruen|blau|gelb|orange|violett|lila|pink|weiss)\\b",
+    "ha_prompt_compiler.match.165.17": "\\b(prozent|position)\\b",
+    "ha_prompt_compiler.match.166.8": "\\b(rollladen|rolllaeden|jalousie|jalousien|markise|vorhang)\\b",
+    "ha_prompt_compiler.match.169.17": "\\b(stop|stopp|stoppe|anhalten)\\b",
+    "ha_prompt_compiler.match.170.8": "\\b(rollladen|rolllaeden|jalousie|jalousien|markise|vorhang)\\b",
+    "ha_routing.match.180.25": "\\b(turn|switch)\\b.*\\boff\\b",
+    "ha_routing.match.186.25": "\\b(turn|switch)\\b.*\\bon\\b",
+    "ha_weather_routing.match.165.17": "\\b(dew|taupunkt|frostpunkt)\\b",
+    "ha_weather_routing.match.310.17": "\\b(dew|dewpoint|taupunkt|frostpunkt)\\b",
+    "ha_weather_routing.words.349.19": {
+      "$set": [
+        "temperatur",
+        "temperature"
+      ]
+    },
+    "ha_weather_routing.match.160.8": "\\b(dew|taupunkt|frostpunkt)\\b",
+    "ha_weather_routing.words.432.48": {
+      "$set": [
+        "weather",
+        "wetter",
+        "wetterstation"
+      ]
+    },
+    "ha_pipeline.match.65.24": "(?<![\\w.,-])(\\d{1,3})\\s*(?:%|percent|prozent|процент\\w*)",
+    "ha_pipeline.words.46.99": {
+      "$set": [
+        "lampe",
+        "lampen",
+        "licht",
+        "rollladen",
+        "thermostat"
+      ]
+    }
+  },
+  "states": {
+    "on": "an",
+    "off": "aus",
+    "open": "offen",
+    "closed": "geschlossen",
+    "locked": "gesperrt",
+    "unlocked": "entsperrt",
+    "home": "zu Hause",
+    "not_home": "nicht zu Hause",
+    "idle": "inaktiv",
+    "cleaning": "reinigt",
+    "docked": "an der Ladestation",
+    "unavailable": "nicht verfügbar",
+    "unknown": "unbekannt"
+  },
+  "domains": {
+    "light": [
+      "Licht",
+      "Lichter"
+    ],
+    "switch": [
+      "Schalter",
+      "Schalter"
+    ],
+    "cover": [
+      "Rollladen",
+      "Rollläden"
+    ],
+    "lock": [
+      "Schloss",
+      "Schlösser"
+    ],
+    "vacuum": [
+      "Staubsauger",
+      "Staubsauger"
+    ],
+    "climate": [
+      "Thermostat",
+      "Thermostate"
+    ],
+    "sensor": [
+      "Sensor",
+      "Sensoren"
+    ],
+    "binary_sensor": [
+      "Sensor",
+      "Sensoren"
+    ]
+  },
+  "weather": {
+    "sunny": "sonnig",
+    "clear-night": "klar",
+    "cloudy": "bewölkt",
+    "partlycloudy": "teilweise bewölkt",
+    "rainy": "regnerisch",
+    "pouring": "stark regnerisch",
+    "snowy": "verschneit",
+    "fog": "neblig",
+    "windy": "windig"
+  },
+  "wait": [
+    "Da muss ich kurz nachdenken.",
+    "Ich überlege einen Moment.",
+    "Lass mich das kurz prüfen."
+  ],
+  "language_name": "Deutsch",
+  "patterns": {
+    "state_location": "\\b(?:im|in\\s+der|in\\s+dem|in\\s+den|in)\\s+(.+?)(?:\\s+(?:ist|sind|steht|stehen))?\\s+(?:an|aus|offen|geschlossen|gesperrt|verriegelt|entsperrt|entriegelt|on|off|locked|unlocked)\\b"
+  },
+  "language_names": {
+    "de": "Deutsch",
+    "en": "Englisch",
+    "fr": "Französisch",
+    "es": "Spanisch",
+    "it": "Italienisch",
+    "nl": "Niederländisch",
+    "pt": "Portugiesisch",
+    "pl": "Polnisch",
+    "ru": "Russisch",
+    "uk": "Ukrainisch",
+    "tr": "Türkisch",
+    "zh": "Chinesisch",
+    "ja": "Japanisch",
+    "ko": "Koreanisch"
+  }
+}

@@ -25,7 +25,7 @@ hailo-10h-services = "hailo_services.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-hailo_services = ["web/*.html", "web/*.css", "web/*.js"]
+hailo_services = ["web/*.html", "web/*.css", "web/*.js", "locales/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

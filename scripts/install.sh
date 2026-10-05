@@ -50,7 +50,7 @@ if [[ ! -f /etc/hailo-10h-services.env ]]; then
   SERVICE_KEY=$("${SERVICE_DIR}/venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(32))')
   sed -i "s/^HAILO_API_KEY=$/HAILO_API_KEY=${SERVICE_KEY}/" /etc/hailo-10h-services.env
 fi
-# LiteRT-LM is optional. Install it into the service's interpreter when a model
+# Install the Gemma runtime into the service's interpreter when its model
 # path is configured; a package installed only in another user's venv is not visible.
 LITERT_MODEL_PATH=$(sed -n 's/^HAILO_LITERT_MODEL_PATH=//p' /etc/hailo-10h-services.env | tail -n 1)
 if [[ -n ${LITERT_MODEL_PATH} && -f ${LITERT_MODEL_PATH} ]]; then

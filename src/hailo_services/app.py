@@ -24,9 +24,10 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .config import LLM_MODEL, STT_MODEL, VLM_MODEL, Settings
+from .i18n import SUPPORTED_LANGUAGES, catalogue, wait_sentence
 from .input_budget import InputBudgetError
 from .media import audio_file, audio_metadata, decode_base64
-from .protocols import MQTTBridge, WyomingServer, dispatch
+from .protocols import LANGUAGES, MQTTBridge, WyomingServer, dispatch
 from .runtime import BusyError, LiteRTInferenceError, Runtime
 from .schemas import ChatRequest, TranscribeRequest
 from .tool_calling import has_tool_context
@@ -102,7 +103,8 @@ class AccessAndSizeLimit:
         public = scope["path"] == "/health" or (
             scope["type"] == "http"
             and scope.get("method") in {"GET", "HEAD"}
-            and scope["path"] in {*_WEB_FILES, "/ui/config"}
+            and (scope["path"] in {*_WEB_FILES, "/ui/config"}
+                 or scope["path"] in {f"/ui/locales/{lang}.json" for lang in SUPPORTED_LANGUAGES})
         )
         # Trust the socket peer only, never client-supplied forwarding headers.
         if protocol == "mcp" and not is_websocket:
@@ -303,10 +305,21 @@ def create_app(settings=None, backend=None, litert_backend=None):
             "chat_models": [VLM_MODEL] + ([LLM_MODEL] if runtime.litert_ready else []),
             "whisper_model": STT_MODEL,
             "language": settings.language,
+            "service_language": settings.service_language,
+            "ui_languages": list(SUPPORTED_LANGUAGES),
+            "stt_languages": LANGUAGES,
             "max_body": settings.max_body,
             "max_audio_seconds": settings.max_audio_seconds,
             "recording_seconds": min(30, settings.max_audio_seconds),
         }
+
+    @app.get("/ui/locales/{language}.json", include_in_schema=False)
+    async def web_locale(language: str):
+        if language not in SUPPORTED_LANGUAGES:
+            return JSONResponse({"error": "Unsupported language"}, status_code=404)
+        data = catalogue(language)
+        return {"ui": data["ui"], "language_name": data["language_name"],
+                "language_names": data["language_names"]}
 
     @app.exception_handler(BusyError)
     async def busy_handler(request, exc):
@@ -398,7 +411,29 @@ def create_app(settings=None, backend=None, litert_backend=None):
                 if has_tool_context(request):
                     # Buffer native tool output so invalid/incomplete calls are never streamed
                     # as actions or spoken as text by the voice assistant.
-                    result = await runtime.chat(request)
+                    if settings.ha_wait_messages and isinstance(runtime, Runtime):
+                        loop = asyncio.get_running_loop()
+                        started = asyncio.Event()
+                        response_language = [settings.service_language]
+
+                        def on_inference(language):
+                            response_language[0] = language
+                            loop.call_soon_threadsafe(started.set)
+
+                        inference = asyncio.create_task(runtime.chat(request, on_inference))
+                        notification = asyncio.create_task(started.wait())
+                        try:
+                            await asyncio.wait({inference, notification}, return_when=asyncio.FIRST_COMPLETED)
+                            if started.is_set() and not inference.done():
+                                yield event({"content": wait_sentence(response_language[0]) + "\n"})
+                            result = await inference
+                        finally:
+                            notification.cancel()
+                            if not inference.done():
+                                inference.cancel()
+                            await asyncio.gather(notification, inference, return_exceptions=True)
+                    else:
+                        result = await runtime.chat(request)
                     if isinstance(result, dict):
                         if result.get("content"):
                             yield event({"content": result["content"]})

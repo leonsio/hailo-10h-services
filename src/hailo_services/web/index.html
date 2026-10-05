@@ -9,51 +9,52 @@
 </head>
 <body>
 <main>
-  <header><div><p class="eyebrow">LOCAL AI GATEWAY</p><h1>Hailo-10H <span>Playground</span></h1><p>Status prüfen. Bilder verstehen. Sprache transkribieren.</p></div><span id="connection" class="badge">Verbinde …</span></header>
+  <section aria-label="Language settings" data-i18n-aria="ui.language_settings"><label for="ui-language" data-i18n="ui_80">Oberflächensprache</label><select id="ui-language"><option value="auto" data-i18n="ui_81">Automatisch (Browser)</option><option value="de" data-i18n="ui_69">Deutsch</option><option value="en" data-i18n="ui_70">Englisch</option><option value="ru" data-i18n="ui_74">Russisch</option></select></section>
+  <header><div><p class="eyebrow">LOCAL AI GATEWAY</p><h1>Hailo-10H <span>Playground</span></h1><p data-i18n="ui_36">Status prüfen. Bilder verstehen. Sprache transkribieren.</p></div><span id="connection" class="badge" data-i18n="ui_37">Verbinde …</span></header>
   <section aria-labelledby="status-title">
-    <div class="section-title"><h2 id="status-title">Service-Status</h2><button id="refresh" type="button" class="quiet">Aktualisieren</button></div>
+    <div class="section-title"><h2 id="status-title" data-i18n="ui_38">Service-Status</h2><button id="refresh" type="button" class="quiet" data-i18n="ui_39">Aktualisieren</button></div>
     <div class="stats">
-      <article><span>Hailo-Gruppe</span><strong id="group">—</strong></article>
-      <article><span>Warteschlange / aktive Aufträge</span><strong id="pending">—</strong></article>
-      <article><span>Geladene Modelle</span><strong id="models">—</strong></article>
+      <article><span data-i18n="ui_40">Hailo-Gruppe</span><strong id="group">—</strong></article>
+      <article><span data-i18n="ui_41">Warteschlange / aktive Aufträge</span><strong id="pending">—</strong></article>
+      <article><span data-i18n="ui_42">Geladene Modelle</span><strong id="models">—</strong></article>
       <article><span>MQTT</span><strong id="mqtt">—</strong></article>
     </div>
-    <p id="status-note" class="hint" role="status">Status wird alle 5 Sekunden aktualisiert.</p>
-    <details><summary>Modelldateien & Rohstatus</summary><pre id="raw-status">—</pre></details>
+    <p id="status-note" class="hint" role="status" data-i18n="ui_43">Status wird alle 5 Sekunden aktualisiert.</p>
+    <details><summary data-i18n="ui_44">Modelldateien & Rohstatus</summary><pre id="raw-status">—</pre></details>
   </section>
   <section id="auth-section" aria-labelledby="access-title">
-    <h2 id="access-title">API-Zugang</h2>
-    <label for="api-key">API-Schlüssel</label>
-    <div class="key-row"><input id="api-key" type="password" placeholder="HAILO_API_KEY aus der Service-Konfiguration" autocomplete="off" spellcheck="false"><button id="check-key" type="button" class="quiet">Zugang prüfen</button></div>
-    <p id="auth-note" class="hint" role="status">Der Schlüssel bleibt nur im Speicher dieser Seite und wird nicht gespeichert.</p>
+    <h2 id="access-title" data-i18n="ui_45">API-Zugang</h2>
+    <label for="api-key" data-i18n="ui_46">API-Schlüssel</label>
+    <div class="key-row"><input id="api-key" type="password" placeholder="HAILO_API_KEY aus der Service-Konfiguration" data-i18n-placeholder="ui_47" autocomplete="off" spellcheck="false"><button id="check-key" type="button" class="quiet" data-i18n="ui_48">Zugang prüfen</button></div>
+    <p id="auth-note" class="hint" role="status" data-i18n="ui_49">Der Schlüssel bleibt nur im Speicher dieser Seite und wird nicht gespeichert.</p>
   </section>
   <div class="playgrounds">
     <section aria-labelledby="chat-title">
-      <div class="section-title"><div><p class="eyebrow">LOKALE MODELLE</p><h2 id="chat-title">Chat</h2></div><button id="clear-chat" type="button" class="quiet">Neuer Chat</button></div>
-      <label for="chat-model">Modell</label><select id="chat-model"><option value="Qwen2-VL-2B-Instruct">Qwen2-VL-2B-Instruct · Hailo</option></select>
-      <div id="conversation" class="conversation" role="log" aria-label="Chat-Verlauf"><p class="empty">Stelle eine Frage oder lade ein Bild zur Analyse hoch.</p></div>
+      <div class="section-title"><div><p class="eyebrow" data-i18n="ui_50">LOKALE MODELLE</p><h2 id="chat-title">Chat</h2></div><button id="clear-chat" type="button" class="quiet" data-i18n="ui_51">Neuer Chat</button></div>
+      <label for="chat-model" data-i18n="ui_52">Modell</label><select id="chat-model"><option value="Qwen2-VL-2B-Instruct">Qwen2-VL-2B-Instruct · Hailo</option></select>
+      <div id="conversation" class="conversation" role="log" aria-label="Chat-Verlauf" data-i18n-aria="ui_53"><p class="empty" data-i18n="ui_54">Stelle eine Frage oder lade ein Bild zur Analyse hoch.</p></div>
       <form id="chat-form">
-        <label for="prompt">Deine Nachricht</label><textarea id="prompt" rows="3" required placeholder="Was ist auf diesem Bild zu sehen?"></textarea>
-        <div class="form-row"><div><label for="image">Bild (optional)</label><input id="image" type="file" accept="image/jpeg,image/png,image/webp"></div><div class="tokens"><label for="max-tokens">Max. Tokens</label><input id="max-tokens" type="number" min="1" max="1024" value="256" required></div></div>
-        <img id="image-preview" hidden alt="Vorschau des ausgewählten Bildes">
-        <button id="send-chat" type="submit">Nachricht senden</button>
+        <label for="prompt" data-i18n="ui_55">Deine Nachricht</label><textarea id="prompt" rows="3" required placeholder="Was ist auf diesem Bild zu sehen?" data-i18n-placeholder="ui_56"></textarea>
+        <div class="form-row"><div><label for="image" data-i18n="ui_57">Bild (optional)</label><input id="image" type="file" accept="image/jpeg,image/png,image/webp"></div><div class="tokens"><label for="max-tokens" data-i18n="ui_58">Max. Tokens</label><input id="max-tokens" type="number" min="1" max="1024" value="256" required></div></div>
+        <img id="image-preview" hidden alt="Vorschau des ausgewählten Bildes" data-i18n-alt="ui_59">
+        <button id="send-chat" type="submit" data-i18n="ui_60">Nachricht senden</button>
       </form>
       <p id="chat-note" class="hint" role="status"></p>
     </section>
     <section aria-labelledby="whisper-title">
-      <p class="eyebrow">WHISPER BASE</p><h2 id="whisper-title">Sprache testen</h2>
-      <p>Eine kurze Aufnahme machen, anhören und anschließend transkribieren.</p>
+      <p class="eyebrow">WHISPER BASE</p><h2 id="whisper-title" data-i18n="ui_61">Sprache testen</h2>
+      <p data-i18n="ui_62">Eine kurze Aufnahme machen, anhören und anschließend transkribieren.</p>
       <p id="mic-hint" class="hint"></p>
-      <div class="record-panel"><strong id="record-time">00:00</strong><progress id="record-progress" max="30" value="0" aria-label="Aufnahmedauer"></progress><div class="button-row"><button id="record" type="button" disabled>Aufnahme starten</button><button id="stop" type="button" class="quiet" disabled>Stoppen</button></div></div>
-      <label for="audio-file">Oder Audiodatei hochladen (WAV / FLAC / OGG)</label><input id="audio-file" type="file" accept=".wav,.flac,.ogg,audio/wav,audio/flac,audio/ogg">
-      <p id="audio-name" class="hint">Noch keine Aufnahme ausgewählt.</p><audio id="audio-preview" controls hidden></audio>
-      <label for="language">Sprache</label><select id="language"><option value="de">Deutsch</option><option value="en">Englisch</option><option value="">Service-Standard</option><option value="fr">Französisch</option><option value="es">Spanisch</option><option value="ru">Russisch</option></select>
-      <button id="transcribe" type="button" disabled>Transkribieren</button>
+      <div class="record-panel"><strong id="record-time">00:00</strong><progress id="record-progress" max="30" value="0" aria-label="Aufnahmedauer" data-i18n-aria="ui_63"></progress><div class="button-row"><button id="record" type="button" disabled data-i18n="ui_64">Aufnahme starten</button><button id="stop" type="button" class="quiet" disabled data-i18n="ui_65">Stoppen</button></div></div>
+      <label for="audio-file" data-i18n="ui_66">Oder Audiodatei hochladen (WAV / FLAC / OGG)</label><input id="audio-file" type="file" accept=".wav,.flac,.ogg,audio/wav,audio/flac,audio/ogg">
+      <p id="audio-name" class="hint" data-i18n="ui_67">Noch keine Aufnahme ausgewählt.</p><audio id="audio-preview" controls hidden></audio>
+      <label for="language" data-i18n="ui_68">Sprache</label><select id="language"><option value="de" data-i18n="ui_69">Deutsch</option><option value="en" data-i18n="ui_70">Englisch</option><option value="" data-i18n="ui_71">Service-Standard</option><option value="fr" data-i18n="ui_72">Französisch</option><option value="es" data-i18n="ui_73">Spanisch</option><option value="ru" data-i18n="ui_74">Russisch</option></select>
+      <button id="transcribe" type="button" disabled data-i18n="ui_75">Transkribieren</button>
       <p id="whisper-note" class="hint" role="status"></p>
-      <label for="transcript">Transkript</label><textarea id="transcript" rows="5" readonly placeholder="Der erkannte Text erscheint hier."></textarea>
+      <label for="transcript" data-i18n="ui_76">Transkript</label><textarea id="transcript" rows="5" readonly placeholder="Der erkannte Text erscheint hier." data-i18n-placeholder="ui_77"></textarea>
     </section>
   </div>
-  <footer>Verarbeitung auf deinem Hailo-Service · <a href="health">Health-API</a> · Audio wird erst mit „Transkribieren“ gesendet.</footer>
+  <footer><span data-i18n="ui_78">Verarbeitung auf deinem Hailo-Service</span> · <a href="health">Health-API</a> · <span data-i18n="ui_79">Audio wird erst mit „Transkribieren“ gesendet.</span></footer>
 </main>
 </body>
 </html>

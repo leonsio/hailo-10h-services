@@ -20,6 +20,8 @@ class Settings:
     vlm_hef: str = VLM_MODEL
     whisper_hef: str = "Whisper-Base"
     language: str = "de"
+    service_language: str = "de"
+    ha_wait_messages: bool = True
     queue_size: int = 8
     request_timeout: float = 180
     max_body: int = 16 * 1024 * 1024
@@ -50,6 +52,8 @@ class Settings:
                 else:
                     values[key] = type(value)(raw)
         config = cls(**values)
+        if config.service_language not in {"de", "en", "ru"}:
+            raise ValueError("Service language must be de, en or ru")
         if config.queue_size < 1 or config.max_body < 1024 or config.request_timeout <= 0:
             raise ValueError("Invalid queue size, body limit or timeout")
         if not 0 <= config.wyoming_port <= 65535 or not 1 <= config.port <= 65535:

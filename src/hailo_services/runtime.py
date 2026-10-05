@@ -498,6 +498,9 @@ class LiteRTLMBackend:
             **tool_options,
         ) as conversation:
             prompt = self._prompt(messages)
+            on_inference = getattr(request, "_on_inference", None)
+            if on_inference is not None:
+                on_inference(getattr(request, "_response_language", "de"))
             if emit is None or has_tool_context(request):
                 response = conversation.send_message(
                     prompt, max_output_tokens=request.max_tokens
@@ -610,7 +613,7 @@ class Runtime:
         future = self.submit(function, *args)
         return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 
-    async def chat(self, request):
+    async def chat(self, request, on_inference=None):
         if request.max_input_tokens is not None and request.model != LLM_MODEL:
             raise ValueError(f"max_input_tokens requires model {LLM_MODEL}; Qwen image tokens cannot be counted here")
         if has_tool_context(request) and request.model != LLM_MODEL:
@@ -621,8 +624,10 @@ class Runtime:
                 raise BusyError(f"{LLM_MODEL} is unavailable: {detail}")
             if isinstance(self.backend, HailoBackend):
                 request = await self.call(self.backend.select_tools, request)
+                if on_inference is not None and getattr(request, "_ha_request", False):
+                    object.__setattr__(request, "_on_inference", on_inference)
                 return await self.call_litert(
-                    self.litert_backend.chat, request, None, None, bool(request.tools)
+                    self.litert_backend.chat, request, None, None, True
                 )
             return await self.call_litert(self.litert_backend.chat, request)
         if request.model != VLM_MODEL:

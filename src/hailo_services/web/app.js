@@ -4,6 +4,45 @@ let config, history = [], chatBusy = false, audioBusy = false;
 let audioBlob = null, audioName = "aufnahme.wav", audioURL = null, imageURL = null;
 let recording = null, starting = false, stopping = false, pageHidden = false;
 
+let uiLanguage = "de", uiStrings = {}, uiChoice = "auto", languageNames = {};
+function tr(key, values = {}) {
+  return (uiStrings[key] || key).replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ""));
+}
+function savedChoice() {
+  try { return localStorage.getItem("hailo-ui-language") || "auto"; } catch { return "auto"; }
+}
+function chooseLanguage(choice) {
+  const supported = config?.ui_languages || ["de", "en", "ru"];
+  if (supported.includes(choice)) return choice;
+  for (const value of navigator.languages || [navigator.language || ""]) {
+    const code = value.toLowerCase().split("-")[0];
+    if (supported.includes(code)) return code;
+  }
+  return config?.service_language || "de";
+}
+async function loadLanguage(choice) {
+  const language = chooseLanguage(choice);
+  const response = await fetch(`ui/locales/${language}.json`);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const data = await response.json();
+  uiLanguage = language; uiStrings = data.ui || {}; uiChoice = choice;
+  languageNames = data.language_names || {};
+  const selectedSTT = $("language").value;
+  $("language").replaceChildren(new Option(tr("ui_71"), ""),
+    ...(config?.stt_languages || ["de", "en", "ru"]).map(code => new Option(languageNames[code] || code, code)));
+  $("language").value = selectedSTT;
+  document.documentElement.lang = language;
+  for (const element of document.querySelectorAll("[data-i18n]")) element.textContent = tr(element.dataset.i18n);
+  for (const element of document.querySelectorAll("[data-i18n-placeholder]")) element.placeholder = tr(element.dataset.i18nPlaceholder);
+  for (const element of document.querySelectorAll("[data-i18n-alt]")) element.alt = tr(element.dataset.i18nAlt);
+  for (const element of document.querySelectorAll("[data-i18n-aria]")) element.setAttribute("aria-label", tr(element.dataset.i18nAria));
+}
+$("ui-language").addEventListener("change", async () => {
+  const choice = $("ui-language").value;
+  try { await loadLanguage(choice); localStorage.setItem("hailo-ui-language", choice); await refreshStatus(); }
+  catch (error) { note("status-note", error.message, true); }
+});
+
 function note(id, text, error = false) {
   $(id).textContent = text;
   $(id).classList.toggle("error", error);
@@ -17,7 +56,7 @@ async function request(path, options = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = data.error || data.detail;
-    throw new Error(response.status === 401 ? "API-Schlüssel fehlt oder ist ungültig." :
+    throw new Error(response.status === 401 ? tr("ui_0") :
       (typeof detail === "string" ? detail : JSON.stringify(detail || `HTTP ${response.status}`)));
   }
   return data;
@@ -40,28 +79,28 @@ async function refreshStatus() {
   try {
     const response = await fetch("health", { cache: "no-store" });
     const data = await response.json();
-    $("connection").textContent = response.ok && data.ready ? "Bereit" : "Nicht bereit";
+    $("connection").textContent = response.ok && data.ready ? tr("ui_1") : tr("ui_2");
     $("connection").className = `badge ${response.ok && data.ready ? "ready" : "error"}`;
     $("group").textContent = data.group_id || "—";
     $("pending").textContent = data.pending ?? "—";
     $("models").textContent = (data.models || []).join(" · ") || "—";
-    $("mqtt").textContent = data.mqtt_connected ? "Verbunden" : "Nicht verbunden";
+    $("mqtt").textContent = data.mqtt_connected ? tr("ui_3") : tr("ui_4");
     $("raw-status").textContent = JSON.stringify(data, null, 2);
-    note("status-note", `Stand: ${new Date().toLocaleTimeString("de-DE")} · Aktualisierung alle 5 Sekunden.`);
+    note("status-note", tr("ui_5", {v0: new Date().toLocaleTimeString(uiLanguage)}));
   } catch (error) {
-    $("connection").textContent = "Nicht erreichbar";
+    $("connection").textContent = tr("ui_6");
     $("connection").className = "badge error";
     for (const id of ["group", "pending", "models", "mqtt"]) $(id).textContent = "—";
-    note("status-note", `Service nicht erreichbar: ${error.message}`, true);
+    note("status-note", tr("ui_7", {v0: error.message}), true);
   }
 }
 function bubble(role, text, image) {
   $("conversation").querySelector(".empty")?.remove();
   const node = document.createElement("div"); node.className = `message ${role}`;
-  const title = document.createElement("strong"); title.textContent = role === "user" ? "DU" : (config?.model_labels?.[$("chat-model").value] || "ASSISTANT");
+  const title = document.createElement("strong"); title.textContent = role === "user" ? tr("ui_8") : (config?.model_labels?.[$("chat-model").value] || "ASSISTANT");
   const content = document.createElement("span"); content.textContent = text;
   node.append(title, content);
-  if (image) { const img = document.createElement("img"); img.src = image; img.alt = "Gesendetes Bild"; node.append(img); }
+  if (image) { const img = document.createElement("img"); img.src = image; img.alt = tr("ui_9"); node.append(img); }
   $("conversation").append(node); node.scrollIntoView({ block: "nearest" });
   return node;
 }
@@ -69,7 +108,7 @@ function readImage(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error("Bild konnte nicht gelesen werden."));
+    reader.onerror = () => reject(new Error(tr("ui_10")));
     reader.readAsDataURL(file);
   });
 }
@@ -83,37 +122,37 @@ $("image").addEventListener("change", () => {
 $("chat-form").addEventListener("submit", async (event) => {
   event.preventDefault(); if (chatBusy || !config) return;
   const prompt = $("prompt").value.trim(); if (!prompt) return;
-  chatBusy = true; controls(); note("chat-note", "Antwort wird erzeugt …");
+  chatBusy = true; controls(); note("chat-note", tr("ui_11"));
   let userNode;
   try {
     const model = $("chat-model").value;
     const file = $("image").files[0];
-    if (file && model === config.llm_model) throw new Error("Gemma verarbeitet Text. Für Bilder bitte Qwen2-VL wählen.");
-    if (file && !["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new Error("Bitte JPEG, PNG oder WebP auswählen.");
-    if (file && file.size * 4 / 3 > config.max_body - 1024) throw new Error("Bild ist zu groß für den Service.");
+    if (file && model === config.llm_model) throw new Error(tr("ui_12"));
+    if (file && !["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new Error(tr("ui_13"));
+    if (file && file.size * 4 / 3 > config.max_body - 1024) throw new Error(tr("ui_14"));
     const image = file ? await readImage(file) : null;
     const content = image ? [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: image } }] : prompt;
     const messages = [...history, { role: "user", content }];
-    if (messages.length > 31) throw new Error("Chat ist voll. Bitte einen neuen Chat starten.");
+    if (messages.length > 31) throw new Error(tr("ui_15"));
     const images = messages.flatMap(m => Array.isArray(m.content) ? m.content : []).filter(p => p.type === "image_url");
-    if (images.length > 4) throw new Error("Maximal vier Bilder pro Chat. Bitte einen neuen Chat starten.");
-    const body = JSON.stringify({ model, messages, max_tokens: Number($("max-tokens").value) });
-    if (new Blob([body]).size > config.max_body) throw new Error("Chat ist zu groß. Bitte einen neuen Chat starten.");
+    if (images.length > 4) throw new Error(tr("ui_16"));
+    const body = JSON.stringify({ model, messages, language: uiLanguage, max_tokens: Number($("max-tokens").value) });
+    if (new Blob([body]).size > config.max_body) throw new Error(tr("ui_17"));
     userNode = bubble("user", prompt, image);
     const start = performance.now();
     const data = await request("v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json" }, body });
     const text = data.choices?.[0]?.message?.content;
-    if (typeof text !== "string") throw new Error("Service lieferte keine Chat-Antwort.");
+    if (typeof text !== "string") throw new Error(tr("ui_18"));
     history = [...messages, { role: "assistant", content: text }];
     bubble("assistant", text); $("prompt").value = ""; $("image").value = "";
     $("image-preview").hidden = true;
     if (imageURL) URL.revokeObjectURL(imageURL); imageURL = null;
-    note("chat-note", `Antwort in ${((performance.now() - start) / 1000).toFixed(1)} s.`);
+    note("chat-note", tr("ui_19", {v0: ((performance.now() - start) / 1000).toFixed(1)}));
   } catch (error) { userNode?.remove(); note("chat-note", error.message, true); }
   finally { chatBusy = false; controls(); }
 });
 $("clear-chat").addEventListener("click", () => {
-  history = []; $("conversation").replaceChildren(); note("chat-note", "Neuer Chat gestartet.");
+  history = []; $("conversation").replaceChildren(); note("chat-note", tr("ui_20"));
 });
 function setAudio(blob, name) {
   if (audioURL) URL.revokeObjectURL(audioURL);
@@ -149,28 +188,28 @@ async function stopRecording() {
   stopping = true; const rec = recording; recording = null; controls();
   await closeMicrophone(rec);
   try {
-    if (!rec.count) throw new Error("Keine Audiodaten aufgenommen. Bitte erneut versuchen.");
+    if (!rec.count) throw new Error(tr("ui_21"));
     setAudio(encodeWav(rec.chunks, rec.count, rec.context.sampleRate), "aufnahme.wav");
-    note("whisper-note", `${(rec.count / rec.context.sampleRate).toFixed(1)} Sekunden aufgenommen. Jetzt anhören oder transkribieren.`);
+    note("whisper-note", tr("ui_22", {v0: (rec.count / rec.context.sampleRate).toFixed(1)}));
   } catch (error) { note("whisper-note", error.message, true); }
   finally { stopping = false; controls(); }
 }
 $("record").addEventListener("click", async () => {
   if (starting || recording || !config) return;
-  starting = true; controls(); note("whisper-note", "Mikrofon wird geöffnet …");
+  starting = true; controls(); note("whisper-note", tr("ui_23"));
   const rec = { chunks: [], count: 0 };
   try {
     // Create/resume during the click gesture, including Safari on mobile.
     rec.context = new AudioContext(); await rec.context.resume();
     rec.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true }, video: false });
     await rec.context.resume();
-    if (pageHidden || document.hidden) throw new Error("Aufnahme abgebrochen: Seite ist im Hintergrund.");
+    if (pageHidden || document.hidden) throw new Error(tr("ui_24"));
     await rec.context.audioWorklet.addModule("ui/recorder-worklet.js");
-    if (pageHidden || document.hidden) throw new Error("Aufnahme abgebrochen: Seite ist im Hintergrund.");
+    if (pageHidden || document.hidden) throw new Error(tr("ui_24"));
     rec.source = rec.context.createMediaStreamSource(rec.stream);
     rec.node = new AudioWorkletNode(rec.context, "pcm-recorder");
     const maxSamples = Math.min(Math.floor(rec.context.sampleRate * config.recording_seconds), Math.floor((config.max_body - 2048) / 2));
-    if (maxSamples < 128) throw new Error("Service-Größenlimit zu klein für eine Aufnahme.");
+    if (maxSamples < 128) throw new Error(tr("ui_25"));
     rec.node.port.onmessage = ({ data }) => {
       if (recording !== rec) return;
       const chunk = data.subarray(0, maxSamples - rec.count);
@@ -188,35 +227,35 @@ $("record").addEventListener("click", async () => {
     }, 100);
     rec.started = performance.now();
     rec.stream.getTracks().forEach(track => track.addEventListener("ended", () => void stopRecording()));
-    note("whisper-note", "Aufnahme läuft …");
+    note("whisper-note", tr("ui_26"));
   } catch (error) {
     if (recording === rec) recording = null;
     await closeMicrophone(rec);
-    const message = error.name === "NotAllowedError" ? "Mikrofonzugriff abgelehnt. Bitte in den Browser-Einstellungen erlauben." : error.message;
+    const message = error.name === "NotAllowedError" ? tr("ui_27") : error.message;
     note("whisper-note", message, true);
   } finally { starting = false; controls(); }
 });
 $("stop").addEventListener("click", () => void stopRecording());
 $("audio-file").addEventListener("change", () => {
   const file = $("audio-file").files[0]; if (!file || !config) return;
-  if (file.size > config.max_body - 2048) { note("whisper-note", "Audiodatei ist zu groß.", true); $("audio-file").value = ""; return; }
-  setAudio(file, file.name); note("whisper-note", "Audiodatei bereit. Dauer und Format werden vom Service geprüft.");
+  if (file.size > config.max_body - 2048) { note("whisper-note", tr("ui_28"), true); $("audio-file").value = ""; return; }
+  setAudio(file, file.name); note("whisper-note", tr("ui_29"));
 });
 $("transcribe").addEventListener("click", async () => {
   if (audioBusy || !audioBlob || !config) return;
-  audioBusy = true; controls(); note("whisper-note", "Sprache wird transkribiert …");
+  audioBusy = true; controls(); note("whisper-note", tr("ui_30"));
   try {
     const form = new FormData(); form.append("file", audioBlob, audioName); form.append("model", config.whisper_model);
     if ($("language").value) form.append("language", $("language").value);
     const start = performance.now();
     const data = await request("v1/audio/transcriptions", { method: "POST", body: form });
     $("transcript").value = data.text;
-    note("whisper-note", `Transkription in ${((performance.now() - start) / 1000).toFixed(1)} s abgeschlossen.`);
+    note("whisper-note", tr("ui_31", {v0: ((performance.now() - start) / 1000).toFixed(1)}));
   } catch (error) { note("whisper-note", error.message, true); }
   finally { audioBusy = false; controls(); }
 });
 $("check-key").addEventListener("click", async () => {
-  try { await request("v1/models"); note("auth-note", "API-Zugang erfolgreich geprüft. Schlüssel bleibt nur im Speicher dieser Seite."); }
+  try { await request("v1/models"); note("auth-note", tr("ui_32")); }
   catch (error) { note("auth-note", error.message, true); }
 });
 $("refresh").addEventListener("click", refreshStatus);
@@ -224,9 +263,12 @@ document.addEventListener("visibilitychange", () => { if (document.hidden) void 
 window.addEventListener("pagehide", () => { pageHidden = true; void stopRecording(); });
 window.addEventListener("pageshow", () => { pageHidden = false; controls(); });
 async function init() {
-  await refreshStatus(); setInterval(refreshStatus, 5000);
+
   try {
     config = await request("ui/config");
+    $("ui-language").value = savedChoice();
+    await loadLanguage($("ui-language").value);
+    await refreshStatus(); setInterval(refreshStatus, 5000);
     for (const model of config.chat_models || [config.vlm_model]) {
       if (model === config.vlm_model) continue;
       $("chat-model").add(new Option(`${model} · LiteRT-LM / CPU`, model));
@@ -236,19 +278,19 @@ async function init() {
     $("record-progress").max = config.recording_seconds;
     if ([...$("language").options].some(o => o.value === config.language)) $("language").value = config.language;
     else { const option = new Option(config.language, config.language); $("language").add(option); $("language").value = config.language; }
-    note("mic-hint", canRecord() ? `Maximal ${config.recording_seconds} Sekunden. Aufnahme als Mono-WAV; kein Zusatzprogramm nötig.` :
-      "Mikrofonaufnahme braucht HTTPS oder localhost und einen Browser mit AudioWorklet. Bei HTTP über eine LAN-IP bitte Audiodatei hochladen oder SSH-Tunnel verwenden.", !canRecord());
-    note("audio-name", `WAV / FLAC / OGG · maximal ${config.max_audio_seconds} s und ${(config.max_body / 1024 / 1024).toFixed(1)} MB.`);
+    note("mic-hint", canRecord() ? tr("ui_33", {v0: config.recording_seconds}) :
+      tr("ui_extra_0"), !canRecord());
+    note("audio-name", tr("ui_extra_1", {v0: config.max_audio_seconds, v1: (config.max_body / 1024 / 1024).toFixed(1)}));
     $("chat-model").addEventListener("change", () => {
       if ($("chat-model").value === config.llm_model && $("image").files.length) {
         $("image").value = ""; $("image-preview").hidden = true;
       }
       note("chat-note", $("chat-model").value === config.llm_model
-        ? "Gemma 4 E2B läuft über LiteRT-LM auf der CPU. Bildanalyse erfolgt mit Qwen2-VL."
-        : "Qwen2-VL verarbeitet Text und Bilder über Hailo.");
+        ? tr("ui_extra_2")
+        : tr("ui_extra_3"));
       controls();
     });
-  } catch (error) { note("status-note", `Seitenkonfiguration konnte nicht geladen werden: ${error.message}`, true); }
+  } catch (error) { note("status-note", tr("ui_extra_4", {v0: error.message}), true); }
   controls();
 }
 void init();

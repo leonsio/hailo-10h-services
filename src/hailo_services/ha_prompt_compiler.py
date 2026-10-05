@@ -16,25 +16,12 @@ import logging
 import re
 from functools import wraps
 
+from .i18n import lexicon, normalize_matching, t
 from .tool_retrieval import _embedding, _static_context_parts, latest_user_text
 
 _LOG = logging.getLogger(__name__)
 
-_CAPABILITIES = {
-    "state.query": "read current Home Assistant device state or value",
-    "light.brightness": "set lamp or light brightness percentage, brighter or darker",
-    "light.color": "set lamp or light color",
-    "light.temperature": "set warm white or cool white light color temperature",
-    "light.adjust": "adjust a light brightness color or color temperature",
-    "climate.temperature": "set thermostat heating cooling or room temperature",
-    "cover.position": "set blind shutter curtain awning or cover position percentage",
-    "cover.stop": "stop a moving blind shutter curtain awning or cover",
-    "vacuum.control": "start robot vacuum clean an area or return vacuum to base",
-    "todo.read": "read query or list todo shopping list items",
-    "todo.modify": "add remove or complete todo shopping list items",
-    "broadcast": "broadcast or announce a message in the home",
-    "datetime": "get current date or time",
-}
+_CAPABILITIES = lexicon('ha_prompt_compiler._CAPABILITIES')
 
 _TOOL_CAPABILITY = {
     "homeassistant__GetLiveContext": "state.query",
@@ -96,40 +83,13 @@ _TOOL_PROPERTIES = {
     "llm__GetDateTime": set(),
 }
 
-_SHORT_TOOL_DESCRIPTIONS = {
-    "homeassistant__GetLiveContext": "Read current Home Assistant state.",
-    "intent__HassTurnOn": "Turn on the target.",
-    "intent__HassTurnOff": "Turn off the target.",
-    "light__HassLightSet": "Set light properties.",
-    "climate__HassClimateSetTemperature": "Set target temperature.",
-    "intent__HassSetPosition": "Set cover position.",
-    "intent__HassStopMoving": "Stop cover movement.",
-    "vacuum__HassVacuumCleanArea": "Clean an area.",
-    "vacuum__HassVacuumReturnToBase": "Return vacuum to base.",
-    "vacuum__HassVacuumStart": "Start vacuum.",
-    "todo__get_items": "Read todo items.",
-    "todo__HassListAddItem": "Add todo item.",
-    "todo__HassListCompleteItem": "Complete todo item.",
-    "todo__HassListRemoveItem": "Remove todo item.",
-    "assist_satellite__HassBroadcast": "Broadcast a message.",
-    "llm__GetDateTime": "Get current date and time.",
-}
+_SHORT_TOOL_DESCRIPTIONS = lexicon('ha_prompt_compiler._SHORT_TOOL_DESCRIPTIONS')
 
-_DOMAIN_ALIASES = {
-    "light": {"licht", "lichter", "lampe", "lampen", "led"},
-    "climate": {"thermostat", "heizung", "klima", "klimaanlage"},
-    "cover": {"rollladen", "rolllaeden", "jalousie", "jalousien", "markise", "vorhang"},
-    "vacuum": {"staubsauger", "saugroboter", "vacuum"},
-    "lock": {"schloss", "tuerschloss", "turschloss", "lock"},
-    "switch": {"schalter", "switch"},
-}
+_DOMAIN_ALIASES = lexicon('ha_prompt_compiler.domain_aliases')
 
 
 def _normalized(value: str) -> str:
-    text = str(value).casefold().replace("ß", "ss")
-    text = text.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
-    text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
-    return re.sub(r"\s+", " ", text).strip()
+    return normalize_matching(value)
 
 
 def _contains(text: str, phrase: str) -> bool:
@@ -182,36 +142,36 @@ def _tool_names(tools):
 
 def _deterministic_capability(query: str) -> str | None:
     text = _normalized(query)
-    light_target = bool(re.search(r"\b(licht|lichter|lampe|lampen|led|beleuchtung)\b", text))
+    light_target = bool(re.search(lexicon('ha_prompt_compiler.pattern.152.34'), text))
     if light_target and re.search(
-        r"\b(wie hell|heller|dunkler|helligkeit|brightness|prozent)\b", text
+        lexicon('ha_prompt_compiler.pattern.154.8'), text
     ):
         return "light.brightness"
-    if re.search(r"\b(warmweiss|warm weiss|kaltweiss|kalt weiss|farbtemperatur)\b", text):
+    if re.search(lexicon('ha_prompt_compiler.pattern.157.17'), text):
         return "light.temperature"
-    if re.search(r"\b(farbe|rot|gruen|blau|gelb|orange|violett|lila|pink|weiss)\b", text) and light_target:
+    if re.search(lexicon('ha_prompt_compiler.match.159.17'), text) and light_target:
         return "light.color"
-    if re.search(r"\b(temperatur|grad|waermer|kaelter)\b", text) and re.search(
-        r"\b(heizung|thermostat|klima|klimaanlage|temperatur)\b", text
+    if re.search(lexicon('ha_prompt_compiler.pattern.161.17'), text) and re.search(
+        lexicon('ha_prompt_compiler.pattern.162.8'), text
     ):
         return "climate.temperature"
-    if re.search(r"\b(prozent|position)\b", text) and re.search(
-        r"\b(rollladen|rolllaeden|jalousie|jalousien|markise|vorhang)\b", text
+    if re.search(lexicon('ha_prompt_compiler.match.165.17'), text) and re.search(
+        lexicon('ha_prompt_compiler.match.166.8'), text
     ):
         return "cover.position"
-    if re.search(r"\b(stop|stopp|stoppe|anhalten)\b", text) and re.search(
-        r"\b(rollladen|rolllaeden|jalousie|jalousien|markise|vorhang)\b", text
+    if re.search(lexicon('ha_prompt_compiler.match.169.17'), text) and re.search(
+        lexicon('ha_prompt_compiler.match.170.8'), text
     ):
         return "cover.stop"
-    if re.search(r"\b(staubsauger|saugroboter|vacuum)\b", text):
+    if re.search(lexicon('ha_prompt_compiler.match.173.17'), text):
         return "vacuum.control"
-    if re.search(r"\b(einkaufsliste|todo|aufgabenliste|liste)\b", text):
-        if re.search(r"\b(was|welche|zeige|lies|vorlesen|steht)\b", text):
+    if re.search(lexicon('ha_prompt_compiler.match.175.17'), text):
+        if re.search(lexicon('ha_prompt_compiler.pattern.176.21'), text):
             return "todo.read"
         return "todo.modify"
-    if re.search(r"\b(uhrzeit|datum|welcher tag|wie spaet)\b", text):
+    if re.search(lexicon('ha_prompt_compiler.pattern.179.17'), text):
         return "datetime"
-    if re.search(r"\b(durchsage|broadcast|sage .* bescheid|verkuende)\b", text):
+    if re.search(lexicon('ha_prompt_compiler.match.181.17'), text):
         return "broadcast"
     return None
 
@@ -381,29 +341,29 @@ def _compact_tool(tool, capability, domain, area, entities):
 
 def _minimal_system(capability, domain, area, entities, tools):
     lines = [
-        "Home Assistant. Nutze nur bereitgestellte Tools. Erfinde keine Geräte oder Werte.",
-        "Bei Bereichszielen nutze area; bei einem bestimmten Gerät name. Antworte kurz.",
+        t('ha_prompt_compiler.384'),
+        t('ha_prompt_compiler.385'),
     ]
     tool_names = set(_tool_names(tools))
     if "homeassistant__GetLiveContext" in tool_names:
-        lines.append("Für aktuelle Zustände oder Werte GetLiveContext aufrufen.")
+        lines.append(t('ha_prompt_compiler.389'))
     elif tools:
-        lines.append("Für die angeforderte Steuerung ein bereitgestelltes Tool aufrufen.")
+        lines.append(t('ha_prompt_compiler.391'))
     if capability:
-        lines.append(f"Aufgabe: {capability}")
+        lines.append(t('ha_prompt_compiler.393' , capability=capability))
     context = []
     if domain:
         context.append(f"domain={domain}")
     if area:
         context.append(f"area={area}")
     if context:
-        lines.append("Kontext: " + "; ".join(context))
+        lines.append(t('ha_prompt_compiler.400') + "; ".join(context))
     if entities:
-        lines.append("Geräte: " + " | ".join(item["name"] for item in entities))
+        lines.append(t('ha_prompt_compiler.402') + " | ".join(item["name"] for item in entities))
     if domain and not area and len(entities) > 1 and any(
         name in tool_names for name in {"intent__HassTurnOn", "intent__HassTurnOff"}
     ):
-        lines.append("Keine Sammelaktion ohne eindeutigen Bereich ausführen.")
+        lines.append(t('ha_prompt_compiler.406'))
     return "\n".join(lines)
 
 

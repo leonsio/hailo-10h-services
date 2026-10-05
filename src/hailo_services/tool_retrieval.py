@@ -11,45 +11,11 @@ import copy
 import re
 import unicodedata
 
+from .i18n import lexicon, normalize_matching
+
 _WORD_RE = re.compile(r"[\w.-]+", re.UNICODE)
-_STOP_WORDS = {
-    "bitte", "mal", "doch", "ein", "eine", "einen", "einem", "einer", "der", "die", "das",
-    "den", "dem", "des", "im", "in", "am", "und", "oder", "mir", "mich",
-    "jetzt", "es", "sie", "er", "ist", "sind", "wird", "werden", "mach", "mache",
-    "macht", "schalte", "schalt", "stell", "stelle", "setze", "fahr", "fahre",
-}
-_SYNONYMS = {
-    # Synonyms are deliberately split into the same tokens produced from
-    # CamelCase/underscore tool names (HassTurnOff -> "turn", "off").
-    # Keeping only "turn_off" made explicit German action verbs rank below
-    # descriptive tools whose prose happened to contain "light"/"off".
-    "an": {"turn", "on"},
-    "aus": {"turn", "off"},
-    "einschalten": {"turn", "on", "light", "switch"},
-    "anschalten": {"turn", "on", "light", "switch"},
-    "anmachen": {"turn", "on", "light", "switch"},
-    "ausschalten": {"turn", "off", "light", "switch"},
-    "ausmachen": {"turn", "off", "light", "switch"},
-    "licht": {"light"},
-    "lampe": {"light"},
-    "lampen": {"light"},
-    "öffnen": {"open", "cover", "garage"},
-    "oeffnen": {"open", "cover", "garage"},
-    "hoch": {"open", "cover", "up"},
-    "hochfahren": {"open", "cover", "up"},
-    "runter": {"close", "cover", "down", "shutter"},
-    "herunter": {"close", "cover", "down", "shutter"},
-    "schließen": {"close", "cover", "shutter"},
-    "schliessen": {"close", "cover", "shutter"},
-    "runterfahren": {"close", "cover", "down"},
-    "herunterfahren": {"close", "cover", "down"},
-    "temperatur": {"climate", "temperature"},
-    "wärmer": {"heat", "temperature", "climate"},
-    "kaelter": {"cool", "temperature", "climate"},
-    "kälter": {"cool", "temperature", "climate"},
-    "heller": {"brightness", "light"},
-    "dunkler": {"brightness", "light"},
-}
+_STOP_WORDS = lexicon('tool_retrieval._STOP_WORDS')
+_SYNONYMS = lexicon('tool_retrieval._SYNONYMS')
 
 
 def _text(value) -> str:
@@ -66,7 +32,7 @@ def _text(value) -> str:
 
 def _tokens(value) -> set[str]:
     raw = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", _text(value)).casefold().replace("ß", "ss")
-    raw = raw.replace("_", " ").replace(".", " ").replace("-", " ")
+    raw = normalize_matching(raw.replace("_", " ").replace(".", " ").replace("-", " "))
     normalized = unicodedata.normalize("NFKD", raw)
     normalized = "".join(char for char in normalized if not unicodedata.combining(char))
     result: set[str] = set()

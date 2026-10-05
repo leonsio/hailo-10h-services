@@ -16,6 +16,8 @@ import re
 import uuid
 from functools import wraps
 
+from .i18n import t
+
 _LOG = logging.getLogger(__name__)
 _LIVE_TOOL = "homeassistant__GetLiveContext"
 _ACTION_TO_STATE = {
@@ -209,7 +211,7 @@ def action_verification_response(request):
     if not mismatches:
         return {
             "kind": "verified",
-            "response": "Erledigt.",
+            "response": t('ha_action_verification.212'),
             "expected_state": expected,
             "entities": entities,
             "attempts": initial["attempts"],
@@ -233,7 +235,7 @@ def action_verification_response(request):
     names_text = ", ".join(entity["name"] for entity in mismatches)
     return {
         "kind": "failed_verification",
-        "response": f"Nicht alle Geräte haben den gewünschten Zustand erreicht: {names_text}.",
+        "response": t('ha_action_verification.236' , names_text=names_text),
         "expected_state": expected,
         "mismatches": mismatches,
         "attempts": initial["attempts"],

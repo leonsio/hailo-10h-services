@@ -20,6 +20,7 @@ import re
 import uuid
 from functools import wraps
 
+from .i18n import lexicon, normalize_matching
 from .tool_retrieval import (
     _embedding,
     _score,
@@ -32,10 +33,7 @@ from .tool_retrieval import (
 
 _LOG = logging.getLogger(__name__)
 _SEMANTIC_RELEVANCE_THRESHOLD = 0.56
-_EXTRA_STOP_WORDS = {
-    "von", "vom", "zur", "zum", "zu", "auf", "für", "fuer", "mit", "ohne",
-    "was", "wer", "wie", "wo", "wann", "welche", "welcher", "welches",
-}
+_EXTRA_STOP_WORDS = lexicon('ha_routing._EXTRA_STOP_WORDS')
 _DIRECT_TOOLS = {"intent__HassTurnOn", "intent__HassTurnOff"}
 
 
@@ -153,10 +151,7 @@ def general_passthrough_request(request):
 
 
 def _normalized(value: str) -> str:
-    value = str(value).casefold().replace("ß", "ss")
-    value = value.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
-    value = re.sub(r"[^\w]+", " ", value, flags=re.UNICODE)
-    return re.sub(r"\s+", " ", value).strip()
+    return normalize_matching(value)
 
 
 def _parse_entity(entry: str):
@@ -180,15 +175,15 @@ def _explicit_action(query: str, tool_name: str) -> bool:
     query = _normalized(query)
     if tool_name == "intent__HassTurnOff":
         return bool(
-            re.search(r"\b(ausschalten|ausmachen|deaktivieren|deaktiviere)\b", query)
-            or re.search(r"\b(schalt\w*|mach\w*)\b.*\b(aus)\b", query)
-            or re.search(r"\b(turn|switch)\b.*\boff\b", query)
+            re.search(lexicon('ha_routing.pattern.178.22'), query)
+            or re.search(lexicon('ha_routing.pattern.179.25'), query)
+            or re.search(lexicon('ha_routing.match.180.25'), query)
         )
     if tool_name == "intent__HassTurnOn":
         return bool(
-            re.search(r"\b(einschalten|anschalten|anmachen|aktivieren|aktiviere)\b", query)
-            or re.search(r"\b(schalt\w*|mach\w*)\b.*\b(an|ein)\b", query)
-            or re.search(r"\b(turn|switch)\b.*\bon\b", query)
+            re.search(lexicon('ha_routing.pattern.184.22'), query)
+            or re.search(lexicon('ha_routing.pattern.185.25'), query)
+            or re.search(lexicon('ha_routing.match.186.25'), query)
         )
     return False
 

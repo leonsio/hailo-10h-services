@@ -13,28 +13,17 @@ import re
 from functools import wraps
 
 from . import ha_state_routing as _state
+from .i18n import catalogue, detect_language, lexicon, t
 
-_HOME_LOCATIONS = {
-    "haus",
-    "ganzen haus",
-    "gesamten haus",
-    "zuhause",
-    "zu hause",
-    "home",
-}
-_LOCATION_RE = re.compile(
-    r"\b(?:im|in\s+der|in\s+dem|in\s+den|in)\s+(.+?)"
-    r"(?:\s+(?:ist|sind|steht|stehen))?\s+"
-    r"(?:an|aus|offen|geschlossen|gesperrt|verriegelt|entsperrt|entriegelt|"
-    r"on|off|locked|unlocked)\b",
-    re.IGNORECASE,
-)
+_HOME_LOCATIONS = lexicon('ha_state_routing_fixes._HOME_LOCATIONS')
+
 _ERROR_KEYS = {"error", "message", "detail", "details"}
 
 
 def _location_phrase(query: str) -> str | None:
     """Extract a strongly expressed location from a state question."""
-    match = _LOCATION_RE.search(str(query))
+    language = detect_language(str(query))
+    match = re.search(catalogue(language)["patterns"]["state_location"], str(query), re.IGNORECASE)
     if not match:
         return None
     value = match.group(1).strip(" \t\r\n?!.,:;")
@@ -156,12 +145,12 @@ def _friendly_live_error(calls, results) -> str | None:
             domains = [domains]
 
         if area and domains == ["light"]:
-            return f"Ich konnte im Bereich „{area}“ keine passenden Lichter finden."
+            return t('ha_state_routing_fixes.159' , area=area)
         if area:
-            return f"Ich konnte im Bereich „{area}“ keine passenden Geräte finden."
+            return t('ha_state_routing_fixes.161' , area=area)
         if name:
-            return f"Ich konnte „{name}“ in Home Assistant nicht finden."
-        return "Home Assistant konnte keine passenden freigegebenen Geräte finden."
+            return t('ha_state_routing_fixes.163' , name=name)
+        return t('ha_state_routing_fixes.164')
     return None
 
 

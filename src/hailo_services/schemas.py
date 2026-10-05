@@ -17,6 +17,7 @@ class ChatRequest(BaseModel):
     seed: int = Field(default=42, ge=0, le=2**32 - 1)
     stream: bool = False
     user: str | None = None
+    language: str | None = Field(default=None, pattern=r"^(de|en|ru)(?:-[A-Za-z]{2})?$")
     tools: list[dict[str, Any]] | None = Field(default=None, max_length=128)
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool = True

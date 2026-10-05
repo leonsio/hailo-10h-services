@@ -20,6 +20,8 @@ import threading
 import time
 from functools import wraps
 
+from .i18n import t
+
 _LOG = logging.getLogger(__name__)
 _REQUEST = threading.local()
 
@@ -59,6 +61,10 @@ def successful_action_followup(request):
     Data/query tools therefore continue through Gemma, as do failed or partial
     actions where model interpretation can still be useful.
     """
+    from .ha_pipeline import is_home_assistant_request
+
+    if not is_home_assistant_request(request):
+        return None
     messages = request.messages
     if not messages or messages[-1].get("role") != "tool":
         return None
@@ -119,7 +125,7 @@ def successful_action_followup(request):
     # Prefer Home Assistant's own localized speech when available. Otherwise a
     # short generic acknowledgement is safer than regenerating a description of
     # an action that Home Assistant has already confirmed.
-    text = " ".join(dict.fromkeys(speeches)) if speeches else "Erledigt."
+    text = " ".join(dict.fromkeys(speeches)) if speeches else t('litert_optimizations.122')
     return {
         "text": text,
         "tool_names": [pending[call["id"]] for call in calls],

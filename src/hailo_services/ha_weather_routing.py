@@ -14,6 +14,7 @@ import uuid
 from functools import wraps
 
 from . import ha_state_routing as _state
+from .i18n import labels, lexicon, t
 from .tool_retrieval import latest_user_text
 
 _LOG = logging.getLogger(__name__)
@@ -38,66 +39,9 @@ _WEATHER_DEVICE_CLASSES = {
 _TEMPERATURE_UNITS = {"°c", "c", "°f", "f", "k", "kelvin"}
 _HUMIDITY_UNITS = {"%"}
 
-_AMBIENT_WORDS = {
-    "ambient",
-    "room",
-    "indoor",
-    "outdoor",
-    "outside",
-    "air",
-    "weather",
-    "raum",
-    "zimmer",
-    "innen",
-    "aussen",
-    "draussen",
-    "luft",
-    "wetter",
-    "wetterstation",
-}
-_OUTDOOR_WORDS = {
-    "outdoor",
-    "outside",
-    "garden",
-    "terrace",
-    "patio",
-    "balcony",
-    "aussen",
-    "draussen",
-    "garten",
-    "terrasse",
-    "balkon",
-}
-_PROCESS_WORDS = {
-    "battery",
-    "cell",
-    "device",
-    "inverter",
-    "motor",
-    "cpu",
-    "gpu",
-    "boiler",
-    "water",
-    "flow",
-    "coil",
-    "probe",
-    "pit",
-    "food",
-    "grill",
-    "oven",
-    "akku",
-    "batterie",
-    "zelle",
-    "geraet",
-    "wechselrichter",
-    "kessel",
-    "wasser",
-    "vorlauf",
-    "spule",
-    "fuehler",
-    "sonde",
-    "backofen",
-}
+_AMBIENT_WORDS = lexicon('ha_weather_routing._AMBIENT_WORDS')
+_OUTDOOR_WORDS = lexicon('ha_weather_routing._OUTDOOR_WORDS')
+_PROCESS_WORDS = lexicon('ha_weather_routing._PROCESS_WORDS')
 
 
 def _normalized(value: object) -> str:
@@ -116,12 +60,11 @@ def _ambient_temperature_query(text: str) -> bool:
     normalized = _normalized(text)
     if _state._has_action_verb(normalized):
         return False
-    if re.search(r"\b(thermostat|heizung|klima|klimaanlage|setpoint|solltemperatur)\b", normalized):
+    if re.search(lexicon('ha_weather_routing.pattern.63.17'), normalized):
         return False
     return bool(
         re.search(
-            r"\b(wie warm|wie kalt|welche temperatur|was fuer eine temperatur|"
-            r"temperatur ist|temperature|how warm|how cold)\b",
+            lexicon('ha_weather_routing.pattern.67.12'),
             normalized,
         )
     )
@@ -132,8 +75,8 @@ def _weather_query(text: str) -> bool:
     if _state._has_action_verb(normalized) or _ambient_temperature_query(text):
         return False
     return bool(
-        re.search(r"\b(wetter|wetterlage|weather)\b", normalized)
-        or re.search(r"\b(wie ist es|how is it)\s+(draussen|aussen|outside)\b", normalized)
+        re.search(lexicon('ha_weather_routing.pattern.79.18'), normalized)
+        or re.search(lexicon('ha_weather_routing.pattern.80.21'), normalized)
     )
 
 
@@ -178,7 +121,7 @@ def _temperature_score(entity: dict[str, str], area: str | None) -> int:
         return 120 + _environment_name_score(name)
     if domain == "climate":
         return 45 + _environment_name_score(name)
-    if re.search(r"\b(temperatur|temperature)\b", name):
+    if re.search(lexicon('ha_weather_routing.pattern.125.17'), name):
         return 75 + _environment_name_score(name)
     return 20 + _environment_name_score(name)
 
@@ -213,13 +156,13 @@ def _is_weather_sensor(entity: dict[str, str]) -> bool:
 
 def _weather_sensor_order(name: str) -> int:
     normalized = _normalized(name)
-    if re.search(r"\b(temperatur|temperature)\b", normalized) and not re.search(
-        r"\b(dew|taupunkt|frostpunkt)\b", normalized
+    if re.search(lexicon('ha_weather_routing.pattern.160.17'), normalized) and not re.search(
+        lexicon('ha_weather_routing.match.160.8'), normalized
     ):
         return 0
-    if re.search(r"\b(luftfeuchte|humidity)\b", normalized):
+    if re.search(lexicon('ha_weather_routing.pattern.164.17'), normalized):
         return 1
-    if re.search(r"\b(dew|taupunkt|frostpunkt)\b", normalized):
+    if re.search(lexicon('ha_weather_routing.match.165.17'), normalized):
         return 2
     return 3
 
@@ -284,7 +227,7 @@ def _latest_round(messages):
 
 
 def _device_class(entity: dict) -> str:
-    return _normalized(entity.get("attributes", {}).get("device_class", "")).replace(" ", "_")
+    return str(entity.get("attributes", {}).get("device_class", "")).casefold().strip()
 
 
 def _unit(entity: dict) -> str:
@@ -300,7 +243,7 @@ def _numeric_state(entity: dict) -> str | None:
         value = float(state)
     except (TypeError, ValueError):
         return None
-    rendered = f"{value:g}".replace(".", ",")
+    rendered = _state._format_number(value)
     unit = _unit(entity)
     return rendered + (f" {unit}" if unit else "")
 
@@ -333,7 +276,7 @@ def _temperature_value(entity: dict) -> str | None:
     if device_class in _TEMPERATURE_DEVICE_CLASSES or unit in _TEMPERATURE_UNITS:
         return _numeric_state(entity)
     name = _normalized(entity.get("name", ""))
-    if re.search(r"\b(temperatur|temperature)\b", name):
+    if re.search(lexicon('ha_weather_routing.pattern.280.17'), name):
         return _numeric_state(entity)
     return None
 
@@ -354,7 +297,7 @@ def _humidity_value(entity: dict) -> str | None:
     if (
         device_class in _HUMIDITY_DEVICE_CLASSES
         or normalized_unit in _HUMIDITY_UNITS
-        or re.search(r"\b(luftfeuchte|humidity)\b", name)
+        or re.search(lexicon('ha_weather_routing.pattern.301.21'), name)
     ):
         return _numeric_state(entity)
     return None
@@ -364,7 +307,7 @@ def _dew_point_value(entity: dict) -> str | None:
     if _device_class(entity) in _DEW_POINT_DEVICE_CLASSES:
         return _numeric_state(entity)
     name = _normalized(entity.get("name", ""))
-    if re.search(r"\b(dew|dewpoint|taupunkt|frostpunkt)\b", name):
+    if re.search(lexicon('ha_weather_routing.match.310.17'), name):
         return _numeric_state(entity)
     return None
 
@@ -403,7 +346,7 @@ def _strong_ambient_evidence(entity: dict, query: str) -> bool:
         entity.get("area", ""), _OUTDOOR_WORDS
     ):
         return True
-    return name in {"temperature", "temperatur"}
+    return name in lexicon('ha_weather_routing.words.349.19')
 
 
 def _temperature_response(entities: list[dict], query: str) -> str | None:
@@ -417,16 +360,16 @@ def _temperature_response(entities: list[dict], query: str) -> str | None:
     ranked = [row for row in ranked if row[0] > -1000 and row[3] is not None]
     if not ranked:
         area = _explicit_area(query, _entries_from_live_entities(entities))
-        suffix = f" für {area}" if area else ""
-        return f"Aktuell habe ich keine aktuellen Temperaturdaten{suffix}."
+        suffix = t('ha_weather_routing.420' , area=area) if area else ""
+        return t('ha_weather_routing.421' , suffix=suffix)
     best_score, _, best_entity, best_value = ranked[0]
     if len(ranked) == 1:
         if _strong_ambient_evidence(best_entity, query):
-            return f"Die aktuelle Temperatur beträgt {best_value}."
+            return t('ha_weather_routing.425' , best_value=best_value)
         return None
     second_score = ranked[1][0]
     if best_score - second_score >= 15 and _strong_ambient_evidence(best_entity, query):
-        return f"Die aktuelle Temperatur beträgt {best_value}."
+        return t('ha_weather_routing.429' , best_value=best_value)
     return None
 
 
@@ -441,25 +384,14 @@ def _environmental_sensor(entity: dict) -> bool:
     name = _normalized(entity.get("name", ""))
     return bool(
         re.search(
-            r"\b(temperatur|temperature|luftfeuchte|humidity|dew|dewpoint|"
-            r"taupunkt|frostpunkt|weather|wetter|druck|pressure|wind|regen|rain)\b",
+            lexicon('ha_weather_routing.pattern.388.12'),
             name,
         )
     )
 
 
 def _weather_condition(state: str) -> str | None:
-    return {
-        "sunny": "sonnig",
-        "clear-night": "klar",
-        "cloudy": "bewölkt",
-        "partlycloudy": "teilweise bewölkt",
-        "rainy": "regnerisch",
-        "pouring": "stark regnerisch",
-        "snowy": "verschneit",
-        "fog": "neblig",
-        "windy": "windig",
-    }.get(state)
+    return labels("weather").get(state)
 
 
 def _pick_weather_group(entities: list[dict], query: str) -> list[dict] | None:
@@ -497,7 +429,7 @@ def _pick_weather_group(entities: list[dict], query: str) -> list[dict] | None:
         if _has_any_word(area, _OUTDOOR_WORDS):
             score += 30
         if any(
-            _has_any_word(item.get("name", ""), {"weather", "wetter", "wetterstation"})
+            _has_any_word(item.get("name", ""), lexicon('ha_weather_routing.words.432.48'))
             for item in members
         ):
             score += 20
@@ -517,7 +449,7 @@ def _weather_response(entities: list[dict], query: str = "") -> str | None:
     if group is None:
         return None
     if not group:
-        return "Aktuell habe ich keine passenden aktuellen Wetterdaten in Home Assistant."
+        return t('ha_weather_routing.520')
     weather = next((item for item in group if item.get("domain") == "weather"), None)
     condition = None
     temperature = None
@@ -545,17 +477,17 @@ def _weather_response(entities: list[dict], query: str = "") -> str | None:
         if dew_point is None:
             dew_point = _dew_point_value(entity)
     if not any((condition, temperature, humidity, dew_point)):
-        return "Aktuell sind die Wetterdaten in Home Assistant nicht verfügbar."
+        return t('ha_weather_routing.548')
     parts = []
     if condition:
-        parts.append(f"Draußen ist es {condition}")
+        parts.append(t('ha_weather_routing.551' , condition=condition))
     if temperature:
-        parts.append(("die Temperatur beträgt " if parts else "Draußen sind es ") + temperature)
+        parts.append((t('ha_weather_routing.553') if parts else t('ha_weather_routing.553')) + temperature)
     if humidity:
-        parts.append(f"die Luftfeuchtigkeit beträgt {humidity}")
+        parts.append(t('ha_weather_routing.555' , humidity=humidity))
     sentence = ", ".join(parts) + "." if parts else ""
     if dew_point:
-        sentence += (" " if sentence else "") + f"Der Taupunkt liegt bei {dew_point}."
+        sentence += (" " if sentence else "") + t('ha_weather_routing.558' , dew_point=dew_point)
     return sentence
 
 
@@ -586,26 +518,20 @@ def _compact_environment_decision(request, entities: list[dict], query: str, kin
             f"current_temperature={attrs.get('current_temperature', '')}"
         )
     task = (
-        "Beantworte die Frage nach der aktuellen Umgebungstemperatur."
+        t('ha_weather_routing.589')
         if kind == "temperature"
-        else "Beantworte die aktuelle Wetterfrage."
+        else t('ha_weather_routing.591')
     )
     messages = [
         {
             "role": "system",
             "content": (
-                f"{task} Nutze ausschließlich die folgenden Home-Assistant-Live-Daten. "
-                "Bevorzuge Messwerte, die semantisch die Raum-, Außen- oder Luftumgebung "
-                "beschreiben. Interne Geräte-, Prozess-, Batterie-, Motor-, Wasser-, "
-                "Koch- oder Fühlertemperaturen sind keine allgemeine Umgebungstemperatur. "
-                "Bei climate ist nur current_temperature ein Istwert; temperature ist ein "
-                "Sollwert. Wenn die Daten nicht eindeutig oder nicht aktuell sind, sage das "
-                "klar. Erfinde nichts."
+                t('ha_weather_routing.597' , task=task)
             ),
         },
         {
             "role": "user",
-            "content": f"Frage: {query}\nLive-Kandidaten:\n" + "\n".join(lines),
+            "content": t('ha_weather_routing.608' , query=query) + "\n".join(lines),
         },
     ]
     prepared = request.model_copy(update={"messages": messages, "tools": None, "tool_choice": None})
