@@ -189,25 +189,49 @@ def _explicit_action(query: str, tool_name: str) -> bool:
     return False
 
 
-def _mentioned_domains(query: str, domains: set[str]) -> list[str]:
-    """Return candidate HA domains explicitly named by the user.
+def _domain_aliases(domain: str) -> set[str]:
+    aliases = {_normalized(domain)}
+    aliases.update(_normalized(word) for word in _DOMAIN_WORDS.get(domain, set()))
+    return {alias for alias in aliases if alias}
 
-    Domain vocabulary comes from the shared HA routing lexicon. The raw HA
-    domain name is also considered after language normalization, so this stays
-    independent of any particular installation or entity naming scheme.
-    """
+
+def _mentioned_domains(query: str, domains: set[str]) -> list[str]:
+    """Return candidate HA domains explicitly named by the user."""
     text = _normalized(query)
     matches: list[str] = []
     for domain in sorted(domains):
-        aliases = {_normalized(domain)}
-        aliases.update(_normalized(word) for word in _DOMAIN_WORDS.get(domain, set()))
-        if any(_contains_phrase(text, alias) for alias in aliases if alias):
+        if any(_contains_phrase(text, alias) for alias in _domain_aliases(domain)):
             matches.append(domain)
     return matches
 
 
+def _generic_domain_entity(entity) -> bool:
+    """Treat names such as 'Light'/'Licht' as a class, not a unique device."""
+    return _normalized(entity["name"]) in _domain_aliases(entity["domain"])
+
+
+def _specific_entity_matches(query: str, entities) -> list[dict]:
+    """Find explicitly named devices, preferring the most specific name match."""
+    text = _normalized(query)
+    matches = [
+        entity for entity in entities
+        if not _generic_domain_entity(entity)
+        and _contains_phrase(text, _normalized(entity["name"]))
+    ]
+    if not matches:
+        return []
+    longest = max(len(_normalized(entity["name"])) for entity in matches)
+    return [entity for entity in matches if len(_normalized(entity["name"])) == longest]
+
+
 def direct_action_response(request, *, source_messages=None, trace=None):
-    """Build a deterministic tool call for an unambiguous on/off command."""
+    """Build a deterministic tool call for an unambiguous on/off command.
+
+    Resolution order is intentionally location-first: an explicitly mentioned
+    area constrains all subsequent entity/domain matching. This prevents generic
+    entity names such as "Light" in other rooms from making an otherwise clear
+    area command ambiguous.
+    """
     if trace is not None:
         trace.clear()
 
@@ -236,48 +260,88 @@ def direct_action_response(request, *, source_messages=None, trace=None):
         return reject("no_entities")
 
     normalized_query = _normalized(query)
-    explicit = [
-        entity for entity in entities
-        if _contains_phrase(normalized_query, _normalized(entity["name"]))
-    ]
-    # Same spoken/name target in multiple areas is ambiguous; let Gemma/HA deal
-    # with it rather than issuing a potentially wrong action.
-    explicit_keys = {(item["name"], item["domain"], item["area"]) for item in explicit}
-    if len(explicit_keys) == 1:
-        entity = explicit[0]
-        arguments = {"name": entity["name"], "domain": [entity["domain"]]}
-        target_kind = "entity"
-    elif explicit:
-        return reject(
-            "entity_name_ambiguous",
-            matched_entities=sorted(
-                {f'{item["name"]}|{item["domain"]}|{item["area"]}' for item in explicit}
-            ),
-        )
-    else:
-        area_groups = {}
-        for entity in entities:
-            area = entity["area"]
-            if area and _contains_phrase(normalized_query, _normalized(area)):
-                area_groups.setdefault(area, []).append(entity)
-        if len(area_groups) != 1:
-            return reject("area_not_unique", matched_areas=sorted(area_groups))
+    area_groups: dict[str, list[dict]] = {}
+    for entity in entities:
+        area = entity["area"]
+        if area and _contains_phrase(normalized_query, _normalized(area)):
+            area_groups.setdefault(area, []).append(entity)
+
+    arguments = None
+    target_kind = None
+
+    if len(area_groups) == 1:
         area, members = next(iter(area_groups.items()))
         domains = {member["domain"] for member in members}
-        if len(domains) == 1:
-            domain = next(iter(domains))
-        else:
-            mentioned_domains = _mentioned_domains(query, domains)
-            if len(mentioned_domains) != 1:
+        mentioned_domains = _mentioned_domains(query, domains)
+        if len(mentioned_domains) > 1:
+            return reject(
+                "area_domain_ambiguous",
+                matched_area=area,
+                candidate_domains=sorted(domains),
+                mentioned_domains=mentioned_domains,
+            )
+
+        requested_domain = mentioned_domains[0] if mentioned_domains else None
+        scoped_members = [
+            member for member in members
+            if requested_domain is None or member["domain"] == requested_domain
+        ]
+        explicit = _specific_entity_matches(query, scoped_members)
+        explicit_keys = {
+            (item["name"], item["domain"], item["area"]) for item in explicit
+        }
+        if len(explicit_keys) == 1:
+            entity = explicit[0]
+            arguments = {"name": entity["name"], "domain": [entity["domain"]]}
+            target_kind = "entity"
+        elif explicit:
+            return reject(
+                "entity_name_ambiguous",
+                matched_area=area,
+                matched_entities=sorted(
+                    {f'{item["name"]}|{item["domain"]}|{item["area"]}' for item in explicit}
+                ),
+            )
+        elif requested_domain is not None:
+            if not scoped_members:
                 return reject(
-                    "area_domain_ambiguous",
+                    "area_domain_not_found",
                     matched_area=area,
-                    candidate_domains=sorted(domains),
-                    mentioned_domains=mentioned_domains,
+                    requested_domain=requested_domain,
                 )
-            domain = mentioned_domains[0]
-        arguments = {"area": area, "domain": [domain]}
-        target_kind = "area"
+            arguments = {"area": area, "domain": [requested_domain]}
+            target_kind = "area"
+        elif len(domains) == 1:
+            domain = next(iter(domains))
+            arguments = {"area": area, "domain": [domain]}
+            target_kind = "area"
+        else:
+            return reject(
+                "area_domain_ambiguous",
+                matched_area=area,
+                candidate_domains=sorted(domains),
+                mentioned_domains=[],
+            )
+    elif len(area_groups) > 1:
+        return reject("area_not_unique", matched_areas=sorted(area_groups))
+    else:
+        explicit = _specific_entity_matches(query, entities)
+        explicit_keys = {
+            (item["name"], item["domain"], item["area"]) for item in explicit
+        }
+        if len(explicit_keys) == 1:
+            entity = explicit[0]
+            arguments = {"name": entity["name"], "domain": [entity["domain"]]}
+            target_kind = "entity"
+        elif explicit:
+            return reject(
+                "entity_name_ambiguous",
+                matched_entities=sorted(
+                    {f'{item["name"]}|{item["domain"]}|{item["area"]}' for item in explicit}
+                ),
+            )
+        else:
+            return reject("target_not_unique")
 
     if trace is not None:
         trace.update({
