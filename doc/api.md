@@ -86,7 +86,9 @@ An image content list in a `user` message:
 Images are decoded to writable contiguous RGB UINT8 and resized to the loaded
 model's input shape (Qwen2: 336×336, up to four images; Qwen3: 512×288, one image). Only inline base64/data URLs are accepted; snapshot HTTP URLs
 are not fetched. `stream:true` enables native-token SSE ending in `[DONE]`.
-`max_tokens` is 1..1024; `temperature` is 0..1. The gateway implements a documented
+`max_tokens` is 1..1024; Gemma accepts `temperature` in 0..1, while Hailo VLM requires
+`0 < temperature <= 1` (default 0.1). A VLM request with `temperature=0` returns
+HTTP 400 with an explanatory error instead of failing inside HailoRT. The gateway implements a documented
 subset of the OpenAI API. Gemma accepts function `tools`/`tool_choice` as described
 below; Qwen supports text-only tool requests through the validated JSON adapter. JSON-schema response formats remain unsupported.
 Token usage is not fabricated. Text-only Qwen requests pass `frames=[]` and need
@@ -159,7 +161,7 @@ through `/v1/models` before inference. `--api-key` takes precedence over the opt
 | `--llm-model`, `--vlm-model` | Override the IDs detected from the service |
 | `--max-tokens` | 256 output tokens per model, configurable from 1 to 1024 |
 | `--max-input-tokens` | Omitted by default; existing model limits apply. May lower the limit |
-| `--temperature`, `--seed` | 0.0 and 42, identical for both models |
+| `--temperature`, `--seed` | 0.1 and 42, identical for both models; Hailo VLM requires temperature > 0 |
 | `--timeout` | 240 seconds per HTTP request; the service has its own timeout |
 | `--warmup` | An additional unscored request per model before the 20 measured requests |
 | `--output-dir` | Default `benchmark-results/TIMESTAMP`; contains `comparison.html` and `results.json` |

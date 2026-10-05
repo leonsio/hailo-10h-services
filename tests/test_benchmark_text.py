@@ -88,7 +88,7 @@ def test_complete_comparison_uses_parameter_key_and_preserves_real_metrics(tmp_p
         for result in case["results"].values():
             assert result["client_total_ms"] >= 0
             assert result["metrics"]["input_tokens"] == 123
-            assert result["request"]["temperature"] == 0
+            assert result["request"]["temperature"] == 0.1
             assert result["request"]["max_tokens"] == 256
             assert result["request"]["stream"] is False
             assert "image" not in str(result["request"]["messages"])
@@ -148,6 +148,7 @@ def test_warmup_is_recorded_but_excluded_from_comparison(tmp_path, capsys):
 
 
 @pytest.mark.parametrize("argument,value", [("--max-tokens", "0"), ("--temperature", "nan"),
+                                           ("--temperature", "0"),
                                            ("--timeout", "-1"), ("--seed", "-1"),
                                            ("--url", "https://user:secret@example.com")])
 def test_invalid_parameters_rejected_before_requests(argument, value):

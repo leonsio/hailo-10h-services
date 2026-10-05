@@ -252,6 +252,8 @@ def test_litert_backend_uses_python_engine_and_preserves_chat_history(tmp_path, 
     ]
     assert calls["conversation"]["max_output_tokens"] == 64
     assert calls["conversation"]["sampler_config"] == {"temperature": 0.2, "seed": 7}
+    assert backend.chat(request.model_copy(update={"temperature": 0})) == "Antwort"
+    assert calls["conversation"]["sampler_config"]["temperature"] == 0
     assert backend.chat(request.model_copy(update={"top_p": 0.8})) == "Antwort"
     assert calls["conversation"]["sampler_config"]["top_p"] == 0.8
     streamed = []

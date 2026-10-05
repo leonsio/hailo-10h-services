@@ -39,6 +39,7 @@ class VLM:
 
     @contextmanager
     def generate(self, **kwargs):
+        assert kwargs['temperature'] > 0  # Mirrors HailoRT's native validation.
         self.calls.append(kwargs)
         yield iter([self.text])
 
@@ -53,6 +54,38 @@ def backend(model='Qwen3-VL-2B-Instruct', **kwargs):
 
 def request(**kwargs):
     return ChatRequest(messages=[{'role': 'user', 'content': 'Hallo'}], **kwargs)
+
+
+@pytest.mark.parametrize('model', ['Qwen2-VL-2B-Instruct', 'Qwen3-VL-2B-Instruct'])
+def test_zero_vlm_temperature_rejected_before_native_generation(model):
+    b = backend(model)
+    with pytest.raises(ValueError, match='temperature > 0'):
+        b.chat(request(model=model, temperature=0))
+    assert b.vlm.calls == []
+    assert b.vlm.clears == 0
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('explicit_model', [False, True])
+def test_zero_vlm_temperature_returns_actionable_http_400(stream, explicit_model):
+    b = backend('Qwen2-VL-2B-Instruct')
+    payload = {'messages': [{'role': 'user', 'content': 'Was ist 7 + 5?'}],
+               'temperature': 0, 'stream': stream}
+    if explicit_model:
+        payload['model'] = b.settings.vlm_model
+    with TestClient(create_app(b.settings, b)) as client:
+        response = client.post('/v1/chat/completions', json=payload)
+        assert response.status_code == 400
+        assert 'temperature=0.1' in response.json()['error']
+        assert b.vlm.calls == []
+
+
+@pytest.mark.parametrize('model', ['Qwen2-VL-2B-Instruct', 'Qwen3-VL-2B-Instruct'])
+@pytest.mark.parametrize('temperature', [0.1, 1.0])
+def test_positive_vlm_temperature_is_forwarded_exactly(model, temperature):
+    b = backend(model)
+    assert b.chat(request(model=model, temperature=temperature)) == 'Hallo'
+    assert b.vlm.calls[0]['temperature'] == temperature
 
 
 def tool(name='get_time'):

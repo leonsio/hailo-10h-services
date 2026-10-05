@@ -83,7 +83,9 @@ python3 scripts/benchmark-text.py --url http://127.0.0.1:8090 --api-key 'YOUR_AP
 ```
 
 The script requires only Python 3.10+ and prints each pair of answers and metrics
-side by side. It also saves `comparison.html` and `results.json` in a timestamped
+side by side. Both models use `temperature=0.1` and `seed=42` by default because
+HailoRT VLM rejects `temperature=0`. The script
+also saves `comparison.html` and `results.json` in a timestamped
 folder under `benchmark-results/`, updating them after every request. Model IDs
 come from `/ui/config` and `/v1/models`; you can override them with `--llm-model`
 and `--vlm-model`. Add `--warmup` for an excluded warm-up call per model, or

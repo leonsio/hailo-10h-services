@@ -46,6 +46,14 @@ class LiteRTInferenceError(RuntimeError):
     pass
 
 
+def _validate_vlm_temperature(request):
+    if request.temperature <= 0:
+        raise ValueError(
+            "Hailo VLM requires temperature > 0; use temperature=0.1. "
+            "Gemma accepts temperature=0, but HailoRT does not."
+        )
+
+
 class HailoBackend:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -114,6 +122,7 @@ class HailoBackend:
         model = self.vlm
         if model is None:
             raise BusyError(f"{request.model} is disabled")
+        _validate_vlm_temperature(request)
         entry = ModelManager(self.settings).entries.get(self.settings.vlm_model, {})
         request, prompt = limit_request(
             model, request, self.settings.vlm_max_input_tokens, entry.get("context_length", 2048),
@@ -683,6 +692,8 @@ class Runtime:
             available = self.hailo_chat_models
             model = LLM_MODEL if self.litert_ready and not images else (available[0] if available else LLM_MODEL)
             request = request.model_copy(update={"model": model})
+        if request.model in self.hailo_chat_models:
+            _validate_vlm_temperature(request)
         return request
 
     async def chat(self, request, on_inference=None):

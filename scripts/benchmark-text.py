@@ -307,7 +307,8 @@ def parse_args(argv=None):
     parser.add_argument("--vlm-model", help="Standard: vlm_model aus /ui/config")
     parser.add_argument("--max-tokens", type=int, default=256, help="Identisches Ausgabelimit für beide Modelle (1..1024)")
     parser.add_argument("--max-input-tokens", type=int, help="Optional niedrigeres Eingabelimit; Standard: Service-Limits")
-    parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--temperature", type=float, default=0.1,
+                        help="Identisch für beide Modelle; Hailo VLM erfordert > 0 (Standard: 0.1)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--timeout", type=float, default=240, help="Timeout pro HTTP-Anfrage in Sekunden")
     parser.add_argument("--warmup", action="store_true", help="Eine zusätzliche, nicht gewertete Anfrage je Modell")
@@ -319,8 +320,8 @@ def parse_args(argv=None):
         parser.error("--max-tokens muss zwischen 1 und 1024 liegen")
     if args.max_input_tokens is not None and not 1 <= args.max_input_tokens <= 131072:
         parser.error("--max-input-tokens muss zwischen 1 und 131072 liegen")
-    if not math.isfinite(args.temperature) or not 0 <= args.temperature <= 1:
-        parser.error("--temperature muss zwischen 0 und 1 liegen")
+    if not math.isfinite(args.temperature) or not 0 < args.temperature <= 1:
+        parser.error("--temperature muss größer als 0 und höchstens 1 sein; Hailo VLM unterstützt 0 nicht")
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("--timeout muss positiv sein")
     if not 0 <= args.seed <= 2**32 - 1:
