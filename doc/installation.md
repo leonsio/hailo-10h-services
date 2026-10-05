@@ -202,7 +202,14 @@ All download URLs, including MiniLM host assets and Gemma, are defined in
 To customize it, copy it to `/etc/hailo-10h-models.yaml` and set
 `settings.model_catalog` to that path. No catalogue is fetched from a helper repository.
 The catalogue includes documented 5.1.1/5.2/5.3/5.4 releases; `model_release: auto`
-uses the loaded HailoRT binding's exact major/minor. HailoRT 5.4 selects **v5.4.0**.
+uses the loaded HailoRT binding's exact major/minor for Qwen3 and Whisper.
+**Qwen2-VL is the exception: its preferred release is v5.1.1**, including with
+HailoRT 5.4. Set `models.vlm.release` to override only the VLM release.
+Qwen2 downloads live under `<model_store>/<release>/Qwen2-VL-2B-Instruct.hef`,
+so an existing HEF at the store root remains untouched. To reuse your existing
+v5.1.1 file, set `models.vlm.path` to its full path; an explicit path bypasses
+release selection. The final HEF compatibility check occurs when HailoRT loads
+it; validate SHARED inference on your hardware after changing versions.
 Unknown runtimes and unavailable model/release combinations fail clearly instead
 of silently trying an incompatible HEF. Explicit local HEF paths are supported.
 The MiniLM HEF is a community build; HailoRT checks compatibility when loading it.
@@ -319,7 +326,42 @@ Chat requests select the backend using the model field:
 {"model":"gemma-4-E2B-it","messages":[{"role":"user","content":"Hallo!"}],"max_tokens":128}
 ```
 
-Use `Qwen2-VL-2B-Instruct` for text and image analysis. Gemma is text-only.
+Use the selected `Qwen2-VL-2B-Instruct` or `Qwen3-VL-2B-Instruct` for text and
+image analysis. The service asks the loaded VLM for its frame shape; the catalogue
+fallback is 336×336 for Qwen2 and 512×288 for Qwen3. Qwen3 accepts one image per
+request; Qwen2 accepts up to four. Frames are writable contiguous RGB UINT8 arrays.
+Gemma is text-only. Omitted `model` selects ready Gemma for text, or the VLM if
+Gemma is disabled/not ready. Explicit Gemma requests still require ready Gemma.
+The web model selector uses the actual enabled models and provides a **Text only**
+mode that sends no image and resets history when switching model or mode.
+
+Configure the model-bound limits beside their models:
+
+```yaml
+models:
+  vlm:
+    enabled: true
+    model: Qwen3-VL-2B-Instruct # Or Qwen2-VL-2B-Instruct
+    release: auto
+    max_input_tokens: 2048
+  gemma:
+    enabled: false
+    max_input_tokens: 4096
+  hailo_llm:
+    enabled: false # Execution remains disabled pending hardware tests.
+    model: Qwen2.5-1.5B-Instruct
+    max_input_tokens: 2048
+```
+
+Gemma's 4096 is the service's RAM safety default, not the original model's
+manufacturer context maximum. Hailo's Qwen2/Qwen3 VLM and listed HEF LLM context
+limits are 2048 (catalogue `context_length`). Output, templates, selected tools
+and image tokens also consume context; the usable text input may be smaller.
+The API `max_input_tokens` can only lower the configured budget. HTTP requests
+may exceed it (up to `max_body`) because retrieval/compilation precedes the final
+native-tokenizer check. Required current-turn contents that still do not fit
+produce HTTP 400 `input_token_limit_exceeded`. Debug logs show the final VLM prompt,
+measured budget, image count and frame size.
 Home Assistant or another OpenAI-compatible client can point to the same service
 base URL (`https://<raspberry-pi>:8443/v1` with the default HTTPS setup or
 `http://<raspberry-pi>:8090/v1` without HTTPS), use the service API key, and

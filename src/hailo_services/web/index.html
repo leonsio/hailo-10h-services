@@ -31,7 +31,10 @@
   <div class="playgrounds">
     <section aria-labelledby="chat-title">
       <div class="section-title"><div><p class="eyebrow" data-i18n="ui_50">LOKALE MODELLE</p><h2 id="chat-title" data-i18n="ui.chat">Chat</h2></div><button id="clear-chat" type="button" class="quiet" data-i18n="ui_51">Neuer Chat</button></div>
-      <label for="chat-model" data-i18n="ui_52">Modell</label><select id="chat-model"><option value="Qwen2-VL-2B-Instruct">Qwen2-VL-2B-Instruct · Hailo</option></select>
+      <label for="chat-model" data-i18n="ui_52">Modell</label><select id="chat-model"></select>
+      <label for="chat-mode" data-i18n="ui.chat_mode">Chatmodus</label>
+      <select id="chat-mode"><option value="vision" data-i18n="ui.mode_vision">Text mit optionalem Bild</option><option value="text" data-i18n="ui.mode_text">Nur Text</option></select>
+      <p id="input-limit" class="hint"></p>
       <div id="conversation" class="conversation" role="log" aria-label="Chat-Verlauf" data-i18n-aria="ui_53"><p class="empty" data-i18n="ui_54">Stelle eine Frage oder lade ein Bild zur Analyse hoch.</p></div>
       <form id="chat-form">
         <label for="prompt" data-i18n="ui_55">Deine Nachricht</label><textarea id="prompt" rows="3" required placeholder="Was ist auf diesem Bild zu sehen?" data-i18n-placeholder="ui_56"></textarea>

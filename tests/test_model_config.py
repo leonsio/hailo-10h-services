@@ -47,7 +47,7 @@ def test_yaml_rejects_invalid_config(tmp_path, monkeypatch, text):
 
 
 def test_all_current_hailo_models_have_documented_54_urls():
-    manager = ModelManager(Settings(), "5.4.0")
+    manager = ModelManager(Settings(vlm_release="v5.4.0"), "5.4.0")
     models = ["Qwen2-VL-2B-Instruct", "Qwen3-VL-2B-Instruct",
               "Whisper-Tiny", "Whisper-Base", "Whisper-Small",
               "DeepSeek-R1-Distill-Qwen-1.5B", "Llama3.2-1B-Instruct",
@@ -157,6 +157,8 @@ def test_vlm_uses_selected_model_frame_shape():
 
     from hailo_services.schemas import ChatRequest
     class VLM:
+        def tokenize(self, text):
+            return text.split()
         def input_frame_shape(self):
             return [448, 448, 3]
         def clear_context(self):
@@ -220,11 +222,11 @@ def test_yaml_example_covers_every_legacy_env_parameter(monkeypatch):
     document = yaml.safe_load(path.read_text())
     covered = set(document['settings'])
     for role, fields in {
-        'vlm': ('vlm_enabled', 'vlm_hef'),
+        'vlm': ('vlm_enabled', 'vlm_hef', 'vlm_release', 'vlm_max_input_tokens'),
         'whisper': ('whisper_enabled', 'whisper_hef'),
-        'hailo_llm': ('hailo_llm_enabled', 'hailo_llm_model'),
+        'hailo_llm': ('hailo_llm_enabled', 'hailo_llm_model', 'hailo_llm_max_input_tokens'),
         'minilm': ('minilm_enabled', 'minilm_hef_path'),
-        'gemma': ('litert_enabled', 'litert_model_path'),
+        'gemma': ('litert_enabled', 'litert_model_path', 'litert_max_input_tokens'),
     }.items():
         assert role in document['models']
         covered.update(fields)

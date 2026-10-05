@@ -6,9 +6,9 @@ const path = require('node:path');
 const vm = require('node:vm');
 const web = path.join(__dirname, '../src/hailo_services/web');
 
-function page() {
+function page(overrides = {}) {
   class Element {
-    constructor() { this.value = ''; this.children = []; this.events = {}; this.disabled = false; this.hidden = false; this.files = []; this.classList = { toggle() {} }; }
+    constructor() { this.value = ''; this.children = []; this.events = {}; this.disabled = false; this.hidden = false; this.files = []; this.options = []; this.classList = { toggle() {} }; }
     addEventListener(type, fn) { this.events[type] = fn; }
     append(...children) { this.children.push(...children); }
     replaceChildren(...children) { this.children = children; }
@@ -31,7 +31,7 @@ function page() {
     constructor() { this.port = {}; nodes.push(this); }
     connect() {} disconnect() { this.disconnected = true; }
   }
-  const config = { auth_required: true, vlm_model: 'Qwen2-VL-2B-Instruct', whisper_model: 'whisper-base', max_body: 16 * 1024 * 1024, recording_seconds: 1, max_audio_seconds: 120, language: 'de' };
+  const config = { auth_required: true, vlm_model: 'Qwen2-VL-2B-Instruct', whisper_model: 'whisper-base', max_body: 16 * 1024 * 1024, recording_seconds: 1, max_audio_seconds: 120, language: 'de', ...overrides };
   const context = vm.createContext({
     localStorage: { getItem() { return null; }, setItem() {} },
     document: { documentElement: {}, querySelectorAll() { return []; }, hidden: false, getElementById: id => elements[id], createElement: () => new Element(), addEventListener() {} },
@@ -141,4 +141,26 @@ test('Every translated DOM key exists in every locale', () => {
     const data = JSON.parse(fs.readFileSync(path.join(web, `../locales/${language}.json`), 'utf8'));
     for (const key of keys) assert.equal(typeof data.ui[key], 'string', `${language}:${key}`);
   }
+});
+
+
+test('Selected Qwen3 is shown with text-only mode, input limit and no image upload', async () => {
+  const p = page({vlm_model: 'Qwen3-VL-2B-Instruct', chat_models: ['Qwen3-VL-2B-Instruct'],
+    default_text_model: 'Qwen3-VL-2B-Instruct', vlm_max_images: 1,
+    model_limits: {'Qwen3-VL-2B-Instruct': {max_input_tokens: 2048, context_length: 2048}}});
+  await p.ready();
+  assert.equal(p.elements['chat-model'].value, 'Qwen3-VL-2B-Instruct');
+  assert.equal(p.elements['chat-mode'].value, 'text');
+  assert.equal(p.elements.image.disabled, true);
+  assert.match(p.elements['input-limit'].textContent, /2048/);
+  p.elements.prompt.value = 'Hallo';
+  p.elements.image.files = [{type: 'image/png', size: 20}];
+  await p.elements['chat-form'].events.submit({preventDefault() {}});
+  const sent = JSON.parse(p.calls.find(c => c.url === 'v1/chat/completions').options.body);
+  assert.equal(sent.messages[0].content, 'Hallo');
+  assert.equal(sent.model, 'Qwen3-VL-2B-Instruct');
+  p.elements['chat-mode'].value = 'vision';
+  p.elements['chat-mode'].events.change();
+  assert.equal(p.elements.image.disabled, false);
+  assert.equal(p.run('history.length'), 0);
 });

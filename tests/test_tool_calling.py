@@ -307,12 +307,12 @@ def test_remote_schema_refs_are_rejected():
         ChatRequest(**payload(tools=[tool]))
 
 
-def test_vlm_rejects_unsupported_tools_but_accepts_user_field():
+def test_vlm_routes_tools_and_accepts_user_field():
     backend = FakeBackend()
     with TestClient(create_app(settings(), backend)) as client:
         response = client.post("/v1/chat/completions", json=payload(model=VLM_MODEL))
-        assert response.status_code == 400
-        assert not backend.calls
+        assert response.status_code == 200
+        assert backend.calls
         response = client.post("/v1/chat/completions", json=payload(model=VLM_MODEL, tools=None))
         assert response.status_code == 200
 

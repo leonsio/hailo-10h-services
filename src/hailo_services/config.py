@@ -14,6 +14,9 @@ class Settings:
     model_catalog: str = ""
     model_store: str = "/usr/local/hailo/resources/models/hailo10h"
     model_release: str = "auto"
+    vlm_release: str = "auto"
+    vlm_max_input_tokens: int = 2048
+    hailo_llm_max_input_tokens: int = 2048
     vlm_enabled: bool = True
     whisper_enabled: bool = True
     minilm_enabled: bool = True
@@ -50,6 +53,9 @@ class Settings:
 
     def __post_init__(self):
         self.check_hailo_llm_support()
+        for name in ("vlm_max_input_tokens", "hailo_llm_max_input_tokens"):
+            if not 1 <= getattr(self, name) <= 2048:
+                raise ValueError(f"{name} must be between 1 and the compiled HEF limit of 2048")
 
     def check_hailo_llm_support(self):
         if self.hailo_llm_enabled:
@@ -96,8 +102,18 @@ class Settings:
             if not isinstance(selections, dict) or set(selections) - set(roles):
                 raise ValueError("Unknown model role in YAML configuration")
             for role, selection in selections.items():
-                if not isinstance(selection, dict) or set(selection) - {"enabled", "model", "path"}:
+                if not isinstance(selection, dict) or set(selection) - {"enabled", "model", "path", "max_input_tokens", "release"}:
                     raise ValueError(f"Invalid models.{role} configuration")
+                limit_key = {"vlm": "vlm_max_input_tokens", "gemma": "litert_max_input_tokens",
+                             "hailo_llm": "hailo_llm_max_input_tokens"}.get(role)
+                if "max_input_tokens" in selection:
+                    if limit_key is None:
+                        raise ValueError(f"models.{role} does not allow max_input_tokens")
+                    values[limit_key] = selection["max_input_tokens"]
+                if "release" in selection:
+                    if role != "vlm":
+                        raise ValueError(f"models.{role} does not allow release")
+                    values["vlm_release"] = selection["release"]
                 enabled, model_key = roles[role]
                 if "enabled" in selection:
                     values[enabled] = selection["enabled"]

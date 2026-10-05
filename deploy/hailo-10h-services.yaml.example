@@ -31,14 +31,15 @@ settings:
   mcp_no_auth_networks: "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
 
   model_store: /usr/local/hailo/resources/models/hailo10h
-  model_release: auto  # HailoRT 5.4.x selects documented v5.4.0 URLs.
+  model_release: auto  # Runtime-matched URLs; Qwen2 prefers v5.1.1.
   model_catalog: ""   # Optional absolute path to your own catalogue YAML.
-  litert_max_input_tokens: 4096
   litert_max_num_tokens: 16384
 models:
   vlm:
     enabled: true
     model: Qwen2-VL-2B-Instruct # Or Qwen3-VL-2B-Instruct
+    release: auto # Qwen2: v5.1.1; Qwen3: runtime-matched (e.g. v5.4.0)
+    max_input_tokens: 2048 # Includes template/tools; output also shares the 2048 context.
   whisper:
     enabled: true
     model: Whisper-Base # Or Whisper-Tiny / Whisper-Small
@@ -47,9 +48,11 @@ models:
     # The catalogue keeps HEF LLM links, but this release cannot run them on Hailo.
     enabled: false
     model: Qwen2.5-1.5B-Instruct
+    max_input_tokens: 2048 # Manufacturer limit for the catalogue HEF LLMs.
   minilm:
     enabled: true
     # path: /usr/local/hailo/resources/models/hailo10h/minilm-l6-ruvector.hef
   gemma:
     enabled: false # true: download and load Gemma E2B on CPU
+    max_input_tokens: 4096 # Service RAM safety limit; API requests may only lower it.
     # path: /usr/local/hailo/resources/models/hailo10h/gemma-4-E2B-it.litertlm

@@ -27,6 +27,7 @@ from .config import LLM_MODEL, STT_MODEL, Settings
 from .i18n import SUPPORTED_LANGUAGES, catalogue, wait_sentence
 from .input_budget import InputBudgetError
 from .media import audio_file, audio_metadata, decode_base64
+from .models import ModelManager
 from .protocols import LANGUAGES, MQTTBridge, WyomingServer, dispatch
 from .runtime import BusyError, LiteRTInferenceError, Runtime
 from .schemas import ChatRequest, TranscribeRequest
@@ -302,6 +303,9 @@ def create_app(settings=None, backend=None, litert_backend=None):
             "auth_required": bool(settings.api_key),
             "vlm_model": settings.vlm_model,
             "llm_model": LLM_MODEL,
+            "default_text_model": LLM_MODEL if runtime.litert_ready else settings.vlm_model,
+            "model_limits": runtime.model_limits,
+            "vlm_max_images": ModelManager(settings).entries.get(settings.vlm_model, {}).get("max_images", 1),
             "chat_models": runtime.hailo_chat_models + ([LLM_MODEL] if runtime.litert_ready else []),
             "whisper_model": settings.stt_model,
             "language": settings.language,

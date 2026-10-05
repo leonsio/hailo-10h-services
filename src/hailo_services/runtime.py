@@ -20,6 +20,7 @@ from .tool_calling import (
     selected_tools,
 )
 from .tool_retrieval import compact_static_context, retrieve_tools
+from .vlm_chat import limit_request, tool_response
 
 _LOG = logging.getLogger(__name__)
 _INPUT_TOKEN_SAFETY_MARGIN = 256
@@ -94,34 +95,53 @@ class HailoBackend:
             raise
 
     def chat(self, request, emit=None, cancelled=None):
-        prompt, frames = [], []
-        size = (336, 336)
-        if self.vlm is not None and hasattr(self.vlm, "input_frame_shape"):
-            height, width, channels = self.vlm.input_frame_shape()
-            if channels != 3:
-                raise ValueError("VLM requires an unsupported input frame format")
-            size = (width, height)
-        for message in request.messages:
-            content = message["content"]
-            if isinstance(content, str):
-                content = [{"type": "text", "text": content}]
-            converted = []
-            for part in content:
-                if part["type"] == "image_url":
-                    if len(frames) >= 4:
-                        raise ValueError("At most four images per request")
-                    frames.append(image_frame(part["image_url"]["url"], self.settings.max_body, size))
-                    converted.append({"type": "image"})
-                else:
-                    converted.append({"type": "text", "text": part["text"]})
-            prompt.append({"role": message["role"], "content": converted})
+        from .ha_action_verification import action_verification_response
+        from .i18n import using_language
+
+        with using_language(getattr(request, "_response_language", request.language or self.settings.service_language)):
+            decision = action_verification_response(request) if getattr(request, "_ha_request", False) else None
+        direct = decision["response"] if decision else next((
+            getattr(request, name) for name in (
+                "_direct_ha_response", "_direct_ha_state_response", "_direct_weather_response"
+            ) if getattr(request, name, None) is not None
+        ), None)
+        if direct is not None:
+            if emit:
+                emit(direct)
+            return direct
         model = self.vlm
         if model is None:
             raise BusyError(f"{request.model} is disabled")
+        entry = ModelManager(self.settings).entries.get(self.settings.vlm_model, {})
+        request, prompt = limit_request(
+            model, request, self.settings.vlm_max_input_tokens, entry.get("context_length", 2048),
+            debug=self.settings.debug_log,
+        )
+        size = tuple(entry.get("frame_size", [336, 336]))
+        if callable(getattr(model, "input_frame_shape", None)):
+            height, width, channels = model.input_frame_shape()
+            if channels != 3 or height < 1 or width < 1:
+                raise ValueError("VLM requires an unsupported input frame format")
+            size = (width, height)
+        frames = []
+        max_images = entry.get("max_images", 1)
+        for message in request.messages:
+            for part in message["content"] if isinstance(message.get("content"), list) else []:
+                if part["type"] == "image_url":
+                    if len(frames) >= max_images:
+                        raise ValueError(f"{request.model} supports at most {max_images} image(s) per request")
+                    frames.append(image_frame(part["image_url"]["url"], self.settings.max_body, size))
+        _debug_json(self.settings.debug_log, "final_vlm_request", {
+            "prompt": prompt, "frame_size": size, "images": len(frames),
+            "max_input_tokens": self.settings.vlm_max_input_tokens,
+        }, request_id=request._request_id)
         output = []
         # Clear only KV context, never unload the model weights.
         try:
             model.clear_context()
+            on_inference = getattr(request, "_on_inference", None)
+            if on_inference is not None:
+                on_inference(getattr(request, "_response_language", self.settings.service_language))
             with model.generate(
                 prompt=prompt,
                 **({"frames": frames} if model is self.vlm else {}),
@@ -136,9 +156,12 @@ class HailoBackend:
                     chunk = chunk.replace("<|im_end|>", "")
                     if chunk:
                         output.append(chunk)
-                        if emit:
+                        if emit and not has_tool_context(request):
                             emit(chunk)
-            return "".join(output).strip()
+            result = tool_response("".join(output).strip(), request)
+            if emit and has_tool_context(request):
+                emit(result)
+            return result
         finally:
             model.clear_context()
 
@@ -156,6 +179,9 @@ class HailoBackend:
         return "".join(segment.text for segment in segments).strip()
 
     def select_tools(self, request):
+        return self.retrieve_context(request)
+
+    def retrieve_context(self, request):
         request_id = getattr(request, "_request_id", "-")
         entity_trace = {} if self.settings.debug_log else None
         _debug_json(
@@ -339,7 +365,7 @@ class LiteRTLMBackend:
         # The incoming OpenAI request may be much larger because MiniLM processes
         # its tool catalogue first. Native prefill still must fit the configured
         # Gemma context, with the requested output budget reserved.
-        limit = min(request.max_input_tokens, self.max_num_tokens - request.max_tokens - 1)
+        limit = min(request.max_input_tokens, self.max_input_tokens, self.max_num_tokens - request.max_tokens - 1)
         if limit < 1:
             raise ValueError("The configured LiteRT context leaves no room for input and output")
         # Validate all original call/result dependencies before dropping history.
@@ -636,16 +662,15 @@ class Runtime:
 
     def default_chat_request(self, request):
         if "model" not in request.model_fields_set:
+            images = any(part.get("type") == "image_url" for m in request.messages
+                         for part in (m.get("content") if isinstance(m.get("content"), list) else []))
             available = self.hailo_chat_models
-            request = request.model_copy(update={"model": available[0] if available else LLM_MODEL})
+            model = LLM_MODEL if self.litert_ready and not images else (available[0] if available else LLM_MODEL)
+            request = request.model_copy(update={"model": model})
         return request
 
     async def chat(self, request, on_inference=None):
         request = self.default_chat_request(request)
-        if request.max_input_tokens is not None and request.model != LLM_MODEL:
-            raise ValueError(f"max_input_tokens requires model {LLM_MODEL}; Qwen image tokens cannot be counted here")
-        if has_tool_context(request) and request.model != LLM_MODEL:
-            raise ValueError(f"Tool calling requires model {LLM_MODEL}")
         if request.model == LLM_MODEL:
             if not self.litert_ready:
                 detail = self.litert_error or "LiteRT-LM model is not configured"
@@ -660,6 +685,10 @@ class Runtime:
             return await self.call_litert(self.litert_backend.chat, request)
         if request.model not in self.hailo_chat_models:
             raise ValueError(f"Unknown model: {request.model}")
+        if has_tool_context(request) and isinstance(self.backend, HailoBackend):
+            request = await self.call(self.backend.select_tools, request)
+            if on_inference is not None and getattr(request, "_ha_request", False):
+                object.__setattr__(request, "_on_inference", on_inference)
         return await self.call(self.backend.chat, request)
 
     async def call_litert(self, function, *args):
@@ -670,8 +699,6 @@ class Runtime:
 
     async def stream(self, request):
         request = self.default_chat_request(request)
-        if request.max_input_tokens is not None and request.model != LLM_MODEL:
-            raise ValueError(f"max_input_tokens requires model {LLM_MODEL}; Qwen image tokens cannot be counted here")
         if has_tool_context(request):
             yield await self.chat(request)
             return
@@ -713,11 +740,21 @@ class Runtime:
     def hailo_chat_models(self):
         return [self.settings.vlm_model] if self.settings.vlm_enabled else []
 
+    @property
+    def model_limits(self):
+        return {
+            self.settings.vlm_model: {"max_input_tokens": self.settings.vlm_max_input_tokens, "context_length": 2048},
+            LLM_MODEL: {"max_input_tokens": self.settings.litert_max_input_tokens,
+                        "context_length": self.settings.litert_max_num_tokens},
+        }
+
     def status(self):
         return {
             "ready": self.ready,
             "group_id": "SHARED",
             "pending": self.pending,
+            "model_limits": self.model_limits,
+            "default_text_model": LLM_MODEL if self.litert_ready else (self.hailo_chat_models[0] if self.hailo_chat_models else None),
             "litert_lm": {
                 "ready": self.litert_ready,
                 "model": LLM_MODEL if self.litert_backend else None,

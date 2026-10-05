@@ -136,14 +136,19 @@
     "ui_extra_0": "Mikrofonaufnahme braucht HTTPS oder localhost und einen Browser mit AudioWorklet. Bei HTTP über eine LAN-IP bitte Audiodatei hochladen oder SSH-Tunnel verwenden.",
     "ui_extra_1": "WAV / FLAC / OGG · maximal {v0} s und {v1} MB.",
     "ui_extra_2": "Gemma 4 E2B läuft über LiteRT-LM auf der CPU. Bildanalyse erfolgt mit Qwen2-VL.",
-    "ui_extra_3": "Qwen2-VL verarbeitet Text und Bilder über Hailo.",
+    "ui_extra_3": "VLM: Textchat oder Bildanalyse auf dem Hailo.",
     "ui_extra_4": "Seitenkonfiguration konnte nicht geladen werden: {v0}",
     "ui.language_settings": "Spracheinstellungen",
     "ui.page_title": "Hailo-10H · Service & Testoberfläche",
     "ui.gateway": "LOKALES KI-GATEWAY",
     "ui.playground": "Testoberfläche",
     "ui.chat": "Chat",
-    "ui.health": "Status-API"
+    "ui.health": "Status-API",
+    "ui.chat_mode": "Chatmodus",
+    "ui.mode_vision": "Text mit optionalem Bild",
+    "ui.mode_text": "Nur Text",
+    "ui.input_limit": "Max. Modelleingabe: {limit} Tokens; Kontext: {context}. Antwort, Vorlage und Bildtokens benötigen ebenfalls Platz.",
+    "ui.image_limit": "Dieses Modell unterstützt maximal {limit} Bild(er) pro Anfrage."
   },
   "aliases": {
     "licht": [

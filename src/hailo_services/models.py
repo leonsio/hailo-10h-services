@@ -119,14 +119,19 @@ class ModelManager:
         if "url" in entry:
             return entry["url"]
         version = self.runtime_version or prepare_model_version()
-        override = self.settings.model_release
+        override = (self.settings.vlm_release if entry["kind"] == "vlm"
+                    and self.settings.vlm_release != "auto" else self.settings.model_release)
         if override == "auto":
             override = os.getenv("model_zoo_version")
         # Use a documented release for the same HailoRT minor; never silently
         # substitute a newer/older HEF ABI for unknown runtime versions.
         available = [r for r in entry["releases"]
                      if release_tuple(r)[:2] == release_tuple(version)[:2]]
-        selected = select_release(version, available, override)
+        if not available:
+            raise ValueError(f"No known model release for HailoRT {version}")
+        if not override and entry.get("preferred_release"):
+            override = entry["preferred_release"]
+        selected = select_release(version, entry["releases"] if override else available, override)
         _LOG.info("Model=%s HailoRT=%s release=%s", model, version, selected)
         return entry["releases"][selected]
 
@@ -140,5 +145,10 @@ class ModelManager:
         destination = Path(path) if path else Path(self.settings.model_store) / entry["filename"]
         # Resolve compatibility even when a cached named model exists.
         url = self.url(model)
+        if entry.get("preferred_release") and path is None:
+            # Separate releases so selecting the smaller Qwen2 never overwrites
+            # a user's existing HEF or accidentally reuses a larger release.
+            release = next(r for r, link in entry["releases"].items() if link == url)
+            destination = Path(self.settings.model_store) / release / entry["filename"]
         expected_size = entry.get("sizes", {}).get(next((release for release, link in entry.get("releases", {}).items() if link == url), ""))
         return ensure_model_file(destination, url, entry["minimum_bytes"], entry["maximum_bytes"], expected_size)

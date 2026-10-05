@@ -4,7 +4,7 @@
 
 | Protocol | Endpoint / port | VLM | LLM | Whisper |
 |---|---|---|---|---|
-| OpenAI-style HTTP | `:8090/v1/chat/completions` | Text, images, SSE | Text, SSE, function tools | — |
+| OpenAI-style HTTP | `:8090/v1/chat/completions` | Text, images, SSE, function tools | Text, SSE, function tools | — |
 | OpenAI-style HTTP | `:8090/v1/audio/transcriptions` | — | — | File upload |
 | Models / readiness | `/v1/models`, `/health` | Model status | Model status | Model status |
 | WebSocket | `ws://HOST:8090/ws` | `chat` | `chat` | `transcribe` |
@@ -83,12 +83,12 @@ An image content list in a `user` message:
 ]
 ```
 
-Images are decoded to RGB uint8 and resized to the model's 336×336 input, at most
-four per request. Only inline base64/data URLs are accepted; snapshot HTTP URLs
+Images are decoded to writable contiguous RGB UINT8 and resized to the loaded
+model's input shape (Qwen2: 336×336, up to four images; Qwen3: 512×288, one image). Only inline base64/data URLs are accepted; snapshot HTTP URLs
 are not fetched. `stream:true` enables native-token SSE ending in `[DONE]`.
 `max_tokens` is 1..1024; `temperature` is 0..1. The gateway implements a documented
 subset of the OpenAI API. Gemma accepts function `tools`/`tool_choice` as described
-below; Qwen rejects tool requests. JSON-schema response formats remain unsupported.
+below; Qwen supports text-only tool requests through the validated JSON adapter. JSON-schema response formats remain unsupported.
 Token usage is not fabricated. Text-only Qwen requests pass `frames=[]` and need
 target-device validation alongside image requests.
 
@@ -151,18 +151,34 @@ default. Configure `HAILO_LITERT_MAX_NUM_TOKENS` in
 history, tool schemas and generated output; `max_tokens` in the chat request
 only limits the generated response and does not enlarge the context.
 
-For Gemma only, `max_input_tokens` is a per-request limit for prompt tokens. It
+For Gemma, `max_input_tokens` is a per-request limit for prompt tokens. It
 is measured with the loaded LiteRT-LM tokenizer after rendering the actual
 Gemma template and Home Assistant tools. The requested `max_tokens` and one
 start-token slot are reserved inside `HAILO_LITERT_MAX_NUM_TOKENS`, so the
-effective input cap is the lower of `max_input_tokens`, 4096 and the remaining
-context. When needed, the service removes complete older user turns (including
+effective input cap is the lower of `max_input_tokens`, the configured Gemma
+ceiling (4096 by default) and the remaining context. When needed, the service removes complete older user turns (including
 their assistant/tool-call/tool-result messages), while keeping system messages
 and the complete current user/tool turn. Tool calls remain enabled. If the
 required system prompt, tools and current turn alone exceed the cap, the API
 returns `input_token_limit_exceeded` with the measured size instead of damaging
-the prompt. Qwen image requests do not accept this parameter because the Gemma
-tokenizer cannot count Qwen's image tokens.
+the prompt.
+
+Qwen2/Qwen3-VL also accept `max_input_tokens`. Their compiled context limit is
+**2048 tokens**, shared by prompt and response. The service renders the loaded
+VLM's template and uses **its native tokenizer**, with conservative headroom for
+native bookkeeping and image tokens. The usable input ceiling is the minimum of
+`models.vlm.max_input_tokens`, the request limit, and native context capacity
+minus output reserve. Qwen3 images are resized to **512×288** (one image per
+request); Qwen2 defaults to the **v5.1.1 HEF**, with **336×336** frames.
+
+Omit `model` for automatic routing: text uses ready Gemma, otherwise the resident
+VLM; images use the configured VLM. Explicit model IDs remain authoritative.
+The incoming JSON may be much larger than the model budget: tool/entity retrieval
+and HA prompt compilation run first. The final model-bound prompt, including
+selected schemas, template and tool history, must fit. `tool_choice: "none"`
+excludes tool schemas from inference. `/health` and `/ui/config` expose
+`model_limits` and `default_text_model`; debug logs include `vlm_input_budget`
+and `final_vlm_request` with the rendered prompt and frame dimensions.
 
 With the Home Assistant **Local OpenAI LLM** conversation integration, choose
 server type **Generic OpenAI-Compatible**. In the Conversation Agent options,
@@ -183,11 +199,15 @@ larger histories may require a larger context or a shorter conversation.
 
 The HTTP `/v1/chat/completions` endpoint accepts `user`, `tools`, `tool_choice`
 (`auto`, `none`, `required`, or a named function), and `parallel_tool_calls`.
-Tool calling uses **Gemma through LiteRT-LM**, including its native model chat
-template and function parser. Qwen's Hailo VLM path remains available for text
-and images, but rejects tool requests with a clear error.
+Tool calling uses **Gemma through LiteRT-LM** with its native function parser,
+or **Qwen2/Qwen3-VL for text-only tool requests**. The VLM adapter places the
+retrieved schemas and choice instructions into a compact JSON-call contract.
+Generated function names and arguments undergo the same schema validation as
+Gemma, including required/named choice and parallel-call rules. Model tool-call
+quality must be tested with your exposed HA devices; it is not a native Hailo
+function-calling capability.
 
-The server passes the supplied function schemas to LiteRT-LM with
+For Gemma, the server passes the selected function schemas to LiteRT-LM with
 `automatic_tool_calling=False`. It returns OpenAI-compatible `tool_calls` with
 unique IDs, JSON string arguments and `finish_reason: "tool_calls"`.
 **Home Assistant executes the actions** using its own permissions and exposed

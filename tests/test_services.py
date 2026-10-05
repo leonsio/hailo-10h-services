@@ -674,6 +674,9 @@ def test_model_release_selection_handles_hailort_54():
 
 def test_vlm_preprocessing_context_cleanup_and_native_streaming():
     class Vlm:
+        def tokenize(self, text):
+            return text.split()
+
         def __init__(self):
             self.clears = 0
             self.request = None

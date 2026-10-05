@@ -4,6 +4,7 @@ schema_version: 1
 models:
   DeepSeek-R1-Distill-Qwen-1.5B:
     kind: llm
+    context_length: 2048
     filename: DeepSeek-R1-Distill-Qwen-1.5B.hef
     sizes:
       v5.4.0: 2287685327 # Verified Content-Length via HTTP HEAD on 2026-10-05
@@ -16,6 +17,7 @@ models:
       v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/DeepSeek-R1-Distill-Qwen-1.5B.hef
   Qwen2.5-Coder-1.5B-Instruct:
     kind: llm
+    context_length: 2048
     filename: Qwen2.5-Coder-1.5B-Instruct.hef
     sizes:
       v5.4.0: 1673567535 # Verified Content-Length via HTTP HEAD on 2026-10-05
@@ -28,6 +30,7 @@ models:
       v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Qwen2.5-Coder-1.5B-Instruct.hef
   Qwen2-1.5B-Instruct:
     kind: llm
+    context_length: 2048
     filename: Qwen2-1.5B-Instruct.hef
     sizes:
       v5.4.0: 1702481199 # Verified Content-Length via HTTP HEAD on 2026-10-05
@@ -40,6 +43,10 @@ models:
       v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Qwen2-1.5B-Instruct.hef
   Qwen2-VL-2B-Instruct:
     kind: vlm
+    preferred_release: v5.1.1
+    frame_size: [336, 336] # width, height
+    max_images: 4
+    context_length: 2048
     filename: Qwen2-VL-2B-Instruct.hef
     sizes:
       v5.4.0: 3255444179 # Verified Content-Length via HTTP HEAD on 2026-10-05
@@ -64,6 +71,7 @@ models:
       v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Whisper-Base.hef
   Qwen2.5-1.5B-Instruct:
     kind: llm
+    context_length: 2048
     filename: Qwen2.5-1.5B-Instruct.hef
     sizes:
       v5.4.0: 2464582493 # Verified Content-Length via HTTP HEAD on 2026-10-05
@@ -76,6 +84,7 @@ models:
       v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Qwen2.5-1.5B-Instruct.hef
   Llama-3_2-3B-Instruct:
     kind: llm
+    context_length: 2048
     filename: Llama-3_2-3B-Instruct.hef
     minimum_bytes: 1048576
     maximum_bytes: 8589934592
@@ -83,6 +92,7 @@ models:
       v5.1.1: https://dev-public.hailo.ai/v5.1.1/blob/Llama-3_2-3B-Instruct.hef
   Qwen2-1.5B-Instruct-Function-Calling-v1:
     kind: llm
+    context_length: 2048
     filename: Qwen2-1.5B-Instruct-Function-Calling-v1.hef
     sizes:
       v5.4.0: 3401357978 # Verified Content-Length via HTTP HEAD on 2026-10-05
@@ -105,6 +115,7 @@ models:
       v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Whisper-Small.hef
   Llama3.2-1B-Instruct:
     kind: llm
+    context_length: 2048
     filename: Llama3.2-1B-Instruct.hef
     sizes:
       v5.4.0: 1402376894 # Verified Content-Length via HTTP HEAD on 2026-10-05
@@ -116,6 +127,7 @@ models:
       v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Llama3.2-1B-Instruct.hef
   Qwen3-1.7B-Instruct:
     kind: llm
+    context_length: 2048
     filename: Qwen3-1.7B-Instruct.hef
     sizes:
       v5.4.0: 2880748478 # Verified Content-Length via HTTP HEAD on 2026-10-05
@@ -126,6 +138,9 @@ models:
       v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Qwen3-1.7B-Instruct.hef
   Qwen3-VL-2B-Instruct:
     kind: vlm
+    frame_size: [512, 288] # width, height
+    max_images: 1 # Hailo single-frame HEF
+    context_length: 2048
     filename: Qwen3-VL-2B-Instruct.hef
     sizes:
       v5.4.0: 3185773502 # Verified Content-Length via HTTP HEAD on 2026-10-05

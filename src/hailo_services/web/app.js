@@ -39,7 +39,7 @@ async function loadLanguage(choice) {
 }
 $("ui-language").addEventListener("change", async () => {
   const choice = $("ui-language").value;
-  try { await loadLanguage(choice); localStorage.setItem("hailo-ui-language", choice); await refreshStatus(); }
+  try { await loadLanguage(choice); updateChatMode(); localStorage.setItem("hailo-ui-language", choice); await refreshStatus(); }
   catch (error) { note("status-note", error.message, true); }
 });
 
@@ -69,7 +69,8 @@ function controls() {
   $("clear-chat").disabled = chatBusy;
   $("prompt").disabled = chatBusy;
   $("chat-model").disabled = chatBusy;
-  $("image").disabled = chatBusy || $("chat-model").value === config?.llm_model;
+  $("chat-mode").disabled = chatBusy || $("chat-model").value === config?.llm_model;
+  $("image").disabled = chatBusy || $("chat-mode").value === "text" || $("chat-model").value === config?.llm_model;
   $("record").disabled = !config || !canRecord() || !!recording || starting || stopping || audioBusy;
   $("stop").disabled = !recording || stopping;
   $("audio-file").disabled = !!recording || starting || stopping || audioBusy;
@@ -126,7 +127,7 @@ $("chat-form").addEventListener("submit", async (event) => {
   let userNode;
   try {
     const model = $("chat-model").value;
-    const file = $("image").files[0];
+    const file = $("chat-mode").value === "text" ? null : $("image").files[0];
     if (file && model === config.llm_model) throw new Error(tr("ui_12"));
     if (file && !["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new Error(tr("ui_13"));
     if (file && file.size * 4 / 3 > config.max_body - 1024) throw new Error(tr("ui_14"));
@@ -135,7 +136,7 @@ $("chat-form").addEventListener("submit", async (event) => {
     const messages = [...history, { role: "user", content }];
     if (messages.length > 31) throw new Error(tr("ui_15"));
     const images = messages.flatMap(m => Array.isArray(m.content) ? m.content : []).filter(p => p.type === "image_url");
-    if (images.length > 4) throw new Error(tr("ui_16"));
+    if (images.length > (config.vlm_max_images || 4)) throw new Error(tr("ui.image_limit", {limit: config.vlm_max_images || 4}));
     const body = JSON.stringify({ model, messages, language: uiLanguage, max_tokens: Number($("max-tokens").value) });
     if (new Blob([body]).size > config.max_body) throw new Error(tr("ui_17"));
     userNode = bubble("user", prompt, image);
@@ -262,6 +263,14 @@ $("refresh").addEventListener("click", refreshStatus);
 document.addEventListener("visibilitychange", () => { if (document.hidden) void stopRecording(); });
 window.addEventListener("pagehide", () => { pageHidden = true; void stopRecording(); });
 window.addEventListener("pageshow", () => { pageHidden = false; controls(); });
+function updateChatMode() {
+  if ($("chat-mode").value === "text" || $("chat-model").value === config?.llm_model) {
+    $("image").value = ""; $("image-preview").hidden = true;
+    if (imageURL) URL.revokeObjectURL(imageURL); imageURL = null;
+  }
+  const limits = config?.model_limits?.[$("chat-model").value];
+  note("input-limit", limits ? tr("ui.input_limit", {limit: limits.max_input_tokens, context: limits.context_length}) : "");
+}
 async function init() {
 
   try {
@@ -269,11 +278,14 @@ async function init() {
     $("ui-language").value = savedChoice();
     await loadLanguage($("ui-language").value);
     await refreshStatus(); setInterval(refreshStatus, 5000);
+    $("chat-model").replaceChildren();
     for (const model of config.chat_models || [config.vlm_model]) {
-      if (model === config.vlm_model) continue;
-      $("chat-model").add(new Option(`${model} · LiteRT-LM / CPU`, model));
+      $("chat-model").add(new Option(`${model} · ${model === config.vlm_model ? "Hailo" : "LiteRT-LM / CPU"}`, model));
     }
-    config.model_labels = { [config.vlm_model]: "QWEN2-VL", [config.llm_model]: "GEMMA 4 E2B" };
+    $("chat-model").value = config.default_text_model || config.vlm_model;
+    config.model_labels = { [config.vlm_model]: config.vlm_model, [config.llm_model]: "GEMMA 4 E2B" };
+    $("chat-mode").value = "text";
+    updateChatMode();
     $("auth-section").hidden = !config.auth_required;
     $("record-progress").max = config.recording_seconds;
     if ([...$("language").options].some(o => o.value === config.language)) $("language").value = config.language;
@@ -282,13 +294,13 @@ async function init() {
       tr("ui_extra_0"), !canRecord());
     note("audio-name", tr("ui_extra_1", {v0: config.max_audio_seconds, v1: (config.max_body / 1024 / 1024).toFixed(1)}));
     $("chat-model").addEventListener("change", () => {
-      if ($("chat-model").value === config.llm_model && $("image").files.length) {
-        $("image").value = ""; $("image-preview").hidden = true;
-      }
-      note("chat-note", $("chat-model").value === config.llm_model
-        ? tr("ui_extra_2")
-        : tr("ui_extra_3"));
-      controls();
+      history = []; $("conversation").replaceChildren();
+      if ($("chat-model").value === config.llm_model) $("chat-mode").value = "text";
+      updateChatMode(); controls();
+    });
+    $("chat-mode").addEventListener("change", () => {
+      history = []; $("conversation").replaceChildren();
+      updateChatMode(); controls();
     });
   } catch (error) { note("status-note", tr("ui_extra_4", {v0: error.message}), true); }
   controls();

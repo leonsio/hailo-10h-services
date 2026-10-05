@@ -158,8 +158,10 @@ def install():
 
     @wraps(original_select)
     def select(self, request):
-        if not is_home_assistant_request(request) or request.tool_choice == "none":
+        if request.tool_choice == "none":
             return request
+        if not is_home_assistant_request(request):
+            return self.retrieve_context(request) if request.model == self.settings.vlm_model else request
         language = request.language or detect_language(
             latest_user_text(request.messages), self.settings.service_language
         )
