@@ -25,6 +25,8 @@ _CAPABILITIES = lexicon('ha_prompt_compiler._CAPABILITIES')
 
 _TOOL_CAPABILITY = {
     "homeassistant__GetLiveContext": "state.query",
+    "intent__HassTurnOn": "device.turn_on",
+    "intent__HassTurnOff": "device.turn_off",
     "light__HassLightSet": "light.adjust",
     "climate__HassClimateSetTemperature": "climate.temperature",
     "intent__HassSetPosition": "cover.position",
@@ -42,6 +44,8 @@ _TOOL_CAPABILITY = {
 
 _CAPABILITY_TOOLS = {
     "state.query": {"homeassistant__GetLiveContext"},
+    "device.turn_on": {"intent__HassTurnOn"},
+    "device.turn_off": {"intent__HassTurnOff"},
     "light.brightness": {"light__HassLightSet"},
     "light.color": {"light__HassLightSet"},
     "light.temperature": {"light__HassLightSet"},
@@ -200,11 +204,15 @@ def _semantic_capability(query: str, encoder, embedding_cache):
 
 
 def _capability(query: str, tools, encoder, embedding_cache):
+    tool_caps = {_TOOL_CAPABILITY.get(name) for name in _tool_names(tools)} - {None}
+    action_caps = tool_caps & {"device.turn_on", "device.turn_off"}
+    if len(action_caps) == 1:
+        return next(iter(action_caps)), "selected_tool", None
+
     deterministic = _deterministic_capability(query)
     if deterministic is not None:
         return deterministic, "deterministic", None
 
-    tool_caps = {_TOOL_CAPABILITY.get(name) for name in _tool_names(tools)} - {None}
     if len(tool_caps) == 1:
         return next(iter(tool_caps)), "selected_tool", None
 
