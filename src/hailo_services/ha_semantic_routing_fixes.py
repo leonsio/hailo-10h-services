@@ -17,6 +17,7 @@ from . import ha_routing as _routing
 from .tool_retrieval import _embedding
 
 _SEMANTIC_RELEVANCE_MARGIN = 0.05
+_SEMANTIC_STRONG_RELEVANCE = 0.66
 
 
 def _semantic_ranking(query_text, tools, encoder, embedding_cache):
@@ -124,8 +125,11 @@ def install():
             "semantic_tool_second_name": second_name,
             "semantic_tool_margin": margin,
             "semantic_margin_threshold": _SEMANTIC_RELEVANCE_MARGIN,
+            "semantic_strong_threshold": _SEMANTIC_STRONG_RELEVANCE,
         })
-        if margin < _SEMANTIC_RELEVANCE_MARGIN:
+        if margin < _SEMANTIC_RELEVANCE_MARGIN and best_score < max(
+            _SEMANTIC_STRONG_RELEVANCE, semantic_threshold + _SEMANTIC_RELEVANCE_MARGIN
+        ):
             result["relevant"] = False
             result["reason"] = "semantic_ambiguous"
         return result
