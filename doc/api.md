@@ -98,6 +98,43 @@ resamples to 16 kHz and submits float32 PCM. `response_format=json|text`.
 Default language `de`; explicit two-letter codes supported. No TTS, wake-word
 engine, automatic language detection or audio translation is implemented.
 
+### Request metrics
+
+Successful non-streaming `/v1/chat/completions` JSON responses include a `metrics`
+object. `/v1/audio/transcriptions` includes request timing with `response_format=json`;
+plain text responses retain their existing format. Streaming/WS/MQTT formats are unchanged.
+
+| Metric | Meaning |
+|---|---|
+| `request_id` | Identifier also used in the service log |
+| `requested_at`, `responded_at` | Server UTC timestamps in ISO 8601 with milliseconds |
+| `processing_ms` | Server time from HTTP arrival through upload buffering, parsing, queueing, preparation and inference to JSON response preparation |
+| `inference_ms` | Model generation call duration; excludes earlier request preparation and queueing |
+| `ttft_ms`, `ttft_source` | Native Gemma time to first token, or VLM generation-start to first nonempty text chunk; excludes earlier HTTP/queue time |
+| `input_tokens`, `input_tokens_source` | Gemma native prefill count when available; otherwise the accepted rendered prompt's tokenizer count. VLM uses `tokenizer_text`, excluding image tokens |
+| `output_tokens`, `output_tokens_source` | Native Gemma decode count when available; otherwise output text retokenized using the loaded model's tokenizer (`tokenizer`) |
+| `input_budget_tokens` | Conservative input budget including safety/image reserves; separate from reported token counts |
+| `prefill_tokens_per_second`, `decode_tokens_per_second` | Native Gemma throughput, when exposed by LiteRT-LM |
+
+Unavailable metrics are omitted, never inferred from character or chunk counts.
+LiteRT benchmark collection is enabled independently of debug logging, with a
+fallback for older bindings that do not accept `enable_benchmark`. A non-streaming
+response includes OpenAI-style `usage` only when both token counts are available;
+their provenance is described in `metrics`. Retokenized text counts can differ
+from native generation counts, and VLM text counts do not represent image tokens.
+
+The playground displays measurements beside each request, including failed ones,
+and retains separate transcript/measurement entries for Whisper. Its browser timer
+also includes network transfer and JSON decoding. Browser timestamps use the local
+timezone with milliseconds; server timestamps are displayed separately to reveal
+clock differences. Pending requests show an updating timer. TTFT unavailable from
+the model is shown as unavailable; the complete HTTP response time is never used
+as a substitute. Switching models or chat modes retains the displayed chat and
+text history; Gemma requests strip image parts while retaining their text, and the
+original image parts remain available for later VLM requests. The UI sends up to
+31 recent messages while keeping the full visible history. The model's existing
+input budget may trim older context independently of the visible history.
+
 ### WebSocket and MQTT
 
 WebSocket request (`Authorization` header on the handshake):

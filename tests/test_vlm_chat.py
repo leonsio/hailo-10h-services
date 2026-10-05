@@ -290,3 +290,28 @@ def test_http_oversized_plain_text_does_not_reach_native_generation():
         assert response.status_code == 400
         assert response.json()['error']['code'] == 'input_token_limit_exceeded'
         assert not b.vlm.calls
+
+
+def test_vlm_http_metrics_survive_prompt_copy_and_are_isolated_per_request():
+    import re
+
+    b = backend(text='Hello world')
+    with TestClient(create_app(b.settings, b)) as client:
+        payload = {'model': b.settings.vlm_model, 'messages': [{'role': 'user', 'content': 'Hallo'}]}
+        first = client.post('/v1/chat/completions', json=payload).json()
+        metrics = first['metrics']
+        assert metrics['input_tokens_source'] == 'tokenizer_text'
+        assert metrics['output_tokens'] == 2
+        assert metrics['output_tokens_source'] == 'tokenizer'
+        assert metrics['input_budget_tokens'] > metrics['input_tokens']
+        assert 0 <= metrics['ttft_ms'] <= metrics['inference_ms'] <= metrics['processing_ms']
+        assert metrics['ttft_source'] == 'first_text_chunk'
+        assert first['usage']['completion_tokens'] == 2
+        for key in ('requested_at', 'responded_at'):
+            assert re.search(r'\d{2}:\d{2}:\d{2}\.\d{3}\+00:00$', metrics[key])
+        b.vlm.text = ''
+        second = client.post('/v1/chat/completions', json=payload).json()['metrics']
+        assert second['request_id'] != metrics['request_id']
+        assert second['output_tokens'] == 0
+        assert 'ttft_ms' not in second
+        assert metrics['output_tokens'] == 2

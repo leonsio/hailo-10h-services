@@ -21,6 +21,7 @@ import time
 from functools import wraps
 
 from .i18n import t
+from .metrics import record
 
 _LOG = logging.getLogger(__name__)
 _REQUEST = threading.local()
@@ -182,7 +183,7 @@ def _benchmark(conversation, *, enabled):
 
 
 def _log_timing(backend, conversation, *, wall_ms, create_call_ms, enter_ms, first_chunk_ms=None):
-    benchmark = _benchmark(conversation, enabled=bool(getattr(backend, "debug_log", False)))
+    benchmark = _benchmark(conversation, enabled=True)
     prefill_ms = benchmark.get("prefill_ms_estimate")
     decode_ms = benchmark.get("decode_ms_estimate")
     accounted = sum(value for value in (prefill_ms, decode_ms) if isinstance(value, (int, float)))
@@ -196,6 +197,22 @@ def _log_timing(backend, conversation, *, wall_ms, create_call_ms, enter_ms, fir
         "wall_minus_native_ms": max(0.0, wall_ms - accounted) if benchmark.get("available") else None,
     }
     request_id = getattr(_REQUEST, "request_id", "-")
+    metrics = getattr(_REQUEST, "metrics", None)
+    if metrics is not None:
+        record(metrics, inference_ms=wall_ms,
+               conversation_create_ms=create_call_ms, conversation_enter_ms=enter_ms,
+               ttft_ms=benchmark.get("time_to_first_token_ms"),
+               prefill_tokens_per_second=benchmark.get("prefill_tokens_per_second"),
+               decode_tokens_per_second=benchmark.get("decode_tokens_per_second"),
+               prefill_ms_estimate=prefill_ms, decode_ms_estimate=decode_ms)
+        if benchmark.get("time_to_first_token_ms") is not None:
+            metrics["ttft_source"] = "native"
+        elif first_chunk_ms is not None:
+            record(metrics, ttft_ms=first_chunk_ms, ttft_source="first_text_chunk")
+        for target, source in (("input_tokens", "prefill_tokens"), ("output_tokens", "decode_tokens")):
+            value = benchmark.get(source)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                record(metrics, **{target: value, target + "_source": "native"})
     _LOG.info(
         "gemma_timing request_id=%s wall_ms=%.1f ttft_ms=%s prefill_tokens=%s "
         "prefill_tps=%s prefill_ms=%s decode_tokens=%s decode_tps=%s decode_ms=%s "
@@ -277,7 +294,8 @@ class _ConversationProxy:
             first_chunk_ms = None
             try:
                 for chunk in iterator:
-                    if first_chunk_ms is None:
+                    text = self._backend._chunk_text(chunk)
+                    if first_chunk_ms is None and text:
                         first_chunk_ms = (time.perf_counter() - started) * 1000.0
                     yield chunk
             finally:
@@ -339,12 +357,12 @@ def instrument_engine(backend):
 
 
 def _start_with_benchmark(self, original_start, *args, **kwargs):
-    """Enable LiteRT native benchmark collection during debug startup.
+    """Enable LiteRT native benchmark collection for API and WebGUI diagnostics.
 
     ``LiteRTLMBackend.start`` owns engine construction in :mod:`runtime`. Keep
     that implementation as the single source of truth and temporarily decorate
     the public ``litert_lm.Engine`` constructor so the native benchmark option
-    is injected only for debug startup. Startup is serialized before request
+    is injected with a fallback for older bindings. Startup is serialized before request
     handling begins, and the constructor is restored immediately afterwards.
     """
     import litert_lm
@@ -353,9 +371,14 @@ def _start_with_benchmark(self, original_start, *args, **kwargs):
 
     @wraps(original_engine)
     def engine_with_diagnostics(*engine_args, **engine_kwargs):
-        if getattr(self, "debug_log", False):
-            engine_kwargs.setdefault("enable_benchmark", True)
-        return original_engine(*engine_args, **engine_kwargs)
+        engine_kwargs.setdefault("enable_benchmark", True)
+        try:
+            return original_engine(*engine_args, **engine_kwargs)
+        except TypeError as exc:
+            if "enable_benchmark" not in str(exc):
+                raise
+            engine_kwargs.pop("enable_benchmark", None)
+            return original_engine(*engine_args, **engine_kwargs)
 
     litert_lm.Engine = engine_with_diagnostics
     try:
@@ -406,10 +429,13 @@ def install():
             return fast["text"]
 
         previous = getattr(_REQUEST, "request_id", None)
+        previous_metrics = getattr(_REQUEST, "metrics", None)
         _REQUEST.request_id = request_id
+        _REQUEST.metrics = request._metrics
         try:
             return original_chat(self, request, emit, cancelled, tools_prepared)
         finally:
+            _REQUEST.metrics = previous_metrics
             if previous is None:
                 try:
                     del _REQUEST.request_id

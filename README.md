@@ -65,6 +65,14 @@ See [LXC setup and command example](doc/installation.md#proxmox-lxc-on-arm64).
 - Wyoming STT: port **10300**, the selected multilingual Whisper model.
 - MCP `/mcp`, WebSocket `/ws`, MQTT and HTTPS are supported.
 
+The playground keeps the visible chat and its text context when switching models
+or chat modes. Gemma receives text without image attachments; images stay in the
+visible history and remain available to the VLM. **New chat** clears the history.
+Every chat/transcription request shows timestamps with milliseconds, a live timer
+and its final browser/server duration. Available model metrics include input/output
+tokens, TTFT and Gemma prefill/decode speed. Missing values are marked unavailable;
+native counts and tokenizer counts are labeled separately. See [metric definitions](doc/api.md#request-metrics).
+
 ### API endpoint overview
 
 | Protocol | Endpoint / port | VLM | LLM | Whisper |

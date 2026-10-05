@@ -131,7 +131,8 @@ def test_http_ws_audio_and_resident_owner():
             files={"file": ("voice.wav", wav(48000, 2))},
             data={"language": "de"},
         )
-        assert response.json() == {"text": "Hallo Welt"}
+        assert response.json()["text"] == "Hallo Welt"
+        assert response.json()["metrics"]["processing_ms"] >= 0
         assert backend.calls[-1][0].dtype == np.dtype("<f4")
         assert len(backend.calls[-1][0]) == 1600
         with client.websocket_connect("/ws") as ws:
@@ -242,7 +243,8 @@ def test_litert_backend_uses_python_engine_and_preserves_chat_history(tmp_path, 
         ],
     )
     assert backend.chat(request) == "Antwort"
-    assert calls["engine"] == (str(model), {"backend": "cpu", "max_num_tokens": 16384})
+    assert calls["engine"] == (str(model), {"backend": "cpu", "max_num_tokens": 16384,
+                                           "enable_benchmark": True})
     assert calls["conversation"]["messages"] == [
         {"role": "system", "content": "Sei knapp."},
         {"role": "user", "content": "Hi"},
@@ -349,7 +351,7 @@ def test_playground_public_assets_keep_inference_authenticated():
         assert client.post(
             "/v1/audio/transcriptions", files={"file": ("aufnahme.wav", wav(48000))},
             data={"model": "whisper-base", "language": "de"}, headers=headers,
-        ).json() == {"text": "Hallo Welt"}
+        ).json()["text"] == "Hallo Welt"
 
 
 def test_playground_config_without_key():

@@ -162,5 +162,96 @@ test('Selected Qwen3 is shown with text-only mode, input limit and no image uplo
   p.elements['chat-mode'].value = 'vision';
   p.elements['chat-mode'].events.change();
   assert.equal(p.elements.image.disabled, false);
-  assert.equal(p.run('history.length'), 0);
+  assert.equal(p.run('history.length'), 2);
+});
+
+function contents(element) {
+  return [element.textContent || '', ...element.children.map(contents)].join(' ');
+}
+
+test('Per-request metrics show millisecond timestamps, measured duration and native usage', async () => {
+  const p = page(); await p.ready();
+  const NativeDate = Date; let dateIndex = 0;
+  p.context.Date = class extends NativeDate {
+    constructor(...args) { super(...(args.length ? args : [Date.UTC(2026, 9, 5, 20, 0, 0, 123) + dateIndex++ * 1250])); }
+  };
+  let clock = 0; p.context.performance = { now: () => clock++ * 1250 };
+  p.context.fetch = async () => ({ok: true, json: async () => ({
+    choices: [{message: {content: 'Antwort'}}], usage: {prompt_tokens: 900, completion_tokens: 30},
+    metrics: {processing_ms: 1200, inference_ms: 1100, ttft_ms: 350, ttft_source: 'native',
+      input_tokens: 900, input_tokens_source: 'native', output_tokens: 30, output_tokens_source: 'native',
+      decode_tokens_per_second: 15},
+  })});
+  p.elements.prompt.value = 'Hallo';
+  await p.elements['chat-form'].events.submit({preventDefault() {}});
+  const text = contents(p.elements.conversation.children[0]);
+  assert.match(text, /[.,]123/); assert.match(text, /[.,]373/);
+  assert.match(text, /1\.250 s/); assert.match(text, /1\.200 s/);
+  assert.match(text, /0\.350 s/); assert.match(text, /900 · Modell/);
+  assert.match(text, /30 · Modell/); assert.match(text, /15\.00 token\/s/);
+});
+
+test('Unknown usage and TTFT stay unavailable; failed requests retain measured diagnostics', async () => {
+  const p = page(); await p.ready(); p.elements.prompt.value = 'Hallo';
+  await p.elements['chat-form'].events.submit({preventDefault() {}});
+  assert.match(contents(p.elements.conversation.children[0]), /nicht verfügbar/);
+  p.context.fetch = async () => { throw new Error('offline'); };
+  p.elements.prompt.value = 'Noch einmal';
+  await p.elements['chat-form'].events.submit({preventDefault() {}});
+  const failed = p.elements.conversation.children[2];
+  assert.equal(failed.removed, undefined);
+  assert.match(contents(failed), /Anfrage fehlgeschlagen: offline/);
+  assert.equal(p.run('history.length'), 2);
+});
+
+test('Model switches retain visible chat and text context; Gemma excludes images without erasing them', async () => {
+  const p = page({llm_model: 'gemma-4-E2B-it'}); await p.ready();
+  p.elements.prompt.value = 'Erste Frage';
+  await p.elements['chat-form'].events.submit({preventDefault() {}});
+  p.run('history[0].content = [{type: "text", text: "Erste Frage"}, {type: "image_url", image_url: {url: "data:image/png;base64,AA=="}}]');
+  p.elements['chat-model'].value = 'gemma-4-E2B-it';
+  p.elements['chat-model'].events.change();
+  assert.equal(p.elements.conversation.children.length, 2);
+  assert.equal(p.run('history.length'), 2);
+  p.elements.prompt.value = 'Zweite Frage';
+  await p.elements['chat-form'].events.submit({preventDefault() {}});
+  const calls = p.calls.filter(c => c.url === 'v1/chat/completions');
+  const second = JSON.parse(calls[1].options.body);
+  assert.equal(second.messages.length, 3);
+  assert.equal(second.messages[0].content, 'Erste Frage');
+  assert.equal(second.model, 'gemma-4-E2B-it');
+  assert.equal(p.run('history[0].content[1].type'), 'image_url');
+  p.elements['chat-model'].value = 'Qwen2-VL-2B-Instruct';
+  p.elements['chat-model'].events.change();
+  assert.equal(p.elements.conversation.children.length, 4);
+  p.elements.prompt.value = 'Dritte Frage';
+  await p.elements['chat-form'].events.submit({preventDefault() {}});
+  const third = JSON.parse(p.calls.filter(c => c.url === 'v1/chat/completions')[2].options.body);
+  assert.equal(third.messages[0].content[1].type, 'image_url');
+  assert.equal(p.elements.conversation.children.length, 6);
+  p.elements['clear-chat'].events.click();
+  assert.equal(p.run('history.length'), 0); assert.equal(p.elements.conversation.children.length, 0);
+});
+
+test('Repeated Whisper requests retain transcripts and individual metrics', async () => {
+  const p = page(); await p.ready(); p.run('setAudio(new Blob(["wav"]), "test.wav")');
+  await p.elements.transcribe.events.click(); await p.elements.transcribe.events.click();
+  assert.equal(p.elements['transcription-history'].children.length, 2);
+  for (const item of p.elements['transcription-history'].children) {
+    assert.match(contents(item), /Hallo Welt/); assert.match(contents(item), /Gesamtdauer/);
+  }
+});
+
+test('Long chats keep all visible requests while sending bounded recent context', async () => {
+  const p = page(); await p.ready();
+  for (let i = 0; i < 18; i++) {
+    p.elements.prompt.value = `Frage ${i}`;
+    await p.elements['chat-form'].events.submit({preventDefault() {}});
+  }
+  assert.equal(p.elements.conversation.children.length, 36);
+  assert.equal(p.run('history.length'), 36);
+  const last = JSON.parse(p.calls.filter(c => c.url === 'v1/chat/completions').at(-1).options.body);
+  assert.equal(last.messages.length, 31);
+  assert.equal(last.messages[0].role, 'user');
+  assert.equal(last.messages.at(-1).content, 'Frage 17');
 });

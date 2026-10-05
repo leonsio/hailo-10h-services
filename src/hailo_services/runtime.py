@@ -4,12 +4,14 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .config import LLM_MODEL, Settings
 from .input_budget import InputBudgetError, history_candidates
 from .media import image_frame
+from .metrics import count_output, record
 from .minilm import MiniLM
 from .models import ModelManager, prepare_model_version
 from .tool_calling import (
@@ -136,6 +138,8 @@ class HailoBackend:
             "max_input_tokens": self.settings.vlm_max_input_tokens,
         }, request_id=request._request_id)
         output = []
+        started = time.perf_counter()
+        first_chunk_ms = None
         # Clear only KV context, never unload the model weights.
         try:
             model.clear_context()
@@ -155,10 +159,17 @@ class HailoBackend:
                         break
                     chunk = chunk.replace("<|im_end|>", "")
                     if chunk:
+                        if first_chunk_ms is None:
+                            first_chunk_ms = (time.perf_counter() - started) * 1000
                         output.append(chunk)
                         if emit and not has_tool_context(request):
                             emit(chunk)
-            result = tool_response("".join(output).strip(), request)
+            raw_output = "".join(output).strip()
+            record(request._metrics, inference_ms=(time.perf_counter() - started) * 1000,
+                   ttft_ms=first_chunk_ms,
+                   ttft_source="first_text_chunk" if first_chunk_ms is not None else None)
+            count_output(request._metrics, getattr(model, "tokenize", None), raw_output)
+            result = tool_response(raw_output, request)
             if emit and has_tool_context(request):
                 emit(result)
             return result
@@ -425,6 +436,8 @@ class LiteRTLMBackend:
                 request_id=getattr(request, "_request_id", "-"),
             )
             if tokens <= limit:
+                record(trimmed._metrics, input_tokens=raw_tokens, input_tokens_source="tokenizer",
+                       input_budget_tokens=tokens, removed_messages=len(request.messages) - len(candidate))
                 _LOG.info(
                     "input_budget model=%s input_tokens=%d limit=%d max_input_tokens=%d "
                     "removed_messages=%d output_reserved=%d",
@@ -551,6 +564,8 @@ class LiteRTLMBackend:
                 response = conversation.send_message(
                     prompt, max_output_tokens=request.max_tokens
                 )
+                count_output(request._metrics, getattr(self.engine, "tokenize", None),
+                             self._chunk_text(response))
                 result = response_message(response, request, self._chunk_text(response).strip())
                 _debug_json(
                     self.debug_log,
@@ -578,6 +593,7 @@ class LiteRTLMBackend:
                     output.append(text)
                     emit(text)
             result = "".join(output).strip()
+            count_output(request._metrics, getattr(self.engine, "tokenize", None), result)
             _debug_json(
                 self.debug_log,
                 "gemma_stream_response",

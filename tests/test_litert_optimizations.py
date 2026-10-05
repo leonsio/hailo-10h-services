@@ -179,7 +179,7 @@ def test_debug_start_enables_native_litert_benchmark(monkeypatch, tmp_path):
         backend.close()
 
 
-def test_non_debug_start_keeps_legacy_engine_arguments(monkeypatch, tmp_path):
+def test_non_debug_start_enables_native_metrics_for_webgui(monkeypatch, tmp_path):
     model = tmp_path / "gemma.litertlm"
     model.write_bytes(b"fake")
     captured = {}
@@ -203,6 +203,51 @@ def test_non_debug_start_keeps_legacy_engine_arguments(monkeypatch, tmp_path):
     backend = LiteRTLMBackend(model, max_num_tokens=4096, debug_log=False)
     backend.start()
     try:
-        assert "enable_benchmark" not in captured["kwargs"]
+        assert captured["kwargs"]["enable_benchmark"] is True
     finally:
         backend.close()
+
+
+def test_metrics_collected_without_debug_and_native_counts_override_tokenizer(monkeypatch):
+    from hailo_services.litert_optimizations import _REQUEST, _log_timing
+
+    metrics = {"input_tokens": 20, "input_tokens_source": "tokenizer"}
+    monkeypatch.setattr(_REQUEST, "metrics", metrics, raising=False)
+    _log_timing(SimpleNamespace(debug_log=False), FakeConversation(),
+                wall_ms=5100, create_call_ms=10, enter_ms=20)
+    assert metrics["input_tokens"] == 900
+    assert metrics["input_tokens_source"] == "native"
+    assert metrics["output_tokens"] == 30
+    assert metrics["ttft_ms"] == 350
+    assert metrics["ttft_source"] == "native"
+    assert metrics["inference_ms"] == 5100
+    assert metrics["decode_tokens_per_second"] == 15
+
+
+def test_legacy_benchmark_absent_does_not_invent_ttft_or_counts(monkeypatch):
+    from hailo_services.litert_optimizations import _REQUEST, _log_timing
+
+    metrics = {}
+    monkeypatch.setattr(_REQUEST, "metrics", metrics, raising=False)
+    _log_timing(SimpleNamespace(debug_log=False), object(),
+                wall_ms=50, create_call_ms=1, enter_ms=2)
+    assert "ttft_ms" not in metrics
+    assert "input_tokens" not in metrics
+    assert "output_tokens" not in metrics
+    assert metrics["inference_ms"] == 50
+
+
+def test_old_engine_without_enable_benchmark_still_starts(monkeypatch):
+    from hailo_services.litert_optimizations import _start_with_benchmark
+
+    def old_engine(path, *, backend, max_num_tokens):
+        return (path, backend, max_num_tokens)
+
+    fake_module = SimpleNamespace(Engine=old_engine)
+    monkeypatch.setitem(sys.modules, 'litert_lm', fake_module)
+
+    def original_start(backend):
+        return fake_module.Engine('model', backend='cpu', max_num_tokens=4096)
+
+    assert _start_with_benchmark(SimpleNamespace(debug_log=False), original_start) == ('model', 'cpu', 4096)
+    assert fake_module.Engine is old_engine

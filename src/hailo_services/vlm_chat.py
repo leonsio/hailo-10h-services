@@ -101,7 +101,8 @@ def limit_request(model, request, configured_limit, context_length, *, debug=Fal
         prompt = model_prompt(trimmed)
         rendered = render_prompt(model, prompt)
         images = sum(part["type"] == "image" for m in prompt for part in m["content"])
-        tokens = len(tokenize(rendered)) + _TEMPLATE_MARGIN + images * _IMAGE_TOKEN_RESERVE
+        raw_tokens = len(tokenize(rendered))
+        tokens = raw_tokens + _TEMPLATE_MARGIN + images * _IMAGE_TOKEN_RESERVE
         if debug:
             _LOG.debug("event=vlm_input_budget request_id=%s json=%s", request._request_id, json.dumps({
                 "model": request.model, "input_tokens": tokens, "input_limit": limit,
@@ -110,6 +111,11 @@ def limit_request(model, request, configured_limit, context_length, *, debug=Fal
                 "accepted": tokens <= limit, "rendered_prompt": rendered,
             }, ensure_ascii=False))
         if tokens <= limit:
+            from .metrics import record
+
+            record(trimmed._metrics, input_tokens=raw_tokens, input_tokens_source="tokenizer_text",
+                   input_budget_tokens=tokens, images=images,
+                   removed_messages=len(request.messages) - len(candidate))
             _LOG.info("input_budget model=%s input_tokens=%d limit=%d removed_messages=%d output_reserved=%d",
                       request.model, tokens, limit, len(request.messages) - len(candidate), request.max_tokens)
             return trimmed, prompt

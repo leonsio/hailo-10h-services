@@ -27,6 +27,7 @@ from .config import LLM_MODEL, STT_MODEL, Settings
 from .i18n import SUPPORTED_LANGUAGES, catalogue, wait_sentence
 from .input_budget import InputBudgetError
 from .media import audio_file, audio_metadata, decode_base64
+from .metrics import response_metrics, timestamp
 from .models import ModelManager
 from .protocols import LANGUAGES, MQTTBridge, WyomingServer, dispatch
 from .runtime import BusyError, LiteRTInferenceError, Runtime
@@ -62,6 +63,7 @@ class AccessAndSizeLimit:
         request_id = uuid.uuid4().hex[:12]
         scope.setdefault("state", {})["request_id"] = request_id
         started = time.perf_counter()
+        scope["state"].update(request_started=started, requested_at=timestamp())
         headers = dict(scope.get("headers", []))
         path = scope.get("path", "-")
         method = scope.get("method", "WEBSOCKET")
@@ -393,7 +395,16 @@ def create_app(settings=None, backend=None, litert_backend=None):
                 request.model_dump_json(exclude_none=False),
             )
         if not request.stream:
-            return completion(await runtime.chat(request), identifier, created, request.model)
+            result = completion(await runtime.chat(request), identifier, created, request.model)
+            result["metrics"] = response_metrics(request._metrics, http_request.scope["state"])
+            counts = request._metrics
+            if "input_tokens" in counts and "output_tokens" in counts:
+                result["usage"] = {
+                    "prompt_tokens": counts["input_tokens"],
+                    "completion_tokens": counts["output_tokens"],
+                    "total_tokens": counts["input_tokens"] + counts["output_tokens"],
+                }
+            return result
 
         async def events():
             def event(delta, finish=None):
@@ -496,7 +507,9 @@ def create_app(settings=None, backend=None, litert_backend=None):
                request.scope.get("state", {}).get("request_id", "-"), model,
                language or settings.language, metadata, len(data))
         text = await runtime.transcribe(audio_file(data, settings.max_audio_seconds), language)
-        return PlainTextResponse(text) if response_format == "text" else {"text": text}
+        return PlainTextResponse(text) if response_format == "text" else {
+            "text": text, "metrics": response_metrics({}, request.scope["state"]),
+        }
 
     @app.websocket("/ws")
     async def websocket(ws: WebSocket):

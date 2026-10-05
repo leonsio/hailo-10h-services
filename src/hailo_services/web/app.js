@@ -61,6 +61,69 @@ async function request(path, options = {}) {
   }
   return data;
 }
+function preciseTime(date) {
+  return new Intl.DateTimeFormat(uiLanguage, {
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+    second: "2-digit", fractionalSecondDigits: 3, timeZoneName: "short", hour12: false,
+  }).format(date);
+}
+function duration(ms) {
+  return typeof ms === "number" && Number.isFinite(ms) && ms >= 0
+    ? `${(ms / 1000).toFixed(3)} s (${ms.toFixed(1)} ms)` : tr("metrics.unavailable");
+}
+function renderMeasurement(node, timing, data = {}, error = null) {
+  const metrics = data.metrics || {}, usage = data.usage || {};
+  const token = (kind, fallback) => {
+    const value = metrics[`${kind}_tokens`] ?? fallback;
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return tr("metrics.unavailable");
+    const source = metrics[`${kind}_tokens_source`];
+    return `${value}${source ? ` · ${tr(`metrics.source.${source}`)}` : ""}`;
+  };
+  const rows = [
+    ["requested", preciseTime(timing.requested)],
+    ["responded", timing.responded ? preciseTime(timing.responded) : tr("metrics.pending")],
+    ["elapsed", duration(timing.elapsed)],
+    ["processing", duration(metrics.processing_ms)],
+    ["inference", duration(metrics.inference_ms)],
+    ["ttft", duration(metrics.ttft_ms) + (metrics.ttft_source ? ` · ${tr(`metrics.source.${metrics.ttft_source}`)}` : "")],
+    ["input", token("input", usage.prompt_tokens)],
+    ["output", token("output", usage.completion_tokens)],
+  ];
+  for (const [key, value] of [["prefill_tps", metrics.prefill_tokens_per_second], ["decode_tps", metrics.decode_tokens_per_second]]) {
+    if (typeof value === "number" && Number.isFinite(value)) rows.push([key, `${value.toFixed(2)} token/s`]);
+  }
+  for (const [key, value] of [["server_requested", metrics.requested_at], ["server_responded", metrics.responded_at]]) {
+    if (value && Number.isFinite(Date.parse(value))) rows.push([key, preciseTime(new Date(value))]);
+  }
+  if (metrics.request_id) rows.push(["request_id", metrics.request_id]);
+  const list = document.createElement("dl");
+  for (const [key, value] of rows) {
+    const label = document.createElement("dt"), content = document.createElement("dd");
+    label.textContent = tr(`metrics.${key}`); content.textContent = value;
+    list.append(label, content);
+  }
+  node.replaceChildren(list);
+  if (error) {
+    const content = document.createElement("p"); content.className = "error";
+    content.textContent = `${tr("metrics.failed")}: ${error.message}`; node.append(content);
+  }
+}
+async function measuredRequest(path, options, parent) {
+  const node = document.createElement("div"); node.className = "request-metrics";
+  parent.append(node);
+  const timing = { requested: new Date(), elapsed: 0 }, start = performance.now();
+  renderMeasurement(node, timing);
+  const timer = setInterval(() => {
+    timing.elapsed = performance.now() - start; renderMeasurement(node, timing);
+  }, 100);
+  let data, failure;
+  try { data = await request(path, options); return data; }
+  catch (error) { failure = error; throw error; }
+  finally {
+    clearInterval(timer); timing.responded = new Date(); timing.elapsed = performance.now() - start;
+    renderMeasurement(node, timing, data, failure);
+  }
+}
 function canRecord() {
   return window.isSecureContext && navigator.mediaDevices?.getUserMedia && window.AudioContext && window.AudioWorkletNode;
 }
@@ -133,23 +196,26 @@ $("chat-form").addEventListener("submit", async (event) => {
     if (file && file.size * 4 / 3 > config.max_body - 1024) throw new Error(tr("ui_14"));
     const image = file ? await readImage(file) : null;
     const content = image ? [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: image } }] : prompt;
-    const messages = [...history, { role: "user", content }];
-    if (messages.length > 31) throw new Error(tr("ui_15"));
+    const originalMessages = [...history, { role: "user", content }];
+    const recentMessages = originalMessages.slice(-31);
+    const messages = model === config.llm_model ? recentMessages.map(message => ({
+      ...message, content: Array.isArray(message.content)
+        ? message.content.filter(part => part.type === "text").map(part => part.text).join("\n") : message.content,
+    })) : recentMessages;
     const images = messages.flatMap(m => Array.isArray(m.content) ? m.content : []).filter(p => p.type === "image_url");
     if (images.length > (config.vlm_max_images || 4)) throw new Error(tr("ui.image_limit", {limit: config.vlm_max_images || 4}));
     const body = JSON.stringify({ model, messages, language: uiLanguage, max_tokens: Number($("max-tokens").value) });
     if (new Blob([body]).size > config.max_body) throw new Error(tr("ui_17"));
     userNode = bubble("user", prompt, image);
-    const start = performance.now();
-    const data = await request("v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json" }, body });
+    const data = await measuredRequest("v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json" }, body }, userNode);
     const text = data.choices?.[0]?.message?.content;
     if (typeof text !== "string") throw new Error(tr("ui_18"));
-    history = [...messages, { role: "assistant", content: text }];
+    history = [...originalMessages, { role: "assistant", content: text }];
     bubble("assistant", text); $("prompt").value = ""; $("image").value = "";
     $("image-preview").hidden = true;
     if (imageURL) URL.revokeObjectURL(imageURL); imageURL = null;
-    note("chat-note", tr("ui_19", {v0: ((performance.now() - start) / 1000).toFixed(1)}));
-  } catch (error) { userNode?.remove(); note("chat-note", error.message, true); }
+    note("chat-note", tr("metrics.complete"));
+  } catch (error) { note("chat-note", error.message, true); }
   finally { chatBusy = false; controls(); }
 });
 $("clear-chat").addEventListener("click", () => {
@@ -248,10 +314,13 @@ $("transcribe").addEventListener("click", async () => {
   try {
     const form = new FormData(); form.append("file", audioBlob, audioName); form.append("model", config.whisper_model);
     if ($("language").value) form.append("language", $("language").value);
-    const start = performance.now();
-    const data = await request("v1/audio/transcriptions", { method: "POST", body: form });
+    const entry = document.createElement("article"), title = document.createElement("strong");
+    title.textContent = `${config.whisper_model} · ${audioName}`; entry.append(title);
+    $("transcription-history").append(entry);
+    const data = await measuredRequest("v1/audio/transcriptions", { method: "POST", body: form }, entry);
     $("transcript").value = data.text;
-    note("whisper-note", tr("ui_31", {v0: ((performance.now() - start) / 1000).toFixed(1)}));
+    const text = document.createElement("p"); text.textContent = data.text; entry.append(text);
+    note("whisper-note", tr("metrics.complete"));
   } catch (error) { note("whisper-note", error.message, true); }
   finally { audioBusy = false; controls(); }
 });
@@ -294,12 +363,10 @@ async function init() {
       tr("ui_extra_0"), !canRecord());
     note("audio-name", tr("ui_extra_1", {v0: config.max_audio_seconds, v1: (config.max_body / 1024 / 1024).toFixed(1)}));
     $("chat-model").addEventListener("change", () => {
-      history = []; $("conversation").replaceChildren();
       if ($("chat-model").value === config.llm_model) $("chat-mode").value = "text";
       updateChatMode(); controls();
     });
     $("chat-mode").addEventListener("change", () => {
-      history = []; $("conversation").replaceChildren();
       updateChatMode(); controls();
     });
   } catch (error) { note("status-note", tr("ui_extra_4", {v0: error.message}), true); }
