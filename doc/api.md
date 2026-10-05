@@ -135,6 +135,56 @@ original image parts remain available for later VLM requests. The UI sends up to
 31 recent messages while keeping the full visible history. The model's existing
 input budget may trim older context independently of the visible history.
 
+### Text performance benchmark
+
+`scripts/benchmark-text.py` sends ten self-contained German text questions to
+the configured Gemma LLM and Qwen VLM, with no images or function tools. Tasks
+progress from arithmetic and translation through extraction, summarization,
+debugging, scheduling, deduction and constrained optimization. Each question
+gets one LLM response and one VLM response; previous answers are not sent as context.
+
+```bash
+python3 scripts/benchmark-text.py \
+  --url http://192.168.1.9:8090 \
+  --api-key 'YOUR_API_KEY'
+```
+
+The script uses only the Python 3.10+ standard library. `--url` also accepts a
+trailing `/v1`. It resolves both model IDs from `/ui/config` and checks availability
+through `/v1/models` before inference. `--api-key` takes precedence over the optional
+`HAILO_API_KEY`/`HAILO_KEY` environment values. The key is not saved in reports.
+
+| Option | Default / purpose |
+|---|---|
+| `--llm-model`, `--vlm-model` | Override the IDs detected from the service |
+| `--max-tokens` | 256 output tokens per model, configurable from 1 to 1024 |
+| `--max-input-tokens` | Omitted by default; existing model limits apply. May lower the limit |
+| `--temperature`, `--seed` | 0.0 and 42, identical for both models |
+| `--timeout` | 240 seconds per HTTP request; the service has its own timeout |
+| `--warmup` | An additional unscored request per model before the 20 measured requests |
+| `--output-dir` | Default `benchmark-results/TIMESTAMP`; contains `comparison.html` and `results.json` |
+| `--ca-file` | Certificate/CA file for HTTPS |
+| `--insecure` | Skip certificate verification for a local self-signed HTTPS setup |
+
+Requests run sequentially; the model called first alternates for each question.
+The terminal and HTML report display answers and metrics side by side. JSON
+preserves request settings, answers, finish reason and full returned metrics.
+The reports are updated after each response, retaining progress on interruption.
+On a client timeout or HTTP 504, the run stops with partial results because native
+model work may still be active and would distort subsequent measurements. A failed
+warm-up also stops the run; ordinary per-question HTTP errors are recorded and the
+remaining comparisons continue.
+Client timestamps are UTC with milliseconds and elapsed times use a monotonic
+clock. Total client time includes transfer and JSON parsing. Native token counts,
+tokenizer counts and missing values retain their provenance; TTFT is never
+estimated from a complete non-streaming response. `finish_reason=length` indicates
+the output limit was reached. Reference answers are only included for manual
+review, not submitted to either model. A mixed-task median describes these ten
+tasks, not a general model speed; other workloads affect the measurements.
+Exit codes: 0 = all comparisons succeeded; 1 = at least one inference failed;
+2 = setup/report error; 130 = interrupted. This is an execution script, not a
+stored set of measured results: run it against the real service to obtain hardware timings.
+
 ### WebSocket and MQTT
 
 WebSocket request (`Authorization` header on the handshake):

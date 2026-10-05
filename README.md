@@ -73,6 +73,23 @@ and its final browser/server duration. Available model metrics include input/out
 tokens, TTFT and Gemma prefill/decode speed. Missing values are marked unavailable;
 native counts and tokenizer counts are labeled separately. See [metric definitions](doc/api.md#request-metrics).
 
+### Text performance comparison: LLM vs VLM
+
+Run ten German questions from simple arithmetic through reasoning and optimization
+against both configured models, with identical settings and independent contexts:
+
+```bash
+python3 scripts/benchmark-text.py --url http://127.0.0.1:8090 --api-key 'YOUR_API_KEY'
+```
+
+The script requires only Python 3.10+ and prints each pair of answers and metrics
+side by side. It also saves `comparison.html` and `results.json` in a timestamped
+folder under `benchmark-results/`, updating them after every request. Model IDs
+come from `/ui/config` and `/v1/models`; you can override them with `--llm-model`
+and `--vlm-model`. Add `--warmup` for an excluded warm-up call per model, or
+`--max-tokens 512` for longer answers. API keys are not included in reports.
+See [benchmark options and measurement notes](doc/api.md#text-performance-benchmark).
+
 ### API endpoint overview
 
 | Protocol | Endpoint / port | VLM | LLM | Whisper |

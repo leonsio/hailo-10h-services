@@ -12,3 +12,4 @@ dist/
 /deploy/vendor/*.whl
 /deploy/hailo-10h-services.yaml
 /compose.env
+/benchmark-results/
