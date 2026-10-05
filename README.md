@@ -42,6 +42,21 @@ a configured but unavailable Gemma never silently falls back to another model.
 - Wyoming STT: port **10300**, the selected multilingual Whisper model.
 - MCP `/mcp`, WebSocket `/ws`, MQTT and HTTPS are supported.
 
+### API endpoint overview
+
+| Protocol | Endpoint / port | VLM | LLM | Whisper |
+|---|---|---|---|---|
+| OpenAI-style HTTP | `:8090/v1/chat/completions` | Text, images, SSE | Text, SSE, function tools | — |
+| OpenAI-style HTTP | `:8090/v1/audio/transcriptions` | — | — | File upload |
+| Models / readiness | `/v1/models`, `/health` | Model status | Model status | Model status |
+| WebSocket | `ws://HOST:8090/ws` | `chat` | `chat` | `transcribe` |
+| MCP Streamable HTTP | `http://HOST:8090/mcp/` | `analyze_image`, `chat_text` | `chat_text` | `transcribe_audio` |
+| MQTT (optional) | `hailo10h/request/chat`, `…/transcribe` | JSON requests | JSON requests | Base64 audio |
+| Wyoming TCP | `HOST:10300` | — | — | Home Assistant Assist STT |
+
+See [APIs and Home Assistant integration](doc/api.md) for authentication,
+request formats, Home Assistant tool calling and protocol-specific details.
+
 The UI uses the first supported browser language, with a persistent manual
 language selector and the service default as fallback. German, English and
 Russian resources live in `src/hailo_services/locales/`. `HAILO_SERVICE_LANGUAGE`
