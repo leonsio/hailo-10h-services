@@ -1,6 +1,7 @@
 """Hailo-10H shared inference services."""
 
 from .ha_action_verification import install as _install_ha_action_verification
+from .ha_measurement_fixes import install as _install_ha_measurement_fixes
 from .ha_prompt_compiler import install as _install_ha_prompt_compiler
 from .ha_routing import install as _install_ha_routing
 from .ha_state_routing import install as _install_ha_state_routing
@@ -12,6 +13,7 @@ _install_litert_optimizations()
 _install_ha_routing()
 _install_ha_state_routing()
 _install_ha_state_routing_fixes()
+_install_ha_measurement_fixes()
 _install_ha_action_verification()
 _install_ha_prompt_compiler()
 _install_ha_weather_routing()
@@ -19,6 +21,7 @@ del _install_litert_optimizations
 del _install_ha_routing
 del _install_ha_state_routing
 del _install_ha_state_routing_fixes
+del _install_ha_measurement_fixes
 del _install_ha_action_verification
 del _install_ha_prompt_compiler
 del _install_ha_weather_routing
