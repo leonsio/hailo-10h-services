@@ -1,4 +1,4 @@
-from hailo_services import ha_weather_routing as weather
+import hailo_services.ha_weather_routing as weather
 
 
 ENTITIES = [
@@ -14,6 +14,11 @@ ENTITIES = [
 def test_generic_garden_temperature_is_a_read_measurement():
     assert weather._ambient_temperature_query("Welche Temperatur ist im Garten?")
     assert not weather._ambient_temperature_query("Stelle das Thermostat im Garten auf 22 Grad")
+
+
+def test_outdoor_temperature_is_not_expanded_to_full_weather_summary():
+    assert weather._ambient_temperature_query("Welche Temperatur ist draußen?")
+    assert not weather._weather_query("Welche Temperatur ist draußen?")
 
 
 def test_garden_temperature_prefers_weather_station_over_grill_and_device_temperature():
@@ -46,6 +51,25 @@ def test_off_climate_is_not_accepted_as_current_generic_temperature():
     response = weather._temperature_response(entities, "Welche Temperatur ist im Garten?")
     assert response == "Aktuell habe ich keine aktuellen Temperaturdaten für Garten."
     assert "31" not in response
+
+
+def test_climate_target_setpoint_is_never_used_as_current_temperature():
+    entities = [
+        {
+            "name": "ASMOKE Pit thermostat",
+            "domain": "climate",
+            "state": "heat",
+            "area": "Garten",
+            "attributes": {
+                "current_temperature": "",
+                "temperature": "110",
+                "unit_of_measurement": "°C",
+            },
+        }
+    ]
+    response = weather._temperature_response(entities, "Welche Temperatur ist im Garten?")
+    assert response == "Aktuell habe ich keine aktuellen Temperaturdaten für Garten."
+    assert "110" not in response
 
 
 def test_weather_response_combines_live_station_values_without_llm():
