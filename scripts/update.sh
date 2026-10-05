@@ -59,6 +59,7 @@ verify_module() {
 
 verify_module "${SOURCE_DIR}/src/hailo_services/ha_routing.py" hailo_services.ha_routing
 verify_module "${SOURCE_DIR}/src/hailo_services/ha_prompt_compiler.py" hailo_services.ha_prompt_compiler
+verify_module "${SOURCE_DIR}/src/hailo_services/ha_action_verification.py" hailo_services.ha_action_verification
 
 systemctl reset-failed "${SERVICE}" || true
 systemctl start "${SERVICE}"
