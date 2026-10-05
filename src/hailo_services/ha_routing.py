@@ -34,6 +34,7 @@ from .tool_retrieval import (
 _LOG = logging.getLogger(__name__)
 _SEMANTIC_RELEVANCE_THRESHOLD = 0.56
 _EXTRA_STOP_WORDS = lexicon('ha_routing._EXTRA_STOP_WORDS')
+_DOMAIN_WORDS = lexicon('ha_state_routing._DOMAIN_WORDS')
 _DIRECT_TOOLS = {"intent__HassTurnOn", "intent__HassTurnOff"}
 
 
@@ -188,25 +189,51 @@ def _explicit_action(query: str, tool_name: str) -> bool:
     return False
 
 
-def direct_action_response(request):
+def _mentioned_domains(query: str, domains: set[str]) -> list[str]:
+    """Return candidate HA domains explicitly named by the user.
+
+    Domain vocabulary comes from the shared HA routing lexicon. The raw HA
+    domain name is also considered after language normalization, so this stays
+    independent of any particular installation or entity naming scheme.
+    """
+    text = _normalized(query)
+    matches: list[str] = []
+    for domain in sorted(domains):
+        aliases = {_normalized(domain)}
+        aliases.update(_normalized(word) for word in _DOMAIN_WORDS.get(domain, set()))
+        if any(_contains_phrase(text, alias) for alias in aliases if alias):
+            matches.append(domain)
+    return matches
+
+
+def direct_action_response(request, *, source_messages=None, trace=None):
     """Build a deterministic tool call for an unambiguous on/off command."""
+    if trace is not None:
+        trace.clear()
+
+    def reject(reason: str, **details):
+        if trace is not None:
+            trace.update({"direct_action_reason": reason, **details})
+        return None
+
     tools = request.tools or []
     if len(tools) != 1:
-        return None
+        return reject("tool_count", selected_tool_count=len(tools))
     tool_name = tools[0].get("function", {}).get("name")
     if tool_name not in _DIRECT_TOOLS:
-        return None
+        return reject("unsupported_tool", selected_tool=tool_name)
 
     query = latest_user_text(request.messages).strip()
     if not _explicit_action(query, tool_name):
-        return None
+        return reject("action_not_explicit", selected_tool=tool_name)
 
+    entity_messages = source_messages if source_messages is not None else request.messages
     entities = [
-        parsed for parsed in (_parse_entity(entry) for entry in _entity_entries(request.messages))
+        parsed for parsed in (_parse_entity(entry) for entry in _entity_entries(entity_messages))
         if parsed is not None
     ]
     if not entities:
-        return None
+        return reject("no_entities")
 
     normalized_query = _normalized(query)
     explicit = [
@@ -221,7 +248,12 @@ def direct_action_response(request):
         arguments = {"name": entity["name"], "domain": [entity["domain"]]}
         target_kind = "entity"
     elif explicit:
-        return None
+        return reject(
+            "entity_name_ambiguous",
+            matched_entities=sorted(
+                {f'{item["name"]}|{item["domain"]}|{item["area"]}' for item in explicit}
+            ),
+        )
     else:
         area_groups = {}
         for entity in entities:
@@ -229,14 +261,31 @@ def direct_action_response(request):
             if area and _contains_phrase(normalized_query, _normalized(area)):
                 area_groups.setdefault(area, []).append(entity)
         if len(area_groups) != 1:
-            return None
+            return reject("area_not_unique", matched_areas=sorted(area_groups))
         area, members = next(iter(area_groups.items()))
         domains = {member["domain"] for member in members}
-        if len(domains) != 1:
-            return None
-        domain = next(iter(domains))
+        if len(domains) == 1:
+            domain = next(iter(domains))
+        else:
+            mentioned_domains = _mentioned_domains(query, domains)
+            if len(mentioned_domains) != 1:
+                return reject(
+                    "area_domain_ambiguous",
+                    matched_area=area,
+                    candidate_domains=sorted(domains),
+                    mentioned_domains=mentioned_domains,
+                )
+            domain = mentioned_domains[0]
         arguments = {"area": area, "domain": [domain]}
         target_kind = "area"
+
+    if trace is not None:
+        trace.update({
+            "direct_action_reason": "unambiguous",
+            "direct_target_kind": target_kind,
+            "direct_tool": tool_name,
+            "direct_arguments": arguments,
+        })
 
     return {
         "role": "assistant",
@@ -307,16 +356,25 @@ def install():
             return prepared
 
         prepared = original_select_tools(self, request)
-        direct = direct_action_response(prepared)
+        direct_trace = {}
+        direct = direct_action_response(
+            prepared,
+            source_messages=request.messages,
+            trace=direct_trace,
+        )
         if direct is not None:
             routing = direct.pop("_routing")
             object.__setattr__(prepared, "_direct_ha_response", direct)
             _log_route(self.settings.debug_log, request_id, "direct_action", {
                 **relevance,
                 **routing,
+                **direct_trace,
             })
         else:
-            _log_route(self.settings.debug_log, request_id, "ha_llm", relevance)
+            _log_route(self.settings.debug_log, request_id, "ha_llm", {
+                **relevance,
+                **direct_trace,
+            })
         return prepared
 
     @wraps(original_litert_chat)
