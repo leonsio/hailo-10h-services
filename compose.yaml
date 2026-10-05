@@ -1,0 +1,37 @@
+services:
+  hailo-services:
+    build:
+      context: .
+      args:
+        INSTALL_LITERT: ${INSTALL_LITERT:-1}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 240s
+    devices:
+      - ${HAILO_DEVICE:-/dev/h1x-0}:${HAILO_DEVICE:-/dev/h1x-0}
+    ports:
+      - "${HTTP_PORT:-8090}:8090"
+      - "${WYOMING_PORT:-10300}:10300"
+    volumes:
+      - type: bind
+        source: ./deploy/hailo-10h-services.yaml
+        target: /etc/hailo-10h-services.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+      - models:/usr/local/hailo/resources/models/hailo10h
+      - state:/var/lib/hailo-10h-services
+    healthcheck:
+      test:
+        - CMD
+        - /opt/venv/bin/python
+        - -c
+        - "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8090/health',timeout=5)); exit(0 if d.get('ready') else 1)"
+      interval: 30s
+      timeout: 10s
+      # Large first-start model downloads may exceed this; unhealthy does not restart.
+      start_period: 30m
+      retries: 5
+volumes:
+  models:
+  state:

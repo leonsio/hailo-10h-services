@@ -34,6 +34,20 @@ override. Gemma's default input ceiling remains
 **4096 tokens**. `/health` reports actual readiness, loaded models and errors;
 a configured but unavailable Gemma never silently falls back to another model.
 
+### Docker Compose
+
+Build a Debian 13 image with the matching local HailoRT DEB/Wheel and deploy
+with `docker compose up -d --build`. Models and runtime state use persistent
+volumes; HTTP and Wyoming ports are published. Optional LiteRT-LM is included.
+See [Docker setup and package placement](doc/installation.md#docker-compose).
+
+### Proxmox LXC (Raspberry Pi 5 / CM5, ARM64)
+
+Run `scripts/install-proxmox-lxc.sh` **on the Proxmox host** to create a Debian 13
+container, pass through the Hailo device and install HailoRT plus this service.
+Uses the same `/root` DEB/Wheel paths as the native Frigate LXC setup.
+See [LXC setup and command example](doc/installation.md#proxmox-lxc-on-arm64).
+
 ## Usage
 
 - Browser playground: `http://<host>:8090/` (chat, images, speech and status).

@@ -7,3 +7,8 @@ __pycache__/
 build/
 dist/
 .env
+
+/deploy/vendor/*.deb
+/deploy/vendor/*.whl
+/deploy/hailo-10h-services.yaml
+/compose.env

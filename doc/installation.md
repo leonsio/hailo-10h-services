@@ -49,6 +49,140 @@ sudo systemctl status hailo-10h-services
 being downloaded/loaded there is no listening HTTP socket. It includes loaded
 model names, paths, mandatory SHARED group, pending work and MQTT connection state.
 
+## Docker Compose
+
+Requires Docker Engine with Compose v2 on a Linux host and a working Hailo-10H
+kernel driver/firmware. The image installs the **userspace** runtime, GenAI
+wheel, Python dependencies and, by default, optional `litert-lm`. No driver or
+DKMS package is installed in the container. The default recipe targets Debian
+13 / Python 3.13 / ARM64, matching the Raspberry Pi 5/CM5 setup.
+
+Put the vendor packages in `deploy/vendor/` (exactly one runtime DEB and one
+matching wheel). These proprietary binaries are ignored by Git. Use HailoRT
+5.4.0 with matching host driver/firmware:
+
+```bash
+git clone https://github.com/leonsio/hailo-10h-services.git
+cd hailo-10h-services
+cp /root/hailort_5.4.0_arm64.deb deploy/vendor/
+cp /root/hailort-5.4.0-cp313-cp313-linux_aarch64.whl deploy/vendor/
+cp deploy/hailo-10h-services.yaml.example deploy/hailo-10h-services.yaml
+# Edit this file BEFORE startup: set a strong settings.api_key and select models.
+nano deploy/hailo-10h-services.yaml
+docker compose up -d --build
+docker compose logs -f hailo-services
+curl http://127.0.0.1:8090/health
+```
+
+On x86-64 use matching amd64 DEB and CPython 3.13 x86-64 wheel instead;
+LiteRT-LM availability must match that platform. The build verifies GenAI imports.
+To omit CPU Gemma's dependency, build with `INSTALL_LITERT=0` and leave Gemma
+disabled in YAML. To enable Gemma later, rebuild with `INSTALL_LITERT=1`.
+The YAML bind mount is read-only and must exist; Compose refuses to silently
+create a directory in its place. This deployment does not generate an API key:
+set it in the YAML yourself. Keep this file private (`chmod 600`).
+
+`/dev/h1x-0` is passed explicitly; no privileged container is required. Override
+the device or published ports using environment variables, for example:
+
+```bash
+HAILO_DEVICE=/dev/h1x-1 HTTP_PORT=8091 WYOMING_PORT=10301 docker compose up -d --build
+```
+
+The named `models` volume holds downloaded HEFs, MiniLM assets and Gemma;
+`state` holds Hailo logs and runtime home. Downloads are automatic for enabled
+models. For existing files, copy them into the model volume before startup or
+replace that volume mapping with a writable host directory mounted at
+`/usr/local/hailo/resources/models/hailo10h`. Local paths in YAML must be paths
+inside the container. Changing `model_store` requires a matching mount.
+
+Compose runs one service process; `SHARED` remains enforced by the application.
+Other applications sharing the accelerator need compatible runtimes and matching
+group IDs; validate actual concurrent use on hardware. Docker uses its own
+network namespace; MCP clients need the correct `mcp_hosts` entries. Configure
+MQTT with a reachable external broker address (`localhost` is the container);
+MQTT is optional, so no broker is required for HTTP/Wyoming deployment.
+
+The health check tests `/health`, allowing 30 minutes for initial downloads.
+An unhealthy status does not automatically restart a running container; inspect
+logs if downloads take longer or a configured model fails. HTTP is on 8090 and
+Wyoming on 10300; change YAML internal ports only together with the Compose
+port mappings and health check.
+
+Update with `git pull --ff-only && docker compose up -d --build`. Stop with
+`docker compose down`; the model and state volumes remain. `down -v` deletes
+those volumes, including models. HTTPS is optional: use an external TLS reverse
+proxy with SSE/WebSocket support. `scripts/enable-https.sh` is intended for the
+native systemd installation, not this Docker container.
+
+## Proxmox LXC on ARM64
+
+Run the installer on an **existing ARM64 Proxmox 9 / Pimox host** (Raspberry Pi
+5/CM5), not inside a container. It creates a new unprivileged Debian 13 ARM64
+LXC with `dev0` passthrough, DHCP on `vmbr0`, 4 cores, 4096 MiB RAM, 512 MiB
+swap and 32 GiB disk. Use more RAM when enabling CPU Gemma. It installs no Docker
+and no kernel driver in LXC. Host networking, storage and Hailo driver/firmware
+must already work. The userspace DEB must be `hailort` or `h10-hailort` 5.4.0.
+
+As in the native Frigate setup, put these packages **on the Proxmox host**:
+
+- `/root/hailort_5.4.0_arm64.deb`
+- `/root/hailort-5.4.0-cp313-cp313-linux_aarch64.whl`
+
+Supply an existing Debian 13 ARM64 template volume. The template filename below
+is the earlier Frigate assumption; replace it with the actual installed template
+reported by `pveam list local`. The installer does not guess or download a
+possibly unavailable ARM64 template.
+
+```bash
+git clone https://github.com/leonsio/hailo-10h-services.git
+cd hailo-10h-services
+bash scripts/install-proxmox-lxc.sh \
+  --ctid 110 \
+  --template local:vztmpl/debian-13-standard_13.6-1_arm64.tar.zst \
+  --storage local-lvm --device /dev/h1x-0 --check
+# Repeat without --check to create/install the container.
+bash scripts/install-proxmox-lxc.sh \
+  --ctid 110 \
+  --template local:vztmpl/debian-13-standard_13.6-1_arm64.tar.zst \
+  --storage local-lvm --device /dev/h1x-0
+```
+
+`--help` lists overrides for package paths, memory, disk, cores, bridge, hostname
+and repository ref. Without `--device`, one unique `/dev/h1x-*` or `/dev/hailoN`
+character device must exist. Proxmox `dev0` handles device permissions for the
+unprivileged container. The installer grants the service account a device ACL,
+checks `hailortcli --version` and `hailortcli fw-control identify`, and verifies
+GenAI imports. Confirm identify reports HAILO10H and firmware 5.4.0. No DKMS,
+GPU passthrough or changes to Frigate are needed. Sharing still requires
+compatible runtimes and `SHARED` clients across all participating processes.
+
+A dedicated `/opt/hailort-venv` holds the vendor wheel; the existing native
+installer then provisions the service, its dependencies, API key, ACLs and
+systemd unit. Gemma is initially disabled; after enabling it in YAML, rerun the
+native installer to install LiteRT-LM. Configuration and model downloads behave
+like the native installation. For reused host models, deliberately add a
+writable bind mount and matching ACLs rather than copying the driver into LXC.
+
+```bash
+pct exec 110 -- journalctl -u hailo-10h-services -f
+pct exec 110 -- curl http://127.0.0.1:8090/health
+pct exec 110 -- cat /etc/hailo-10h-services.yaml
+pct exec 110 -- hostname -I
+# Update inside the container:
+pct enter 110
+cd /opt/hailo-10h-services-source
+git pull --ff-only
+HAILO_PYTHON=/opt/hailort-venv/bin/python bash scripts/install.sh
+```
+
+Use the container IP for HTTP/Wyoming clients. HTTPS can be enabled inside LXC
+with the native HTTPS script. Existing CT/VM IDs are rejected; failed installs
+retain the container for diagnosis and are not automatically deleted. Fix a
+failure inside that container or choose a new ID; this creation script is not an
+in-place updater. `--check` validates inputs without creating a container; it
+cannot verify the eventual application startup or simultaneous Hailo inference.
+
 ## YAML model selection and download catalogue
 
 Edit `/etc/hailo-10h-services.yaml`; see `deploy/hailo-10h-services.yaml.example`.
