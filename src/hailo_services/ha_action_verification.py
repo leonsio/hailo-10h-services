@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 import uuid
 from functools import wraps
 
@@ -25,6 +26,11 @@ _ACTION_TO_STATE = {
     "intent__HassTurnOff": "off",
 }
 _VERIFY_DOMAINS = {"light", "switch"}
+# HA service calls can return action_done before the entity-state event has
+# propagated through the state machine/integration. A short, generic settling
+# window avoids immediately verifying stale state while keeping deterministic
+# actions far faster than an LLM round-trip.
+_VERIFY_SETTLE_SECONDS = 0.4
 
 
 def _json_object(value):
@@ -287,17 +293,29 @@ def install():
         if decision is not None:
             request_id = getattr(request, "_request_id", "-")
             response = decision["response"]
+            settle_ms = 0
+            if decision["kind"] == "verify":
+                time.sleep(_VERIFY_SETTLE_SECONDS)
+                settle_ms = round(_VERIFY_SETTLE_SECONDS * 1000)
             _LOG.info(
-                "ha_action_verification request_id=%s kind=%s attempts=%d skipped_gemma=true",
+                "ha_action_verification request_id=%s kind=%s attempts=%d "
+                "settle_ms=%d skipped_gemma=true",
                 request_id,
                 decision["kind"],
                 decision.get("attempts", 0),
+                settle_ms,
             )
             if getattr(self, "debug_log", False):
+                debug_decision = {**decision, "settle_ms": settle_ms}
                 _LOG.debug(
                     "event=ha_action_verification request_id=%s json=%s",
                     request_id,
-                    json.dumps(decision, ensure_ascii=False, separators=(",", ":"), default=str),
+                    json.dumps(
+                        debug_decision,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        default=str,
+                    ),
                 )
             if isinstance(response, str) and emit:
                 emit(response)
