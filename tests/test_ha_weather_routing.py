@@ -1,5 +1,7 @@
-from hailo_services import ha_weather_routing
+import importlib
 
+
+ha_weather_routing = importlib.import_module("hailo_services.ha_weather_routing")
 
 ENTITIES = [
     {"name": "ASMOKE Grill temperature 1", "domain": "sensor", "area": "Garten"},
