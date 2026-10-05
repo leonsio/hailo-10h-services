@@ -1,10 +1,8 @@
-"""Deterministic Home Assistant routing for weather and ambient measurements.
+"""Generic Home Assistant routing for weather and ambient measurements.
 
-Current weather and ambient temperature questions should not be interpreted as
-climate-control commands.  This layer prefers dedicated HA weather/ambient
-sensors, rejects clearly stale/off climate devices for generic measurements,
-and only falls back to a tiny Gemma prompt when several plausible live sources
-remain ambiguous.
+The routing intentionally avoids installation-specific device names and brands.
+It relies on Home Assistant domains, areas, device classes, units, and generic
+environmental semantics. Ambiguous live data is reduced before Gemma sees it.
 """
 
 from __future__ import annotations
@@ -15,69 +13,127 @@ import re
 import uuid
 from functools import wraps
 
-from .ha_state_routing import (
-    _entries,
-    _has_action_verb,
-    _live_entities,
-    _live_tool,
-    _measurement_value,
-    _normalized,
-)
+from . import ha_state_routing as _state
 from .tool_retrieval import latest_user_text
 
 _LOG = logging.getLogger(__name__)
 _LIVE_TOOL = "homeassistant__GetLiveContext"
 _INVALID_STATES = {"", "unknown", "unavailable", "none", "null"}
-_WEATHER_WORDS = {
-    "wetter",
-    "draussen",
+
+_TEMPERATURE_DEVICE_CLASSES = {"temperature"}
+_HUMIDITY_DEVICE_CLASSES = {"humidity"}
+_DEW_POINT_DEVICE_CLASSES = {"dew_point"}
+_WEATHER_DEVICE_CLASSES = {
+    "temperature",
+    "humidity",
+    "dew_point",
+    "atmospheric_pressure",
+    "pressure",
+    "wind_speed",
+    "wind_direction",
+    "precipitation",
+    "precipitation_intensity",
+}
+
+_TEMPERATURE_UNITS = {"°c", "c", "°f", "f", "k", "kelvin"}
+_HUMIDITY_UNITS = {"%"}
+
+_AMBIENT_WORDS = {
+    "ambient",
+    "room",
+    "indoor",
+    "outdoor",
+    "outside",
+    "air",
+    "weather",
+    "raum",
+    "zimmer",
+    "innen",
     "aussen",
-    "aussentemperatur",
+    "draussen",
+    "luft",
+    "wetter",
     "wetterstation",
 }
-_EQUIPMENT_WORDS = {
-    "grill",
+_OUTDOOR_WORDS = {
+    "outdoor",
+    "outside",
+    "garden",
+    "terrace",
+    "patio",
+    "balcony",
+    "aussen",
+    "draussen",
+    "garten",
+    "terrasse",
+    "balkon",
+}
+_PROCESS_WORDS = {
+    "battery",
+    "cell",
+    "device",
+    "inverter",
+    "motor",
+    "cpu",
+    "gpu",
+    "boiler",
+    "water",
+    "flow",
+    "coil",
     "probe",
     "pit",
-    "deye",
-    "solarflow",
-    "zelle",
-    "zelltemperatur",
-    "geraetetemperatur",
-    "kessel",
-    "vorlauf",
-    "warmwasser",
-    "speicher",
-    "backofen",
     "food",
+    "grill",
+    "oven",
     "akku",
     "batterie",
+    "zelle",
+    "geraet",
     "wechselrichter",
+    "kessel",
+    "wasser",
+    "vorlauf",
+    "spule",
+    "fuehler",
+    "sonde",
+    "backofen",
 }
 
 
-def _contains_word(text: str, words: set[str]) -> bool:
-    tokens = set(_normalized(text).split())
-    return bool(tokens & words)
+def _normalized(value: object) -> str:
+    return _state._normalized(str(value))
 
 
-def _weather_query(text: str) -> bool:
-    normalized = _normalized(text)
-    if _has_action_verb(normalized):
-        return False
-    return bool(re.search(r"\b(wetter|wetterlage|draussen|aussen)\b", normalized)) and not bool(
-        re.search(r"\b(licht|lampe|rollladen|schalter)\b", normalized)
-    )
+def _tokens(value: object) -> set[str]:
+    return set(_normalized(value).split())
+
+
+def _has_any_word(value: object, words: set[str]) -> bool:
+    return bool(_tokens(value) & words)
 
 
 def _ambient_temperature_query(text: str) -> bool:
     normalized = _normalized(text)
-    if _has_action_verb(normalized):
+    if _state._has_action_verb(normalized):
         return False
-    if re.search(r"\b(thermostat|heizung|klima|klimaanlage)\b", normalized):
+    if re.search(r"\b(thermostat|heizung|klima|klimaanlage|setpoint|solltemperatur)\b", normalized):
         return False
     return bool(
-        re.search(r"\b(wie warm|wie kalt|welche temperatur|was fuer eine temperatur|temperatur ist)\b", normalized)
+        re.search(
+            r"\b(wie warm|wie kalt|welche temperatur|was fuer eine temperatur|"
+            r"temperatur ist|temperature|how warm|how cold)\b",
+            normalized,
+        )
+    )
+
+
+def _weather_query(text: str) -> bool:
+    normalized = _normalized(text)
+    if _state._has_action_verb(normalized) or _ambient_temperature_query(text):
+        return False
+    return bool(
+        re.search(r"\b(wetter|wetterlage|weather)\b", normalized)
+        or re.search(r"\b(wie ist es|how is it)\s+(draussen|aussen|outside)\b", normalized)
     )
 
 
@@ -88,103 +144,101 @@ def _explicit_area(query: str, entities: list[dict[str, str]]) -> str | None:
     return matches[0] if len(matches) == 1 else None
 
 
-def _is_weather_sensor(entity: dict[str, str]) -> bool:
-    name = _normalized(entity.get("name", ""))
-    domain = entity.get("domain", "")
-    if domain == "weather":
-        return True
-    if domain != "sensor":
-        return False
-    return (
-        "wetterstation" in name
-        or "aussentemperatur" in name
-        or "aussen temperatur" in name
-        or "outdoor temperature" in name
-    )
+def _outdoor_area(query: str, entities: list[dict[str, str]]) -> str | None:
+    explicit = _explicit_area(query, entities)
+    if explicit:
+        return explicit
+    if not _has_any_word(query, _OUTDOOR_WORDS):
+        return None
+    areas = sorted({item["area"] for item in entities if item.get("area")}, key=len, reverse=True)
+    matches = [area for area in areas if _has_any_word(area, _OUTDOOR_WORDS)]
+    return matches[0] if len(matches) == 1 else None
 
 
-def _weather_sources(entities: list[dict[str, str]], query: str) -> list[dict[str, str]]:
-    area = _explicit_area(query, entities)
-    sources = [item for item in entities if _is_weather_sensor(item)]
-    if area is not None:
-        in_area = [item for item in sources if item.get("area") == area]
-        if in_area:
-            sources = in_area
-    weather_entities = [item for item in sources if item.get("domain") == "weather"]
-    if weather_entities:
-        return weather_entities[:2]
-    station = [item for item in sources if "wetterstation" in _normalized(item.get("name", ""))]
-    # Prefer temperature/humidity/dew/frost-point values from one weather station.
-    station.sort(key=lambda item: _weather_sensor_order(item.get("name", "")))
-    return station[:4]
-
-
-def _weather_sensor_order(name: str) -> int:
-    normalized = _normalized(name)
-    if "temperatur" in normalized and "frost" not in normalized:
-        return 0
-    if "luftfeuchte" in normalized or "humidity" in normalized:
-        return 1
-    if "frostpunkt" in normalized or "taupunkt" in normalized or "dew" in normalized:
-        return 2
-    return 3
-
-
-def _temperature_score(entity: dict[str, str], area: str | None) -> int:
-    name = _normalized(entity.get("name", ""))
-    domain = entity.get("domain", "")
-    if area is not None and entity.get("area") != area:
-        return -1000
-    if domain not in {"sensor", "climate"}:
-        return -1000
-    if not re.search(r"\b(temperatur|temperature|thermostat)\b", name):
-        return -1000
-
-    score = 80 if domain == "sensor" else 15
-    if "wetterstation" in name:
-        score += 80
-    if "aussentemperatur" in name or "aussen temperatur" in name:
-        score += 70
-    if "wandthermostat temperatur" in name or "raumtemperatur" in name:
-        score += 45
-    if name == "temperatur" or name.endswith(" temperatur"):
+def _environment_name_score(name: str) -> int:
+    words = _tokens(name)
+    score = 0
+    if words & _AMBIENT_WORDS:
+        score += 30
+    if words & _OUTDOOR_WORDS:
         score += 20
-    if "stellantrieb" in name:
-        score -= 25
-    if set(name.split()) & _EQUIPMENT_WORDS:
-        score -= 100
+    if words & _PROCESS_WORDS:
+        score -= 45
     return score
 
 
+def _temperature_score(entity: dict[str, str], area: str | None) -> int:
+    if area is not None and entity.get("area") != area:
+        return -1000
+    domain = entity.get("domain", "")
+    if domain not in {"sensor", "climate", "weather"}:
+        return -1000
+    name = _normalized(entity.get("name", ""))
+    if domain == "weather":
+        return 120 + _environment_name_score(name)
+    if domain == "climate":
+        return 45 + _environment_name_score(name)
+    if re.search(r"\b(temperatur|temperature)\b", name):
+        return 75 + _environment_name_score(name)
+    return 20 + _environment_name_score(name)
+
+
 def _temperature_sources(entities: list[dict[str, str]], query: str) -> list[dict[str, str]]:
-    area = _explicit_area(query, entities)
+    area = _outdoor_area(query, entities) or _explicit_area(query, entities)
     ranked = sorted(
         ((_temperature_score(item, area), index, item) for index, item in enumerate(entities)),
         key=lambda row: (-row[0], row[1]),
     )
-    viable = [item for score, _, item in ranked if score >= 50]
-    if viable:
-        best_score = _temperature_score(viable[0], area)
-        close = [item for item in viable if _temperature_score(item, area) >= best_score - 15]
-        return close[:4]
-
-    # If no proper ambient sensor exists, query one climate device only as a
-    # last resort.  Its live state is checked later; state=off is not accepted
-    # as a current ambient reading for a generic temperature question.
-    climate = [
-        item for score, _, item in ranked
-        if item.get("domain") == "climate" and score > -1000
-    ]
-    return climate[:1]
+    viable = [item for score, _, item in ranked if score >= 40]
+    if not viable:
+        return []
+    best = _temperature_score(viable[0], area)
+    return [item for item in viable if _temperature_score(item, area) >= best - 15][:4]
 
 
-def _tool_call(source: dict[str, str]) -> dict:
-    arguments: dict[str, object] = {
-        "name": source["name"],
-        "domain": [source["domain"]],
-    }
-    if source.get("area"):
-        arguments["area"] = source["area"]
+def _is_weather_sensor(entity: dict[str, str]) -> bool:
+    if entity.get("domain") == "weather":
+        return True
+    if entity.get("domain") != "sensor":
+        return False
+    words = _tokens(entity.get("name", ""))
+    return bool(
+        words
+        & (
+            _AMBIENT_WORDS
+            | {"humidity", "luftfeuchte", "dew", "taupunkt", "frostpunkt", "pressure", "wind"}
+        )
+    )
+
+
+def _weather_sensor_order(name: str) -> int:
+    normalized = _normalized(name)
+    if re.search(r"\b(temperatur|temperature)\b", normalized) and not re.search(
+        r"\b(dew|taupunkt|frostpunkt)\b", normalized
+    ):
+        return 0
+    if re.search(r"\b(luftfeuchte|humidity)\b", normalized):
+        return 1
+    if re.search(r"\b(dew|taupunkt|frostpunkt)\b", normalized):
+        return 2
+    return 3
+
+
+def _weather_sources(entities: list[dict[str, str]], query: str) -> list[dict[str, str]]:
+    area = _outdoor_area(query, entities) or _explicit_area(query, entities)
+    sources = [item for item in entities if _is_weather_sensor(item)]
+    if area is not None:
+        scoped = [item for item in sources if item.get("area") == area]
+        if scoped:
+            sources = scoped
+    weather_entities = [item for item in sources if item.get("domain") == "weather"]
+    if weather_entities:
+        return weather_entities[:2]
+    sources.sort(key=lambda item: (_weather_sensor_order(item.get("name", "")), item.get("name", "")))
+    return sources[:4]
+
+
+def _tool_call(arguments: dict[str, object]) -> dict:
     return {
         "id": "call_" + uuid.uuid4().hex,
         "type": "function",
@@ -195,11 +249,11 @@ def _tool_call(source: dict[str, str]) -> dict:
     }
 
 
-def _direct_calls(sources: list[dict[str, str]]) -> dict:
+def _direct_call(arguments: dict[str, object]) -> dict:
     return {
         "role": "assistant",
         "content": None,
-        "tool_calls": [_tool_call(source) for source in sources],
+        "tool_calls": [_tool_call(arguments)],
     }
 
 
@@ -229,57 +283,13 @@ def _latest_round(messages):
     return query, calls, [result_by_id[call.get("id")] for call in calls]
 
 
-def _live_value(entity: dict, kind: str, *, generic_temperature: bool = False) -> str | None:
-    state = str(entity.get("state", "")).casefold()
-    if state in _INVALID_STATES:
-        return None
-    if generic_temperature and entity.get("domain") == "climate" and state == "off":
-        return None
-    return _measurement_value(entity, kind)
+def _device_class(entity: dict) -> str:
+    return _normalized(entity.get("attributes", {}).get("device_class", "")).replace(" ", "_")
 
 
-def _weather_response(entities: list[dict]) -> str:
-    usable = [
-        entity for entity in entities
-        if entity.get("domain") == "weather" or "wetterstation" in _normalized(entity.get("name", ""))
-    ]
-    if not usable:
-        return "Aktuell habe ich keine aktuellen Wetterdaten aus Home Assistant."
-
-    weather = next((item for item in usable if item.get("domain") == "weather"), None)
-    temperature = None
-    humidity = None
-    frostpoint = None
-    condition = None
-    if weather is not None:
-        state = str(weather.get("state", "")).casefold()
-        if state not in _INVALID_STATES:
-            condition = _weather_condition(state)
-            temperature = _live_value(weather, "temperature")
-            humidity = _live_value(weather, "humidity")
-
-    for entity in usable:
-        name = _normalized(entity.get("name", ""))
-        if temperature is None and "temperatur" in name and "frost" not in name:
-            temperature = _live_value(entity, "temperature", generic_temperature=True)
-        if humidity is None and ("luftfeuchte" in name or "humidity" in name):
-            humidity = _live_value(entity, "humidity") or _numeric_state(entity)
-        if frostpoint is None and ("frostpunkt" in name or "taupunkt" in name or "dew" in name):
-            frostpoint = _live_value(entity, "temperature", generic_temperature=True)
-
-    if not any((condition, temperature, humidity, frostpoint)):
-        return "Aktuell sind die Wetterdaten in Home Assistant nicht verfügbar."
-    parts = []
-    if condition:
-        parts.append(f"Draußen ist es {condition}")
-    if temperature:
-        parts.append(("die Temperatur beträgt " if parts else "Draußen sind es ") + temperature)
-    if humidity:
-        parts.append(f"die Luftfeuchtigkeit beträgt {humidity}")
-    sentence = ", ".join(parts) + "." if parts else ""
-    if frostpoint:
-        sentence += (" " if sentence else "") + f"Der Frostpunkt liegt bei {frostpoint}."
-    return sentence
+def _unit(entity: dict) -> str:
+    attrs = entity.get("attributes", {})
+    return str(attrs.get("unit_of_measurement") or attrs.get("unit") or "").strip()
 
 
 def _numeric_state(entity: dict) -> str | None:
@@ -291,8 +301,151 @@ def _numeric_state(entity: dict) -> str | None:
     except (TypeError, ValueError):
         return None
     rendered = f"{value:g}".replace(".", ",")
-    unit = entity.get("attributes", {}).get("unit_of_measurement") or entity.get("attributes", {}).get("unit")
+    unit = _unit(entity)
     return rendered + (f" {unit}" if unit else "")
+
+
+def _temperature_value(entity: dict) -> str | None:
+    state = str(entity.get("state", "")).casefold()
+    if state in _INVALID_STATES:
+        return None
+    attrs = entity.get("attributes", {})
+    domain = entity.get("domain")
+    if domain == "climate":
+        value = attrs.get("current_temperature")
+        if value in {None, ""}:
+            return None
+        unit = _unit(entity)
+        return f"{_state._format_number(value)}{(' ' + unit) if unit else ''}"
+    if domain == "weather":
+        value = attrs.get("temperature")
+        if value in {None, ""}:
+            return None
+        unit = (
+            attrs.get("temperature_unit")
+            or attrs.get("unit_of_measurement")
+            or attrs.get("unit")
+            or ""
+        )
+        return f"{_state._format_number(value)}{(' ' + str(unit)) if unit else ''}"
+    device_class = _device_class(entity)
+    unit = _normalized(_unit(entity))
+    if device_class in _TEMPERATURE_DEVICE_CLASSES or unit in _TEMPERATURE_UNITS:
+        return _numeric_state(entity)
+    name = _normalized(entity.get("name", ""))
+    if re.search(r"\b(temperatur|temperature)\b", name):
+        return _numeric_state(entity)
+    return None
+
+
+def _humidity_value(entity: dict) -> str | None:
+    state = str(entity.get("state", "")).casefold()
+    if state in _INVALID_STATES:
+        return None
+    attrs = entity.get("attributes", {})
+    if entity.get("domain") == "weather":
+        value = attrs.get("humidity")
+        if value in {None, ""}:
+            return None
+        return f"{_state._format_number(value)} %"
+    device_class = _device_class(entity)
+    normalized_unit = _normalized(_unit(entity))
+    name = _normalized(entity.get("name", ""))
+    if (
+        device_class in _HUMIDITY_DEVICE_CLASSES
+        or normalized_unit in _HUMIDITY_UNITS
+        or re.search(r"\b(luftfeuchte|humidity)\b", name)
+    ):
+        return _numeric_state(entity)
+    return None
+
+
+def _dew_point_value(entity: dict) -> str | None:
+    if _device_class(entity) in _DEW_POINT_DEVICE_CLASSES:
+        return _numeric_state(entity)
+    name = _normalized(entity.get("name", ""))
+    if re.search(r"\b(dew|dewpoint|taupunkt|frostpunkt)\b", name):
+        return _numeric_state(entity)
+    return None
+
+
+def _live_temperature_score(entity: dict, query: str) -> int:
+    value = _temperature_value(entity)
+    if value is None:
+        return -1000
+    domain = entity.get("domain", "")
+    device_class = _device_class(entity)
+    score = 0
+    if domain == "weather":
+        score += 120
+    elif domain == "sensor":
+        score += 75
+        if device_class in _TEMPERATURE_DEVICE_CLASSES:
+            score += 20
+    elif domain == "climate":
+        score += 45
+    score += _environment_name_score(str(entity.get("name", "")))
+    if _has_any_word(query, _OUTDOOR_WORDS):
+        if _has_any_word(entity.get("area", ""), _OUTDOOR_WORDS):
+            score += 30
+        if _has_any_word(entity.get("name", ""), _OUTDOOR_WORDS):
+            score += 20
+    return score
+
+
+def _strong_ambient_evidence(entity: dict, query: str) -> bool:
+    if entity.get("domain") == "weather":
+        return True
+    name = _normalized(entity.get("name", ""))
+    if _has_any_word(name, _AMBIENT_WORDS | _OUTDOOR_WORDS):
+        return True
+    if _has_any_word(query, _OUTDOOR_WORDS) and _has_any_word(
+        entity.get("area", ""), _OUTDOOR_WORDS
+    ):
+        return True
+    return name in {"temperature", "temperatur"}
+
+
+def _temperature_response(entities: list[dict], query: str) -> str | None:
+    ranked = sorted(
+        (
+            (_live_temperature_score(entity, query), index, entity, _temperature_value(entity))
+            for index, entity in enumerate(entities)
+        ),
+        key=lambda row: (-row[0], row[1]),
+    )
+    ranked = [row for row in ranked if row[0] > -1000 and row[3] is not None]
+    if not ranked:
+        area = _explicit_area(query, _entries_from_live_entities(entities))
+        suffix = f" für {area}" if area else ""
+        return f"Aktuell habe ich keine aktuellen Temperaturdaten{suffix}."
+    best_score, _, best_entity, best_value = ranked[0]
+    if len(ranked) == 1:
+        if _strong_ambient_evidence(best_entity, query):
+            return f"Die aktuelle Temperatur beträgt {best_value}."
+        return None
+    second_score = ranked[1][0]
+    if best_score - second_score >= 15 and _strong_ambient_evidence(best_entity, query):
+        return f"Die aktuelle Temperatur beträgt {best_value}."
+    return None
+
+
+def _environmental_sensor(entity: dict) -> bool:
+    if entity.get("domain") == "weather":
+        return True
+    if entity.get("domain") != "sensor":
+        return False
+    device_class = _device_class(entity)
+    if device_class in _WEATHER_DEVICE_CLASSES:
+        return True
+    name = _normalized(entity.get("name", ""))
+    return bool(
+        re.search(
+            r"\b(temperatur|temperature|luftfeuchte|humidity|dew|dewpoint|"
+            r"taupunkt|frostpunkt|weather|wetter|druck|pressure|wind|regen|rain)\b",
+            name,
+        )
+    )
 
 
 def _weather_condition(state: str) -> str | None:
@@ -309,19 +462,101 @@ def _weather_condition(state: str) -> str | None:
     }.get(state)
 
 
-def _temperature_response(entities: list[dict], query: str) -> str | None:
-    values = []
-    for entity in entities:
-        value = _live_value(entity, "temperature", generic_temperature=True)
-        if value is not None:
-            values.append((entity, value))
-    if not values:
-        area = _explicit_area(query, _entries_from_live_entities(entities))
-        suffix = f" für {area}" if area else ""
-        return f"Aktuell habe ich keine aktuellen Temperaturdaten{suffix}."
-    if len(values) == 1:
-        return f"Die aktuelle Temperatur beträgt {values[0][1]}."
-    return None
+def _pick_weather_group(entities: list[dict], query: str) -> list[dict] | None:
+    relevant = [entity for entity in entities if _environmental_sensor(entity)]
+    if not relevant:
+        return []
+    weather_entities = [entity for entity in relevant if entity.get("domain") == "weather"]
+    if weather_entities:
+        return weather_entities[:1] if len(weather_entities) == 1 else weather_entities
+    groups: dict[str, list[dict]] = {}
+    for entity in relevant:
+        area = str(entity.get("area") or "")
+        groups.setdefault(area, []).append(entity)
+    scored = []
+    for area, members in groups.items():
+        kinds = set()
+        for entity in members:
+            if _temperature_value(entity):
+                kinds.add("temperature")
+            if _humidity_value(entity):
+                kinds.add("humidity")
+            if _dew_point_value(entity):
+                kinds.add("dew_point")
+            device_class = _device_class(entity)
+            if device_class in {
+                "atmospheric_pressure",
+                "pressure",
+                "wind_speed",
+                "wind_direction",
+                "precipitation",
+                "precipitation_intensity",
+            }:
+                kinds.add(device_class)
+        score = len(kinds) * 20
+        if _has_any_word(area, _OUTDOOR_WORDS):
+            score += 30
+        if any(
+            _has_any_word(item.get("name", ""), {"weather", "wetter", "wetterstation"})
+            for item in members
+        ):
+            score += 20
+        if _has_any_word(query, _OUTDOOR_WORDS) and _has_any_word(area, _OUTDOOR_WORDS):
+            score += 20
+        scored.append((score, area, members))
+    scored.sort(key=lambda row: (-row[0], row[1]))
+    if not scored or scored[0][0] <= 0:
+        return []
+    if len(scored) > 1 and scored[0][0] == scored[1][0]:
+        return None
+    return scored[0][2]
+
+
+def _weather_response(entities: list[dict], query: str = "") -> str | None:
+    group = _pick_weather_group(entities, query)
+    if group is None:
+        return None
+    if not group:
+        return "Aktuell habe ich keine passenden aktuellen Wetterdaten in Home Assistant."
+    weather = next((item for item in group if item.get("domain") == "weather"), None)
+    condition = None
+    temperature = None
+    humidity = None
+    dew_point = None
+    if weather is not None:
+        state = str(weather.get("state", "")).casefold()
+        if state not in _INVALID_STATES:
+            condition = _weather_condition(state)
+        temperature = _temperature_value(weather)
+        humidity = _humidity_value(weather)
+    temp_candidates = sorted(
+        (
+            (_live_temperature_score(entity, query), index, entity)
+            for index, entity in enumerate(group)
+            if _temperature_value(entity) is not None
+        ),
+        key=lambda row: (-row[0], row[1]),
+    )
+    if temperature is None and temp_candidates:
+        temperature = _temperature_value(temp_candidates[0][2])
+    for entity in group:
+        if humidity is None:
+            humidity = _humidity_value(entity)
+        if dew_point is None:
+            dew_point = _dew_point_value(entity)
+    if not any((condition, temperature, humidity, dew_point)):
+        return "Aktuell sind die Wetterdaten in Home Assistant nicht verfügbar."
+    parts = []
+    if condition:
+        parts.append(f"Draußen ist es {condition}")
+    if temperature:
+        parts.append(("die Temperatur beträgt " if parts else "Draußen sind es ") + temperature)
+    if humidity:
+        parts.append(f"die Luftfeuchtigkeit beträgt {humidity}")
+    sentence = ", ".join(parts) + "." if parts else ""
+    if dew_point:
+        sentence += (" " if sentence else "") + f"Der Taupunkt liegt bei {dew_point}."
+    return sentence
 
 
 def _entries_from_live_entities(entities: list[dict]) -> list[dict[str, str]]:
@@ -335,24 +570,37 @@ def _entries_from_live_entities(entities: list[dict]) -> list[dict[str, str]]:
     ]
 
 
-def _compact_temperature_decision(request, entities: list[dict], query: str):
+def _compact_environment_decision(request, entities: list[dict], query: str, kind: str):
+    relevant = [
+        entity
+        for entity in entities
+        if _environmental_sensor(entity) or entity.get("domain") == "climate"
+    ][:16]
     lines = []
-    for entity in entities:
-        value = _live_value(entity, "temperature", generic_temperature=True)
+    for entity in relevant:
+        attrs = entity.get("attributes", {})
         lines.append(
             f"- {entity.get('name')}; domain={entity.get('domain')}; "
-            f"state={entity.get('state')}; area={entity.get('area')}; value={value or 'nicht aktuell/verfügbar'}"
+            f"area={entity.get('area')}; state={entity.get('state')}; "
+            f"device_class={attrs.get('device_class', '')}; unit={_unit(entity)}; "
+            f"current_temperature={attrs.get('current_temperature', '')}"
         )
+    task = (
+        "Beantworte die Frage nach der aktuellen Umgebungstemperatur."
+        if kind == "temperature"
+        else "Beantworte die aktuelle Wetterfrage."
+    )
     messages = [
         {
             "role": "system",
             "content": (
-                "Beantworte eine Frage nach der aktuellen Umgebungstemperatur anhand der wenigen "
-                "Home-Assistant-Live-Kandidaten. Bevorzuge echte Raum-/Außentemperatursensoren. "
-                "Geräte-, Grill-, Akku-, Wechselrichter- oder interne Temperaturen sind keine "
-                "Umgebungstemperatur. Ein Climate-Gerät mit state=off/unavailable/unknown ist keine "
-                "verlässliche aktuelle Quelle. Wenn keine geeignete aktuelle Quelle existiert, sage "
-                "klar, dass aktuell keine aktuellen Temperaturdaten verfügbar sind. Erfinde nichts."
+                f"{task} Nutze ausschließlich die folgenden Home-Assistant-Live-Daten. "
+                "Bevorzuge Messwerte, die semantisch die Raum-, Außen- oder Luftumgebung "
+                "beschreiben. Interne Geräte-, Prozess-, Batterie-, Motor-, Wasser-, "
+                "Koch- oder Fühlertemperaturen sind keine allgemeine Umgebungstemperatur. "
+                "Bei climate ist nur current_temperature ein Istwert; temperature ist ein "
+                "Sollwert. Wenn die Daten nicht eindeutig oder nicht aktuell sind, sage das "
+                "klar. Erfinde nichts."
             ),
         },
         {
@@ -365,6 +613,24 @@ def _compact_temperature_decision(request, entities: list[dict], query: str):
     return prepared
 
 
+def _initial_live_arguments(
+    static_entities: list[dict[str, str]],
+    query: str,
+    *,
+    kind: str,
+) -> dict[str, object]:
+    area = _outdoor_area(query, static_entities) or _explicit_area(query, static_entities)
+    if kind == "temperature":
+        arguments: dict[str, object] = {"domain": ["sensor", "climate", "weather"]}
+    else:
+        arguments = {"domain": ["weather", "sensor"]}
+    if area:
+        arguments["area"] = area
+    elif kind == "weather" and any(item.get("domain") == "weather" for item in static_entities):
+        arguments = {"domain": ["weather"]}
+    return arguments
+
+
 def install():
     from . import runtime
 
@@ -372,6 +638,7 @@ def install():
     litert_cls = runtime.LiteRTLMBackend
     if getattr(backend_cls, "_ha_weather_routing_installed", False):
         return
+
     original_select_tools = backend_cls.select_tools
     original_litert_chat = litert_cls.chat
 
@@ -379,14 +646,22 @@ def install():
     def select_tools(self, request):
         request_id = getattr(request, "_request_id", "-")
         query = latest_user_text(request.messages).strip()
-        live_tool = _live_tool(request.tools)
+        live_tool = _state._live_tool(request.tools)
 
         round_data = _latest_round(request.messages)
         if round_data is not None and (_weather_query(query) or _ambient_temperature_query(query)):
             _, calls, results = round_data
-            entities = _live_entities(results, calls)
+            entities = _state._live_entities(results, calls)
             if _weather_query(query):
-                answer = _weather_response(entities)
+                answer = _weather_response(entities, query)
+                if answer is None:
+                    compact = _compact_environment_decision(request, entities, query, "weather")
+                    _LOG.info(
+                        "ha_weather_route request_id=%s route=weather_decision_minimal entities=%d tools=0",
+                        request_id,
+                        len(entities),
+                    )
+                    return compact
                 prepared = request.model_copy(update={"tools": None, "tool_choice": None})
                 prepared._request_id = request_id
                 object.__setattr__(prepared, "_direct_weather_response", answer)
@@ -396,6 +671,7 @@ def install():
                     len(entities),
                 )
                 return prepared
+
             answer = _temperature_response(entities, query)
             if answer is not None:
                 prepared = request.model_copy(update={"tools": None, "tool_choice": None})
@@ -407,7 +683,8 @@ def install():
                     len(entities),
                 )
                 return prepared
-            compact = _compact_temperature_decision(request, entities, query)
+
+            compact = _compact_environment_decision(request, entities, query, "temperature")
             _LOG.info(
                 "ha_weather_route request_id=%s route=temperature_decision_minimal entities=%d tools=0",
                 request_id,
@@ -418,50 +695,28 @@ def install():
         if live_tool is None or any(message.get("role") == "tool" for message in request.messages):
             return original_select_tools(self, request)
 
-        static_entities = _entries(request.messages)
+        static_entities = _state._entries(request.messages)
         if _weather_query(query):
-            sources = _weather_sources(static_entities, query)
-            if not sources:
-                answer = "Ich habe keine passenden aktuellen Wetterdaten in Home Assistant gefunden."
-                prepared = request.model_copy(update={"tools": None, "tool_choice": None})
-                prepared._request_id = request_id
-                object.__setattr__(prepared, "_direct_weather_response", answer)
-                _LOG.info(
-                    "ha_weather_route request_id=%s route=no_weather_source skipped_gemma=true",
-                    request_id,
-                )
-                return prepared
+            arguments = _initial_live_arguments(static_entities, query, kind="weather")
             prepared = request.model_copy(update={"tools": [live_tool], "tool_choice": None})
             prepared._request_id = request_id
-            object.__setattr__(prepared, "_direct_ha_response", _direct_calls(sources))
+            object.__setattr__(prepared, "_direct_ha_response", _direct_call(arguments))
             _LOG.info(
-                "ha_weather_route request_id=%s route=direct_weather_live sources=%d skipped_gemma=true",
+                "ha_weather_route request_id=%s route=generic_weather_live filters=%s skipped_gemma=true",
                 request_id,
-                len(sources),
+                json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
             )
             return prepared
 
         if _ambient_temperature_query(query):
-            sources = _temperature_sources(static_entities, query)
-            if not sources:
-                area = _explicit_area(query, static_entities)
-                suffix = f" für {area}" if area else ""
-                answer = f"Ich habe keinen geeigneten aktuellen Temperatursensor{suffix} gefunden."
-                prepared = request.model_copy(update={"tools": None, "tool_choice": None})
-                prepared._request_id = request_id
-                object.__setattr__(prepared, "_direct_weather_response", answer)
-                _LOG.info(
-                    "ha_weather_route request_id=%s route=no_temperature_source skipped_gemma=true",
-                    request_id,
-                )
-                return prepared
+            arguments = _initial_live_arguments(static_entities, query, kind="temperature")
             prepared = request.model_copy(update={"tools": [live_tool], "tool_choice": None})
             prepared._request_id = request_id
-            object.__setattr__(prepared, "_direct_ha_response", _direct_calls(sources))
+            object.__setattr__(prepared, "_direct_ha_response", _direct_call(arguments))
             _LOG.info(
-                "ha_weather_route request_id=%s route=direct_temperature_live sources=%d skipped_gemma=true",
+                "ha_weather_route request_id=%s route=generic_temperature_live filters=%s skipped_gemma=true",
                 request_id,
-                len(sources),
+                json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
             )
             return prepared
 
