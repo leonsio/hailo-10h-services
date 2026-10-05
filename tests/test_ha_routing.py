@@ -27,6 +27,12 @@ Static Context: An overview of the areas and the devices in this smart home:
 - names: Kaffeemaschine
   domain: switch
   areas: Küche
+- names: Licht
+  domain: light
+  areas: Flur Erdgeschoss
+- names: Licht
+  domain: light
+  areas: Schlafzimmer
 - names: Oberlicht
   domain: light
   areas: Ankleide
@@ -103,10 +109,24 @@ def test_kitchen_light_command_is_ha_relevant():
 
 def test_direct_area_turn_off_selects_light_from_mixed_domain_area():
     req = request("Schalte das Licht in der Küche aus", tools=[TURN_OFF])
-    result = direct_action_response(req)
+    trace = {}
+    result = direct_action_response(req, trace=trace)
     assert result is not None
     call = result["tool_calls"][0]
     assert call["function"]["name"] == "intent__HassTurnOff"
+    assert json.loads(call["function"]["arguments"]) == {
+        "area": "Küche",
+        "domain": ["light"],
+    }
+    assert trace["direct_action_reason"] == "unambiguous"
+    assert trace["direct_target_kind"] == "area"
+
+
+def test_generic_light_entities_in_other_areas_do_not_block_area_command():
+    req = request("Schalte das Licht in der Küche aus", tools=[TURN_OFF])
+    result = direct_action_response(req)
+    assert result is not None
+    call = result["tool_calls"][0]
     assert json.loads(call["function"]["arguments"]) == {
         "area": "Küche",
         "domain": ["light"],
@@ -133,6 +153,17 @@ def test_direct_area_switch_command_selects_switch_not_light():
     assert json.loads(call["function"]["arguments"]) == {
         "area": "Küche",
         "domain": ["switch"],
+    }
+
+
+def test_specific_device_inside_named_area_beats_area_group_action():
+    req = request("Schalte Backofen Licht in der Küche aus", tools=[TURN_OFF])
+    result = direct_action_response(req)
+    assert result is not None
+    call = result["tool_calls"][0]
+    assert json.loads(call["function"]["arguments"]) == {
+        "name": "Backofen Licht",
+        "domain": ["light"],
     }
 
 
@@ -167,6 +198,13 @@ def test_mixed_domain_area_without_explicit_domain_does_not_bypass_llm():
     assert direct_action_response(req, trace=trace) is None
     assert trace["direct_action_reason"] == "area_domain_ambiguous"
     assert trace["candidate_domains"] == ["light", "switch"]
+
+
+def test_generic_domain_name_without_area_does_not_target_random_entity():
+    req = request("Schalte das Licht aus", tools=[TURN_OFF])
+    trace = {}
+    assert direct_action_response(req, trace=trace) is None
+    assert trace["direct_action_reason"] == "target_not_unique"
 
 
 def test_direct_explicit_device_uses_name_and_domain():
