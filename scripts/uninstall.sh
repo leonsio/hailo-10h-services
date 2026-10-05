@@ -2,9 +2,36 @@
 set -euo pipefail
 
 if [[ ${EUID} -ne 0 ]]; then
-  echo 'Run with sudo bash scripts/uninstall.sh' >&2
+  echo 'Run with sudo bash scripts/uninstall.sh [--remove-nginx]' >&2
   exit 1
 fi
+
+REMOVE_NGINX=false
+for ARG in "$@"; do
+  case "${ARG}" in
+    --remove-nginx)
+      REMOVE_NGINX=true
+      ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: sudo bash scripts/uninstall.sh [--remove-nginx]
+
+Removes hailo-10h-services completely while keeping HEF/model files and external
+LiteRT-LM installations/models.
+
+Options:
+  --remove-nginx  Also purge all installed nginx packages and remove /etc/nginx.
+                  Use this only if nginx is not needed by another application.
+EOF
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: ${ARG}" >&2
+      echo 'Usage: sudo bash scripts/uninstall.sh [--remove-nginx]' >&2
+      exit 2
+      ;;
+  esac
+done
 
 SERVICE=hailo-10h-services.service
 SERVICE_DIR=/opt/hailo-10h-services
@@ -31,7 +58,7 @@ rm -f -- "${SYSTEMD_UNIT}"
 systemctl daemon-reload
 systemctl reset-failed "${SERVICE}" 2>/dev/null || true
 
-# Remove only the nginx configuration created by scripts/enable-https.sh.
+# Remove only the nginx configuration created by scripts/enable-https.sh first.
 if [[ -L ${NGINX_ENABLED} ]]; then
   TARGET=$(readlink -- "${NGINX_ENABLED}")
   if [[ ${TARGET} == "${NGINX_SITE}" ]]; then
@@ -44,14 +71,15 @@ elif [[ -e ${NGINX_ENABLED} ]]; then
 fi
 rm -f -- "${NGINX_SITE}"
 
-if command -v nginx >/dev/null 2>&1 && nginx -t >/dev/null 2>&1; then
-  if systemctl is-active --quiet nginx; then
-    systemctl reload nginx || true
+if ! ${REMOVE_NGINX}; then
+  if command -v nginx >/dev/null 2>&1 && nginx -t >/dev/null 2>&1; then
+    if systemctl is-active --quiet nginx; then
+      systemctl reload nginx || true
+    fi
   fi
 fi
 
-# Remove application-generated TLS material. nginx itself is deliberately retained:
-# it may be used by unrelated applications.
+# Remove application-generated TLS material.
 rm -rf -- "${TLS_DIR}"
 
 # Remove application files, venv, configuration and runtime state.
@@ -90,6 +118,37 @@ if getent group "${SERVICE_USER}" >/dev/null 2>&1; then
   groupdel "${SERVICE_USER}" 2>/dev/null || true
 fi
 
+# Optional: remove nginx completely. This intentionally affects every nginx site on
+# the host, not only hailo-10h-services, therefore it is opt-in.
+if ${REMOVE_NGINX}; then
+  echo 'Removing nginx because --remove-nginx was specified ...'
+  systemctl disable --now nginx 2>/dev/null || true
+
+  if command -v dpkg-query >/dev/null 2>&1; then
+    mapfile -t NGINX_PACKAGES < <(
+      dpkg-query -W -f='${binary:Package}\t${db:Status-Abbrev}\n' 'nginx*' 2>/dev/null \
+        | awk '$2 ~ /^ii/ {print $1}'
+    )
+  else
+    NGINX_PACKAGES=()
+  fi
+
+  if (( ${#NGINX_PACKAGES[@]} > 0 )); then
+    printf 'Purging nginx packages:'
+    printf ' %s' "${NGINX_PACKAGES[@]}"
+    printf '\n'
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y "${NGINX_PACKAGES[@]}"
+    DEBIAN_FRONTEND=noninteractive apt-get autoremove -y
+  else
+    echo 'No installed nginx packages found.'
+  fi
+
+  # Purge removes package-owned configuration; remove remaining locally-created
+  # nginx configuration/cache/log directories as part of the explicit full removal.
+  rm -rf -- /etc/nginx /var/cache/nginx
+  rm -rf -- /var/log/nginx
+fi
+
 cat <<EOF
 
 hailo-10h-services has been removed.
@@ -98,7 +157,16 @@ INTENTIONALLY NOT REMOVED:
   * HailoRT kernel driver, firmware and vendor HailoRT installation
   * HEF/model files under: ${MODEL_DIR}
   * LiteRT-LM installations/models outside ${SERVICE_DIR}
-  * nginx, openssl, iproute2, python3-venv, libsndfile1 and acl packages
+  * openssl, iproute2, python3-venv, libsndfile1 and acl packages
+EOF
+
+if ${REMOVE_NGINX}; then
+  echo '  * nginx was REMOVED because --remove-nginx was specified'
+else
+  echo '  * nginx remains installed (use --remove-nginx to purge it too)'
+fi
+
+cat <<EOF
 
 The installer may have installed litert-lm inside ${SERVICE_DIR}/venv. That private
 copy was removed together with the application venv; no external/system LiteRT-LM
