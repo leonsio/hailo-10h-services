@@ -11,6 +11,7 @@ dependencies = [
   "fastapi>=0.115,<1", "uvicorn>=0.30,<1", "python-multipart>=0.0.18,<1",
   "numpy>=1.24,<3", "Pillow>=10.4,<13", "scipy>=1.10,<2", "soundfile>=0.12,<1",
   "wyoming>=1.7,<2", "mcp>=2.3,<3", "aiomqtt>=2.3,<3",
+  "PyYAML>=6,<7",
   "jsonschema>=4.23,<5",
   "safetensors>=0.4,<1", "tokenizers>=0.20,<1",
 ]
@@ -25,7 +26,7 @@ hailo-10h-services = "hailo_services.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-hailo_services = ["web/*.html", "web/*.css", "web/*.js", "locales/*.json"]
+hailo_services = ["web/*.html", "web/*.css", "web/*.js", "locales/*.json", "model_catalog.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

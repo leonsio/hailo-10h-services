@@ -15,7 +15,7 @@ from wyoming.error import Error
 from wyoming.event import Event, async_write_event
 from wyoming.info import AsrModel, AsrProgram, Attribution, Describe, Info
 
-from .config import STT_MODEL
+from .config import Settings
 from .media import audio_file, audio_metadata, decode_base64, normalize_audio
 from .schemas import ChatRequest, TranscribeRequest
 
@@ -28,28 +28,29 @@ def _debug(settings, message, *args):
         _LOG.debug(message, *args)
 
 
-def wyoming_info():
-    attribution = Attribution(name="Hailo / OpenAI", url="https://github.com/hailo-ai/hailo-apps")
+def wyoming_info(settings=None):
+    settings = settings or Settings()
+    attribution = Attribution(name="Hailo / OpenAI", url="https://github.com/hailo-ai/hailo_model_zoo_genai")
     return Info(
         asr=[
             AsrProgram(
                 name="hailo-whisper",
                 attribution=attribution,
                 installed=True,
-                description="Resident Whisper Base on Hailo-10H (SHARED)",
+                description=f"Resident {settings.whisper_hef} on Hailo-10H (SHARED)",
                 version="0.1.0",
                 models=[
                     AsrModel(
-                        name=STT_MODEL,
+                        name=settings.stt_model,
                         attribution=attribution,
                         installed=True,
-                        description="Multilingual Whisper Base",
+                        description=f"Multilingual {settings.whisper_hef}",
                         version=None,
                         languages=LANGUAGES,
                     )
                 ],
             )
-        ]
+        ] if settings.whisper_enabled else []
     )
 
 
@@ -114,10 +115,10 @@ class WyomingServer:
                     _debug(self.settings,
                            "protocol=wyoming event=describe request_id=%s peer=%s",
                            request_id, peer[0])
-                    await async_write_event(wyoming_info().event(), writer)
+                    await async_write_event(wyoming_info(self.settings).event(), writer)
                 elif Transcribe.is_type(event.type):
                     request = Transcribe.from_event(event)
-                    if request.name not in {None, STT_MODEL, "Whisper-Base"}:
+                    if request.name not in {None, self.settings.stt_model, self.settings.whisper_hef}:
                         raise ValueError("Unknown transcription model")
                     language = request.language or self.settings.language
                     if not re.fullmatch(r"[a-z]{2}", language):
@@ -126,7 +127,7 @@ class WyomingServer:
                     request_id = uuid.uuid4().hex[:12]
                     _debug(self.settings,
                            "protocol=wyoming event=transcribe_start request_id=%s peer=%s model=%s language=%s",
-                           request_id, peer[0], request.name or STT_MODEL, language)
+                           request_id, peer[0], request.name or self.settings.stt_model, language)
                 elif AudioStart.is_type(event.type):
                     start = AudioStart.from_event(event)
                     if (
@@ -203,7 +204,7 @@ async def dispatch(runtime, settings, operation, payload):
         data = decode_base64(request.audio_base64, settings.max_body)
         _debug(settings,
                "operation=whisper_transcribe model=%s language=%s audio=%s bytes=%d",
-               STT_MODEL, request.language or settings.language, audio_metadata(data), len(data))
+               settings.stt_model, request.language or settings.language, audio_metadata(data), len(data))
         audio = audio_file(data, settings.max_audio_seconds)
         return {"text": await runtime.transcribe(audio, request.language)}
     if operation == "health":

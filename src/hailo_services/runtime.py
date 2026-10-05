@@ -7,11 +7,11 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .config import LLM_MODEL, MINILM_HEF_URL, STT_MODEL, VLM_MODEL, Settings
+from .config import LLM_MODEL, Settings
 from .input_budget import InputBudgetError, history_candidates
 from .media import image_frame
 from .minilm import MiniLM
-from .models import ensure_minilm_hef, prepare_model_version
+from .models import ModelManager, prepare_model_version
 from .tool_calling import (
     has_tool_context,
     native_messages,
@@ -46,30 +46,32 @@ class LiteRTInferenceError(RuntimeError):
 class HailoBackend:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.device = self.vlm = self.whisper = self.minilm = None
+        self.device = self.vlm = self.whisper = self.minilm = self.llm = None
         self.paths = {}
         self.artifact_paths = {}
         self._retrieval_embedding_cache = {}
 
     def start(self):
-        from hailo_apps.python.core.common.core import resolve_hef_path
         from hailo_platform import VDevice
         from hailo_platform.genai import VLM, Speech2Text
 
-        prepare_model_version()
-        # Resolve/download BEFORE allocating accelerator resources.
-        for key, model, group in (
-            ("vlm", self.settings.vlm_hef, "vlm_chat"),
-            ("whisper", self.settings.whisper_hef, "whisper_chat"),
+        manager = ModelManager(self.settings, prepare_model_version())
+        for key, model, kind, enabled in (
+            ("vlm", self.settings.vlm_hef, "vlm", self.settings.vlm_enabled),
+            ("whisper", self.settings.whisper_hef, "whisper", self.settings.whisper_enabled),
+            ("llm", self.settings.hailo_llm_model, "llm", self.settings.hailo_llm_enabled),
         ):
-            path = resolve_hef_path(model, app_name=group, arch="hailo10h")
-            if path is None or not path.is_file() or path.stat().st_size == 0:
-                raise RuntimeError(f"Could not resolve/download {model}")
-            self.paths[key] = str(path)
-        # Cache the HEF before allocating the accelerator.
-        self.artifact_paths["minilm_hef"] = str(ensure_minilm_hef(
-            self.settings.minilm_hef_path, MINILM_HEF_URL
-        ))
+            if enabled:
+                self.paths[key] = str(manager.resolve(model, kind))
+        if self.settings.minilm_enabled:
+            self.artifact_paths["minilm_hef"] = str(manager.resolve(
+                "minilm-l6-ruvector", "embedding", self.settings.minilm_hef_path
+            ))
+            # Host assets are also prepared before accelerator allocation.
+            for name in ("minilm-tokenizer", "minilm-weights"):
+                manager.resolve(name, "asset", Path(self.artifact_paths["minilm_hef"]).parent / manager.entry(name)["filename"])
+        if not self.paths and not self.settings.minilm_enabled:
+            return
         params = VDevice.create_params()
         params.group_id = "SHARED"  # Mandatory, intentionally not configurable.
         try:
@@ -77,12 +79,19 @@ class HailoBackend:
                 raise RuntimeError("Hailo binding did not preserve mandatory group_id=SHARED")
             _LOG.info("Creating Hailo VDevice with effective group_id=%s", params.group_id)
             self.device = VDevice(params)
-            _LOG.info("Loading resident Qwen2-VL from %s", self.paths["vlm"])
-            self.vlm = VLM(self.device, self.paths["vlm"])
-            _LOG.info("Loading resident Whisper Base from %s", self.paths["whisper"])
-            self.whisper = Speech2Text(self.device, self.paths["whisper"])
-            self.minilm = MiniLM(self.device, self.artifact_paths["minilm_hef"])
-            self.artifact_paths.update(self.minilm.artifacts)
+            if self.settings.vlm_enabled:
+                _LOG.info("Loading resident VLM %s", self.paths["vlm"])
+                self.vlm = VLM(self.device, self.paths["vlm"])
+            if self.settings.whisper_enabled:
+                _LOG.info("Loading resident Whisper %s", self.paths["whisper"])
+                self.whisper = Speech2Text(self.device, self.paths["whisper"])
+            if self.settings.hailo_llm_enabled:
+                from hailo_platform.genai import LLM
+                _LOG.info("Loading resident LLM %s", self.paths["llm"])
+                self.llm = LLM(self.device, self.paths["llm"])
+            if self.settings.minilm_enabled:
+                self.minilm = MiniLM(self.device, self.artifact_paths["minilm_hef"], manager)
+                self.artifact_paths.update(self.minilm.artifacts)
             _LOG.info("All models initialized; VDevice group_id=SHARED; paths=%s", self.paths)
         except BaseException:
             self.close()
@@ -90,6 +99,12 @@ class HailoBackend:
 
     def chat(self, request, emit=None, cancelled=None):
         prompt, frames = [], []
+        size = (336, 336)
+        if self.vlm is not None and hasattr(self.vlm, "input_frame_shape"):
+            height, width, channels = self.vlm.input_frame_shape()
+            if channels != 3:
+                raise ValueError("VLM requires an unsupported input frame format")
+            size = (width, height)
         for message in request.messages:
             content = message["content"]
             if isinstance(content, str):
@@ -99,18 +114,23 @@ class HailoBackend:
                 if part["type"] == "image_url":
                     if len(frames) >= 4:
                         raise ValueError("At most four images per request")
-                    frames.append(image_frame(part["image_url"]["url"], self.settings.max_body))
+                    frames.append(image_frame(part["image_url"]["url"], self.settings.max_body, size))
                     converted.append({"type": "image"})
                 else:
                     converted.append({"type": "text", "text": part["text"]})
             prompt.append({"role": message["role"], "content": converted})
+        model = self.llm if request.model == self.settings.hailo_llm_model else self.vlm
+        if model is None:
+            raise BusyError(f"{request.model} is disabled")
+        if model is self.llm and frames:
+            raise ValueError("Hailo LLM models do not accept images")
         output = []
         # Clear only KV context, never unload the model weights.
         try:
-            self.vlm.clear_context()
-            with self.vlm.generate(
+            model.clear_context()
+            with model.generate(
                 prompt=prompt,
-                frames=frames,
+                **({"frames": frames} if model is self.vlm else {}),
                 temperature=request.temperature,
                 seed=request.seed,
                 max_generated_tokens=request.max_tokens,
@@ -126,11 +146,13 @@ class HailoBackend:
                             emit(chunk)
             return "".join(output).strip()
         finally:
-            self.vlm.clear_context()
+            model.clear_context()
 
     def transcribe(self, audio, language):
         from hailo_platform.genai import Speech2TextTask
 
+        if self.whisper is None:
+            raise BusyError("Whisper is disabled")
         segments = self.whisper.generate_all_segments(
             audio_data=audio,
             task=Speech2TextTask.TRANSCRIBE,
@@ -244,7 +266,7 @@ class HailoBackend:
 
     def close(self):
         # Release models before the device, including after partial startup.
-        for name in ("minilm", "whisper", "vlm", "device"):
+        for name in ("minilm", "llm", "whisper", "vlm", "device"):
             resource = getattr(self, name)
             if resource is not None:
                 try:
@@ -267,7 +289,9 @@ class LiteRTLMBackend:
         max_num_tokens=16384,
         max_input_tokens=4096,
         debug_log=False,
+        model_manager=None,
     ):
+        self.model_manager = model_manager
         self.model_path = str(Path(model_path).expanduser())
         self.max_num_tokens = max_num_tokens
         self.max_input_tokens = max_input_tokens
@@ -278,6 +302,8 @@ class LiteRTLMBackend:
 
     def start(self):
         path = Path(self.model_path)
+        if self.model_manager is not None:
+            path = self.model_manager.resolve(LLM_MODEL, "litert", path)
         if not path.is_file():
             raise FileNotFoundError(f"LiteRT-LM model not found: {path}")
         import litert_lm
@@ -556,12 +582,13 @@ class Runtime:
         self.pending = 0
         self.ready = False
         self.litert_backend = litert_backend
-        if self.litert_backend is None and settings.litert_model_path:
+        if self.litert_backend is None and (settings.litert_enabled or settings.litert_model_path):
             self.litert_backend = LiteRTLMBackend(
-                settings.litert_model_path,
+                settings.litert_model_path or str(Path(settings.model_store) / "gemma-4-E2B-it.litertlm"),
                 settings.litert_max_num_tokens,
                 settings.litert_max_input_tokens,
                 settings.debug_log,
+                ModelManager(settings),
             )
         if self.litert_backend is not None:
             self.litert_backend.debug_log = settings.debug_log
@@ -613,7 +640,14 @@ class Runtime:
         future = self.submit(function, *args)
         return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 
+    def default_chat_request(self, request):
+        if "model" not in request.model_fields_set:
+            available = self.hailo_chat_models
+            request = request.model_copy(update={"model": available[0] if available else LLM_MODEL})
+        return request
+
     async def chat(self, request, on_inference=None):
+        request = self.default_chat_request(request)
         if request.max_input_tokens is not None and request.model != LLM_MODEL:
             raise ValueError(f"max_input_tokens requires model {LLM_MODEL}; Qwen image tokens cannot be counted here")
         if has_tool_context(request) and request.model != LLM_MODEL:
@@ -630,7 +664,7 @@ class Runtime:
                     self.litert_backend.chat, request, None, None, True
                 )
             return await self.call_litert(self.litert_backend.chat, request)
-        if request.model != VLM_MODEL:
+        if request.model not in self.hailo_chat_models:
             raise ValueError(f"Unknown model: {request.model}")
         return await self.call(self.backend.chat, request)
 
@@ -641,6 +675,7 @@ class Runtime:
         return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 
     async def stream(self, request):
+        request = self.default_chat_request(request)
         if request.max_input_tokens is not None and request.model != LLM_MODEL:
             raise ValueError(f"max_input_tokens requires model {LLM_MODEL}; Qwen image tokens cannot be counted here")
         if has_tool_context(request):
@@ -650,7 +685,7 @@ class Runtime:
         queue = asyncio.Queue()  # Bounded by request.max_tokens <= 1024.
         cancelled = threading.Event()
         litert = request.model == LLM_MODEL
-        if request.model != VLM_MODEL and not litert:
+        if request.model not in self.hailo_chat_models and not litert:
             raise ValueError(f"Unknown model: {request.model}")
         if litert and not self.litert_ready:
             detail = self.litert_error or "LiteRT-LM model is not configured"
@@ -680,6 +715,10 @@ class Runtime:
     async def transcribe(self, audio, language=None):
         return await self.call(self.backend.transcribe, audio, language or self.settings.language)
 
+    @property
+    def hailo_chat_models(self):
+        return ([self.settings.vlm_model] if self.settings.vlm_enabled else []) + ([self.settings.hailo_llm_model] if self.settings.hailo_llm_enabled else [])
+
     def status(self):
         return {
             "ready": self.ready,
@@ -694,7 +733,7 @@ class Runtime:
                 "pending": self.litert_pending,
                 "error": self.litert_error,
             },
-            "models": ([VLM_MODEL, STT_MODEL] if self.ready else [])
+            "models": (self.hailo_chat_models + ([self.settings.stt_model] if self.settings.whisper_enabled else []) if self.ready else [])
             + ([LLM_MODEL] if self.litert_ready else []),
             "model_paths": self.backend.paths,
             "artifact_paths": getattr(self.backend, "artifact_paths", {}),

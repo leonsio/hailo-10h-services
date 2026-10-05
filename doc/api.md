@@ -241,7 +241,7 @@ engine and do not establish actual model accuracy or device execution.
 
 Sources used for the implementation:
 
-- [Hailo GenAI examples](https://github.com/hailo-ai/hailo-apps/tree/main/hailo_apps/python/gen_ai_apps)
+- [Hailo GenAI examples](https://github.com/hailo-ai/hailo_model_zoo_genai)
 - [Hailo shared-device usage and KV-cache limitation](https://github.com/hailo-ai/hailo_model_zoo_genai/blob/main/docs/USAGE.rst)
 - [Official Wyoming protocol](https://github.com/OHF-Voice/wyoming)
 - [Official MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)

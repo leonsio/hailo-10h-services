@@ -21,16 +21,16 @@ curl http://127.0.0.1:8090/health
 ```
 
 The installer creates a dedicated `hailo-services` user, a virtual environment
-with system packages visible, device/resource ACLs, an env file and systemd unit.
-It installs a pinned official hailo-apps revision with only its resource helper
-dependencies, avoiding unrelated camera/TTS/PyTorch packages. Native Hailo wheel
+with system packages visible, device/resource ACLs, a YAML configuration and systemd unit.
+The service manages its own model catalogue and downloads without installing a
+helper repository. Native Hailo wheel
 imports are checked again as the service user. For a wheel installed in a custom
 venv, the installer adds that environment’s vendor package directory to the
 service Python path when necessary. The Python ABI must match. Protected home
 paths are not visible to the systemd service; keep vendor environments under
 `/opt` or install the matching vendor wheel directly into the service venv.
 
-First installation generates an API key in `/etc/hailo-10h-services.env`.
+First installation generates an API key in `/etc/hailo-10h-services.yaml`.
 Configuration is preserved on reinstall. The account's home and working directory
 are `/var/lib/hailo-10h-services`, managed by systemd `StateDirectory`. Hailo can
 write `$HOME/.hailo` and cwd log files there. `ProtectSystem=full` stays enabled
@@ -49,16 +49,45 @@ sudo systemctl status hailo-10h-services
 being downloaded/loaded there is no listening HTTP socket. It includes loaded
 model names, paths, mandatory SHARED group, pending work and MQTT connection state.
 
-Hailo's pinned downloader knows model releases v5.1.0/v5.2.0/v5.3.0. This service
-explicitly selects the newest known release not newer than the loaded HailoRT Python binding, and
-logs that choice. Version detection reads `hailo_platform.__version__` without
-opening the device through `hailortcli`. For HailoRT 5.4 it selects v5.3.0 instead of the upstream silent
-v5.1 fallback. This is a candidate release, **not a claim of tested hardware
-compatibility**; HailoRT validates the HEFs when constructing the models. You can
-set `model_zoo_version=v5.2.0` in the env file for a known matching release, or use
-explicit HEFs. Set `hailort_version=5.4.0` only if detection fails and that is your
-actual library version. Existing HEFs are reused even when the release setting
-changes; move stale/incompatible files out of the store before re-downloading.
+## YAML model selection and download catalogue
+
+Edit `/etc/hailo-10h-services.yaml`; see `deploy/hailo-10h-services.yaml.example`.
+The `models` mapping selects Qwen2-VL or Qwen3-VL, Whisper Tiny/Base/Small,
+an optional Hailo text LLM, MiniLM retrieval, and optional Gemma E2B on CPU.
+Only enabled models are downloaded at startup, before device allocation, and
+remain resident. Requests never cause model swapping. Enabling Gemma requires
+`litert-lm` in the service interpreter; rerun the installer after enabling it.
+An existing `HAILO_LITERT_MODEL_PATH` remains supported as an ENV override.
+
+All download URLs, including MiniLM host assets and Gemma, are defined in
+`src/hailo_services/model_catalog.yaml` (included in the installed Python package).
+To customize it, copy it to `/etc/hailo-10h-models.yaml` and set
+`settings.model_catalog` to that path. No catalogue is fetched from a helper repository.
+The catalogue includes documented 5.1.1/5.2/5.3/5.4 releases; `model_release: auto`
+uses the loaded HailoRT binding's exact major/minor. HailoRT 5.4 selects **v5.4.0**.
+Unknown runtimes and unavailable model/release combinations fail clearly instead
+of silently trying an incompatible HEF. Explicit local HEF paths are supported.
+The MiniLM HEF is a community build; HailoRT checks compatibility when loading it.
+
+Existing valid local files are reused. The verified 5.4 file sizes also detect
+stale/truncated cached HEFs and trigger replacement. Downloads use bounded size checks and
+atomic rename; failed downloads do not replace existing files. For older release entries without exact sizes, remove/move an incompatible cache
+before downloading that release.
+All twelve current 5.4 HEF URLs were verified with HTTP HEAD (200 and file size)
+and against the official release documentation, without downloading all weights. Hardware inference must be verified locally.
+
+YAML is loaded safely and validated; unknown keys and invalid types are rejected.
+Existing `/etc/hailo-10h-services.env` is optional and retains precedence through
+`HAILO_<SETTING>` overrides. Move settings/secrets to YAML and remove the legacy
+ENV file when ready. Keep the YAML readable by group `hailo-services` (0640).
+All `Settings` fields can be configured under `settings`, including MQTT/secrets.
+A non-default model store needs matching permissions and a systemd `ReadWritePaths`
+exception. HTTPS setup reads numeric proxy settings from YAML, then legacy ENV.
+
+The optional Hailo LLM uses `hailo_platform.genai.LLM` for text chat and streaming;
+OpenAI tool calling and `max_input_tokens` remain on the existing Gemma backend.
+Activating additional resident models depends on available Hailo memory; validate
+that your selected combination fits before enabling it in production.
 
 ## HTTPS with a local self-signed CA
 

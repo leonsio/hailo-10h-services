@@ -5,21 +5,23 @@ from pathlib import Path
 
 import numpy as np
 
-from .models import ensure_model_file
+from .config import Settings
+from .models import ModelManager
 
 _LOG = logging.getLogger(__name__)
-_SOURCE = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/"
+
 
 
 class MiniLM:
-    def __init__(self, device, hef_path):
+    def __init__(self, device, hef_path, manager=None):
         from hailo_platform import FormatType
         from safetensors import safe_open
         from tokenizers import Tokenizer
 
         directory = Path(hef_path).parent
-        tokenizer_path = ensure_model_file(directory / "minilm-tokenizer.json", _SOURCE + "tokenizer.json", 100_000, 2_000_000)
-        weights_path = ensure_model_file(directory / "minilm-model.safetensors", _SOURCE + "model.safetensors", 10_000_000, 150_000_000)
+        manager = manager or ModelManager(Settings())
+        tokenizer_path = manager.resolve("minilm-tokenizer", "asset", directory / "minilm-tokenizer.json")
+        weights_path = manager.resolve("minilm-weights", "asset", directory / "minilm-model.safetensors")
         self.tokenizer = Tokenizer.from_file(str(tokenizer_path))
         self.tokenizer.enable_truncation(max_length=128)
         self.tokenizer.enable_padding(length=128, pad_id=0, pad_token="[PAD]")

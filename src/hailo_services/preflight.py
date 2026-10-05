@@ -35,8 +35,12 @@ def main():
         raise RuntimeError(
             f"Cannot create Hailo home {home / '.hailo'}: {exc}. Set a writable service HOME."
         ) from exc
+    from .config import Settings
+    settings = Settings.from_env()
+    model_store = Path(settings.model_store)
+    model_store.mkdir(parents=True, exist_ok=True)
     # No HailoRT import here: it attempts to open its own log on import.
-    for directory in (hailo_home, Path.cwd(), Path("/usr/local/hailo/resources/models/hailo10h")):
+    for directory in (hailo_home, Path.cwd(), model_store):
         check_writable_directory(directory)
     print("Preflight OK: Hailo home, working directory and model store are writable", flush=True)
 

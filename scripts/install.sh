@@ -9,7 +9,6 @@ SERVICE_DIR=/opt/hailo-10h-services
 SERVICE_STATE=/var/lib/hailo-10h-services
 # Select the Python that can already import your vendor HailoRT wheel.
 SERVICE_PYTHON=${HAILO_PYTHON:-python3}
-TOOLS_REVISION=891ce701c2ebe239a5d277759eb75a30f76678a9
 "${SERVICE_PYTHON}" - <<'PY'
 import sys
 if sys.version_info < (3, 10):
@@ -20,7 +19,7 @@ print('HailoRT GenAI Python API available')
 PY
 # Do not replace the kernel driver, firmware or vendor HailoRT installation.
 apt-get update
-apt-get install -y python3-venv git libsndfile1 acl
+apt-get install -y python3-venv libsndfile1 acl
 if systemctl cat hailo-10h-services.service >/dev/null 2>&1; then
   systemctl stop hailo-10h-services.service
 fi
@@ -44,28 +43,36 @@ if ! "${SERVICE_DIR}/venv/bin/python" -c 'import hailo_platform.genai' 2>/dev/nu
   printf '%s\n' "${VENDOR_SITE}" > "${SERVICE_SITE}/hailort-vendor.pth"
 fi
 "${SERVICE_DIR}/venv/bin/pip" install --upgrade pip setuptools wheel
-"${SERVICE_DIR}/venv/bin/pip" install "${SOURCE_DIR}" 'PyYAML>=6,<7' 'python-dotenv>=1,<2' 'opencv-python-headless==4.10.0.84'
-if [[ ! -f /etc/hailo-10h-services.env ]]; then
-  install -m 0600 "${SOURCE_DIR}/deploy/hailo-10h-services.env.example" /etc/hailo-10h-services.env
+"${SERVICE_DIR}/venv/bin/pip" install "${SOURCE_DIR}"
+if [[ ! -f /etc/hailo-10h-services.yaml ]]; then
+  install -o root -g hailo-services -m 0640 "${SOURCE_DIR}/deploy/hailo-10h-services.yaml.example" /etc/hailo-10h-services.yaml
   SERVICE_KEY=$("${SERVICE_DIR}/venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(32))')
-  sed -i "s/^HAILO_API_KEY=$/HAILO_API_KEY=${SERVICE_KEY}/" /etc/hailo-10h-services.env
+  sed -i "s/api_key: \"\"/api_key: \"${SERVICE_KEY}\"/" /etc/hailo-10h-services.yaml
 fi
-# Install the Gemma runtime into the service's interpreter when its model
-# path is configured; a package installed only in another user's venv is not visible.
-LITERT_MODEL_PATH=$(sed -n 's/^HAILO_LITERT_MODEL_PATH=//p' /etc/hailo-10h-services.env | tail -n 1)
-if [[ -n ${LITERT_MODEL_PATH} && -f ${LITERT_MODEL_PATH} ]]; then
-  if ! "${SERVICE_DIR}/venv/bin/python" -c 'from litert_lm import Engine, Tool' 2>/dev/null; then
-    "${SERVICE_DIR}/venv/bin/pip" install --upgrade litert-lm
-  fi
+chown root:hailo-services /etc/hailo-10h-services.yaml
+chmod 0640 /etc/hailo-10h-services.yaml
+# Existing ENV files remain optional overrides; new installations use YAML.
+# The small catalogue is package data; never clone/install a helper repository.
+LITERT_MODEL_PATH=$(HAILO_CONFIG=/etc/hailo-10h-services.yaml "${SERVICE_DIR}/venv/bin/python" - <<'CONFIGPY'
+import os
+from hailo_services.config import Settings
+legacy = '/etc/hailo-10h-services.env'
+if os.path.isfile(legacy):
+    for line in open(legacy):
+        key, sep, value = line.strip().partition('=')
+        if sep and key.startswith('HAILO_'):
+            os.environ[key] = value.strip('"').strip("'")
+s = Settings.from_env()
+print(s.litert_model_path)
+if s.litert_enabled or s.litert_model_path:
+    print('enabled')
+CONFIGPY
+)
+if [[ ${LITERT_MODEL_PATH} == *enabled ]]; then
+  "${SERVICE_DIR}/venv/bin/pip" install --upgrade litert-lm
+  LITERT_MODEL_PATH=${LITERT_MODEL_PATH%$'\nenabled'}
+  [[ ${LITERT_MODEL_PATH} != enabled ]] || LITERT_MODEL_PATH=''
 fi
-# Install only the official downloader/config helpers, avoiding unrelated camera capture,
-# audio capture, TTS, GStreamer and PyTorch dependency bundles.
-if [[ ! -d ${SERVICE_DIR}/hailo-apps/.git ]]; then
-  git clone https://github.com/hailo-ai/hailo-apps.git "${SERVICE_DIR}/hailo-apps"
-fi
-git -C "${SERVICE_DIR}/hailo-apps" fetch origin "${TOOLS_REVISION}"
-git -C "${SERVICE_DIR}/hailo-apps" checkout --detach "${TOOLS_REVISION}"
-"${SERVICE_DIR}/venv/bin/pip" install --no-deps --no-build-isolation "${SERVICE_DIR}/hailo-apps"
 # Grant access to the common store without changing other applications' ownership.
 install -d -m 0755 /usr/local/hailo/resources/models/hailo10h
 setfacl -m u:hailo-services:rx /usr/local/hailo /usr/local/hailo/resources /usr/local/hailo/resources/models
@@ -97,19 +104,18 @@ fi
 install -m 0644 "${SOURCE_DIR}/deploy/hailo-10h-services.service" /etc/systemd/system/hailo-10h-services.service
 # Native Hailo logging can use both HOME/.hailo and the process cwd.
 cd -- "${SERVICE_STATE}"
-runuser -u hailo-services -- env HOME="${SERVICE_STATE}" "${SERVICE_DIR}/venv/bin/python" - <<'PY'
+runuser -u hailo-services -- env HOME="${SERVICE_STATE}" HAILO_CONFIG=/etc/hailo-10h-services.yaml "${SERVICE_DIR}/venv/bin/python" - <<'PY'
 from hailo_platform import VDevice
 from hailo_platform.genai import VLM, Speech2Text
-from hailo_apps.python.core.common.core import resolve_hef_path
-from hailo_apps.installation.download_resources import download_resources
+from hailo_services.models import ModelManager
 from hailo_services.app import create_app
 from hailo_services.preflight import main
 main()
-print('Service user imports and resource downloader OK')
+print('Service user imports and model manager OK')
 PY
 systemctl daemon-reload
 systemctl reset-failed hailo-10h-services.service || true
 systemctl enable --now hailo-10h-services.service
 echo 'Installed. Follow startup/downloads with: journalctl -u hailo-10h-services -f'
-echo 'Configuration and API key: /etc/hailo-10h-services.env'
+echo 'Configuration and API key: /etc/hailo-10h-services.yaml (legacy ENV overrides remain supported)'
 echo 'Check readiness: curl http://127.0.0.1:8090/health'

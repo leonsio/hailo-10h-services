@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
-from .config import LLM_MODEL, STT_MODEL, VLM_MODEL, Settings
+from .config import LLM_MODEL, STT_MODEL, Settings
 from .i18n import SUPPORTED_LANGUAGES, catalogue, wait_sentence
 from .input_budget import InputBudgetError
 from .media import audio_file, audio_metadata, decode_base64
@@ -208,7 +208,7 @@ def create_app(settings=None, backend=None, litert_backend=None):
 
     @mcp.tool()
     async def analyze_image(image_base64: str, prompt: str, max_tokens: int = 256) -> str:
-        """Analyze a base64-encoded camera snapshot using Qwen2-VL-2B-Instruct."""
+        """Analyze a base64-encoded camera snapshot using the configured resident VLM."""
         request = ChatRequest(
             messages=[
                 {
@@ -225,12 +225,12 @@ def create_app(settings=None, backend=None, litert_backend=None):
 
     @mcp.tool()
     async def transcribe_audio(audio_base64: str, language: str | None = None) -> str:
-        """Transcribe a base64 WAV/FLAC/OGG recording with multilingual Whisper Base."""
+        """Transcribe a base64 WAV/FLAC/OGG recording with the configured multilingual Whisper model."""
         request = TranscribeRequest(audio_base64=audio_base64, language=language)
         data = decode_base64(request.audio_base64, settings.max_body)
         _debug(settings,
                "protocol=mcp operation=whisper_transcribe request_id=%s model=%s language=%s audio=%s bytes=%d",
-               uuid.uuid4().hex[:12], STT_MODEL, request.language or settings.language,
+               uuid.uuid4().hex[:12], settings.stt_model, request.language or settings.language,
                audio_metadata(data), len(data))
         return await runtime.transcribe(
             audio_file(data, settings.max_audio_seconds), request.language
@@ -238,7 +238,7 @@ def create_app(settings=None, backend=None, litert_backend=None):
 
     @mcp.tool()
     async def chat_text(prompt: str, max_tokens: int = 256) -> str:
-        """Ask Qwen2-VL a text question. Does not execute Home Assistant actions."""
+        """Ask the configured chat model a text question. Does not execute Home Assistant actions."""
         return await runtime.chat(
             ChatRequest(messages=[{"role": "user", "content": prompt}], max_tokens=max_tokens)
         )
@@ -300,10 +300,10 @@ def create_app(settings=None, backend=None, litert_backend=None):
     async def web_config():
         return {
             "auth_required": bool(settings.api_key),
-            "vlm_model": VLM_MODEL,
+            "vlm_model": settings.vlm_model,
             "llm_model": LLM_MODEL,
-            "chat_models": [VLM_MODEL] + ([LLM_MODEL] if runtime.litert_ready else []),
-            "whisper_model": STT_MODEL,
+            "chat_models": runtime.hailo_chat_models + ([LLM_MODEL] if runtime.litert_ready else []),
+            "whisper_model": settings.stt_model,
             "language": settings.language,
             "service_language": settings.service_language,
             "ui_languages": list(SUPPORTED_LANGUAGES),
@@ -360,13 +360,14 @@ def create_app(settings=None, backend=None, litert_backend=None):
             "object": "list",
             "data": [
                 {"id": model, "object": "model", "owned_by": "hailo"}
-                for model in (VLM_MODEL, STT_MODEL)
+                for model in runtime.hailo_chat_models + ([settings.stt_model] if settings.whisper_enabled else [])
             ] + ([{"id": LLM_MODEL, "object": "model", "owned_by": "litert-lm"}]
                  if runtime.litert_ready else []),
         }
 
     @app.post("/v1/chat/completions")
     async def chat(request: ChatRequest, http_request: Request):
+        request = runtime.default_chat_request(request)
         identifier, created = "chatcmpl-" + uuid.uuid4().hex, int(time.time())
         request_id = http_request.scope.get("state", {}).get("request_id", "-")
         request._request_id = request_id
@@ -473,7 +474,7 @@ def create_app(settings=None, backend=None, litert_backend=None):
         language: Annotated[str | None, Form()] = None,
         response_format: Annotated[str, Form()] = "json",
     ):
-        if model not in {STT_MODEL, "Whisper-Base", "whisper-1"}:
+        if model not in {settings.stt_model, settings.whisper_hef, "whisper-1", STT_MODEL}:
             raise HTTPException(400, "Unknown transcription model")
         if response_format not in {"json", "text"}:
             raise HTTPException(400, "response_format must be json or text")

@@ -171,9 +171,16 @@ def main():
     parser.add_argument("--port", type=int, default=8443)
     parser.add_argument("--http-port", type=int, default=8090)
     parser.add_argument("--env-file", default="/etc/hailo-10h-services.env")
+    parser.add_argument("--config", default="/etc/hailo-10h-services.yaml")
     args = parser.parse_args()
     # Read only numeric proxy settings. Do not source/execute the service's env file.
     values = {}
+    if Path(args.config).exists():
+        import yaml
+        document = yaml.safe_load(Path(args.config).read_text()) or {}
+        for key in ("port", "max_body", "request_timeout", "host"):
+            if key in document.get("settings", {}):
+                values["HAILO_" + key.upper()] = str(document["settings"][key])
     if Path(args.env_file).exists():
         for line in Path(args.env_file).read_text().splitlines():
             key, _, value = line.partition("=")

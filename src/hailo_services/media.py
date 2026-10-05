@@ -27,7 +27,7 @@ def decode_base64(value: str, limit: int) -> bytes:
     return data
 
 
-def image_frame(value: str, limit: int) -> np.ndarray:
+def image_frame(value: str, limit: int, size=(336, 336)) -> np.ndarray:
     # URL fetching is deliberately excluded: callers supply their snapshot bytes.
     try:
         with Image.open(io.BytesIO(decode_base64(value, limit))) as image:
@@ -35,10 +35,10 @@ def image_frame(value: str, limit: int) -> np.ndarray:
                 raise ValueError("Image has too many pixels")
             # Let JPEG downsample in the decoder before allocating the full-resolution
             # RGB buffer. Phone photos can be 48 MP, while the VLM input is only 336².
-            image.draft("RGB", (672, 672))
+            image.draft("RGB", (size[0] * 2, size[1] * 2))
             # Pillow's buffer-backed ndarray is read-only; Hailo GenAI requires
             # writable, contiguous frame storage at the native API boundary.
-            return np.array(image.convert("RGB").resize((336, 336)), dtype=np.uint8, copy=True)
+            return np.array(image.convert("RGB").resize(size), dtype=np.uint8, copy=True)
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
         raise ValueError("Invalid or oversized image") from exc
 

@@ -1,0 +1,32 @@
+# User configuration. Restart the service after edits.
+# All download links are in the package's model_catalog.yaml.
+# ENV HAILO_<SETTING> values override settings below; HAILO_CONFIG selects this file.
+settings:
+  host: 0.0.0.0
+  port: 8090
+  wyoming_port: 10300
+  api_key: ""
+  language: de
+  service_language: de
+  debug_log: false
+  model_store: /usr/local/hailo/resources/models/hailo10h
+  model_release: auto  # HailoRT 5.4.x selects documented v5.4.0 URLs.
+  model_catalog: ""   # Optional absolute path to your own catalogue YAML.
+  litert_max_input_tokens: 4096
+  litert_max_num_tokens: 16384
+models:
+  vlm:
+    enabled: true
+    model: Qwen2-VL-2B-Instruct # Or Qwen3-VL-2B-Instruct
+  whisper:
+    enabled: true
+    model: Whisper-Base # Or Whisper-Tiny / Whisper-Small
+  hailo_llm:
+    enabled: false
+    model: Qwen2.5-1.5B-Instruct # Any kind: llm entry from the catalogue
+  minilm:
+    enabled: true
+    # path: /usr/local/hailo/resources/models/hailo10h/minilm-l6-ruvector.hef
+  gemma:
+    enabled: false # true: download and load Gemma E2B on CPU
+    # path: /usr/local/hailo/resources/models/hailo10h/gemma-4-E2B-it.litertlm

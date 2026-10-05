@@ -587,14 +587,13 @@ def test_mqtt_dispatch_uses_same_runtime():
 
 
 def test_native_shared_creation_residency_and_partial_cleanup(monkeypatch, tmp_path):
-    monkeypatch.setattr("hailo_services.runtime.prepare_model_version", lambda: None)
+    monkeypatch.setattr("hailo_services.runtime.prepare_model_version", lambda: "5.4.0")
     minilm_hef = tmp_path / "minilm-l6-ruvector.hef"
     minilm_hef.write_bytes(b"compiled test fixture")
-    monkeypatch.setattr("hailo_services.runtime.ensure_minilm_hef", lambda path, url: minilm_hef)
     events, params_seen = [], []
 
     class FakeMiniLM:
-        def __init__(self, device, path):
+        def __init__(self, device, path, manager=None):
             assert path == str(minilm_hef)
             self.artifacts = {"minilm_tokenizer": "tokenizer", "minilm_weights": "weights"}
 
@@ -625,28 +624,25 @@ def test_native_shared_creation_residency_and_partial_cleanup(monkeypatch, tmp_p
 
     def resolve(model, **kwargs):
         resolved.append((model, kwargs))
-        return hef
+        return minilm_hef if model == "minilm-l6-ruvector" else hef
 
     modules = {
         "hailo_platform": types.SimpleNamespace(VDevice=Device),
         "hailo_platform.genai": types.SimpleNamespace(
             VLM=lambda *a: Resource("vlm"), Speech2Text=lambda *a: Resource("whisper")
         ),
-        "hailo_apps": types.ModuleType("hailo_apps"),
-        "hailo_apps.python": types.ModuleType("hailo_apps.python"),
-        "hailo_apps.python.core": types.ModuleType("hailo_apps.python.core"),
-        "hailo_apps.python.core.common": types.ModuleType("hailo_apps.python.core.common"),
-        "hailo_apps.python.core.common.core": types.SimpleNamespace(resolve_hef_path=resolve),
     }
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr("hailo_services.runtime.ModelManager.resolve", lambda self, model, kind=None, path=None: resolve(model, kind=kind))
     backend = HailoBackend(settings())
     backend.start()
     assert params_seen == ["SHARED"]
-    assert resolved == [
-        (VLM_MODEL, {"app_name": "vlm_chat", "arch": "hailo10h"}),
-        ("Whisper-Base", {"app_name": "whisper_chat", "arch": "hailo10h"}),
+    assert resolved[:2] == [
+        (VLM_MODEL, {"kind": "vlm"}),
+        ("Whisper-Base", {"kind": "whisper"}),
     ]
+    assert [model for model, _ in resolved[2:]] == ["minilm-l6-ruvector", "minilm-tokenizer", "minilm-weights"]
     assert backend.artifact_paths == {"minilm_hef": str(minilm_hef),
                                     "minilm_tokenizer": "tokenizer", "minilm_weights": "weights"}
     assert not events and backend.vlm and backend.whisper
@@ -795,22 +791,9 @@ def test_version_detection_uses_binding_without_device_probe(monkeypatch):
 
     modules = {
         "hailo_platform": types.SimpleNamespace(__version__="5.4.0"),
-        "hailo_apps": types.ModuleType("hailo_apps"),
-        "hailo_apps.python": types.ModuleType("hailo_apps.python"),
-        "hailo_apps.python.core": types.ModuleType("hailo_apps.python.core"),
-        "hailo_apps.python.core.common": types.ModuleType("hailo_apps.python.core.common"),
-        "hailo_apps.python.core.common.defines": types.SimpleNamespace(
-            HAILORT_VERSION_KEY="hailort_version",
-            MODEL_ZOO_VERSION_KEY="model_zoo_version",
-            VALID_H10_MODEL_ZOO_VERSION=["v5.1.0", "v5.2.0", "v5.3.0"],
-        ),
-        # No CLI/version probe helper exists in this fixture.
     }
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
     monkeypatch.delenv("hailort_version", raising=False)
     monkeypatch.delenv("model_zoo_version", raising=False)
-    prepare_model_version()
-    import os
-
-    assert os.environ["model_zoo_version"] == "v5.3.0"
+    assert prepare_model_version() == "5.4.0"

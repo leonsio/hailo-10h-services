@@ -56,7 +56,7 @@ and decoder graphs and host embedding/tokenization assets. Its documented Base
 conversion uses five-second inputs and requires DFC 5.x for Hailo-10H. Those
 compiled models and host-side routines are not drop-in replacements for the
 single GenAI `Whisper-Base.hef` consumed by `Speech2Text`. This gateway follows
-[Hailo's native Speech2Text example](https://github.com/hailo-ai/hailo-apps/blob/main/hailo_apps/python/gen_ai_apps/simple_whisper_chat/simple_whisper_chat.py).
+[Hailo's native Speech2Text example](https://github.com/hailo-ai/hailort/tree/master/hailort/libhailort/examples/genai/speech2text_example).
 A separate low-level encoder/decoder backend would require its own implementation
 and hardware validation; it is not enabled by this comparison.
 

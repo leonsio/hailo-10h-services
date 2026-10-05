@@ -1,0 +1,172 @@
+# Model download catalogue. Source: Hailo GenAI Model Zoo docs/MODELS.rst
+# Verified against official release documentation 2026-10-05; no URL guessing.
+schema_version: 1
+models:
+  DeepSeek-R1-Distill-Qwen-1.5B:
+    kind: llm
+    filename: DeepSeek-R1-Distill-Qwen-1.5B.hef
+    sizes:
+      v5.4.0: 2287685327 # Verified Content-Length via HTTP HEAD on 2026-10-05
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    releases:
+      v5.1.1: https://dev-public.hailo.ai/v5.1.1/blob/DeepSeek-R1-Distill-Qwen-1.5B.hef
+      v5.2.0: https://dev-public.hailo.ai/v5.2.0/blob/DeepSeek-R1-Distill-Qwen-1.5B.hef
+      v5.3.0: https://dev-public.hailo.ai/v5.3.0/blob/DeepSeek-R1-Distill-Qwen-1.5B.hef
+      v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/DeepSeek-R1-Distill-Qwen-1.5B.hef
+  Qwen2.5-Coder-1.5B-Instruct:
+    kind: llm
+    filename: Qwen2.5-Coder-1.5B-Instruct.hef
+    sizes:
+      v5.4.0: 1673567535 # Verified Content-Length via HTTP HEAD on 2026-10-05
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    releases:
+      v5.1.1: https://dev-public.hailo.ai/v5.1.1/blob/Qwen2.5-Coder-1.5B-Instruct.hef
+      v5.2.0: https://dev-public.hailo.ai/v5.2.0/blob/Qwen2.5-Coder-1.5B-Instruct.hef
+      v5.3.0: https://dev-public.hailo.ai/v5.3.0/blob/Qwen2.5-Coder-1.5B-Instruct.hef
+      v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Qwen2.5-Coder-1.5B-Instruct.hef
+  Qwen2-1.5B-Instruct:
+    kind: llm
+    filename: Qwen2-1.5B-Instruct.hef
+    sizes:
+      v5.4.0: 1702481199 # Verified Content-Length via HTTP HEAD on 2026-10-05
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    releases:
+      v5.1.1: https://dev-public.hailo.ai/v5.1.1/blob/Qwen2-1.5B-Instruct.hef
+      v5.2.0: https://dev-public.hailo.ai/v5.2.0/blob/Qwen2-1.5B-Instruct.hef
+      v5.3.0: https://dev-public.hailo.ai/v5.3.0/blob/Qwen2-1.5B-Instruct.hef
+      v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Qwen2-1.5B-Instruct.hef
+  Qwen2-VL-2B-Instruct:
+    kind: vlm
+    filename: Qwen2-VL-2B-Instruct.hef
+    sizes:
+      v5.4.0: 3255444179 # Verified Content-Length via HTTP HEAD on 2026-10-05
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    releases:
+      v5.1.1: https://dev-public.hailo.ai/v5.1.1/blob/Qwen2-VL-2B-Instruct.hef
+      v5.2.0: https://dev-public.hailo.ai/v5.2.0/blob/Qwen2-VL-2B-Instruct.hef
+      v5.3.0: https://dev-public.hailo.ai/v5.3.0/blob/Qwen2-VL-2B-Instruct.hef
+      v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Qwen2-VL-2B-Instruct.hef
+  Whisper-Base:
+    kind: whisper
+    filename: Whisper-Base.hef
+    sizes:
+      v5.4.0: 130206034 # Verified Content-Length via HTTP HEAD on 2026-10-05
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    releases:
+      v5.1.1: https://dev-public.hailo.ai/v5.1.1/blob/Whisper-Base.hef
+      v5.2.0: https://dev-public.hailo.ai/v5.2.0/blob/Whisper-Base.hef
+      v5.3.0: https://dev-public.hailo.ai/v5.3.0/blob/Whisper-Base.hef
+      v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Whisper-Base.hef
+  Qwen2.5-1.5B-Instruct:
+    kind: llm
+    filename: Qwen2.5-1.5B-Instruct.hef
+    sizes:
+      v5.4.0: 2464582493 # Verified Content-Length via HTTP HEAD on 2026-10-05
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    releases:
+      v5.1.1: https://dev-public.hailo.ai/v5.1.1/blob/Qwen2.5-1.5B-Instruct.hef
+      v5.2.0: https://dev-public.hailo.ai/v5.2.0/blob/Qwen2.5-1.5B-Instruct.hef
+      v5.3.0: https://dev-public.hailo.ai/v5.3.0/blob/Qwen2.5-1.5B-Instruct.hef
+      v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Qwen2.5-1.5B-Instruct.hef
+  Llama-3_2-3B-Instruct:
+    kind: llm
+    filename: Llama-3_2-3B-Instruct.hef
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    releases:
+      v5.1.1: https://dev-public.hailo.ai/v5.1.1/blob/Llama-3_2-3B-Instruct.hef
+  Qwen2-1.5B-Instruct-Function-Calling-v1:
+    kind: llm
+    filename: Qwen2-1.5B-Instruct-Function-Calling-v1.hef
+    sizes:
+      v5.4.0: 3401357978 # Verified Content-Length via HTTP HEAD on 2026-10-05
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    releases:
+      v5.2.0: https://dev-public.hailo.ai/v5.2.0/blob/Qwen2-1.5B-Instruct-Function-Calling-v1.hef
+      v5.3.0: https://dev-public.hailo.ai/v5.3.0/blob/Qwen2-1.5B-Instruct-Function-Calling-v1.hef
+      v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Qwen2-1.5B-Instruct-Function-Calling-v1.hef
+  Whisper-Small:
+    kind: whisper
+    filename: Whisper-Small.hef
+    sizes:
+      v5.4.0: 405920082 # Verified Content-Length via HTTP HEAD on 2026-10-05
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    releases:
+      v5.2.0: https://dev-public.hailo.ai/v5.2.0/blob/Whisper-Small.hef
+      v5.3.0: https://dev-public.hailo.ai/v5.3.0/blob/Whisper-Small.hef
+      v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Whisper-Small.hef
+  Llama3.2-1B-Instruct:
+    kind: llm
+    filename: Llama3.2-1B-Instruct.hef
+    sizes:
+      v5.4.0: 1402376894 # Verified Content-Length via HTTP HEAD on 2026-10-05
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    releases:
+      v5.2.0: https://dev-public.hailo.ai/v5.2.0/blob/Llama3.2-1B-Instruct.hef
+      v5.3.0: https://dev-public.hailo.ai/v5.3.0/blob/Llama3.2-1B-Instruct.hef
+      v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Llama3.2-1B-Instruct.hef
+  Qwen3-1.7B-Instruct:
+    kind: llm
+    filename: Qwen3-1.7B-Instruct.hef
+    sizes:
+      v5.4.0: 2880748478 # Verified Content-Length via HTTP HEAD on 2026-10-05
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    releases:
+      v5.3.0: https://dev-public.hailo.ai/v5.3.0/blob/Qwen3-1.7B-Instruct.hef
+      v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Qwen3-1.7B-Instruct.hef
+  Qwen3-VL-2B-Instruct:
+    kind: vlm
+    filename: Qwen3-VL-2B-Instruct.hef
+    sizes:
+      v5.4.0: 3185773502 # Verified Content-Length via HTTP HEAD on 2026-10-05
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    releases:
+      v5.3.0: https://dev-public.hailo.ai/v5.3.0/blob/Qwen3-VL-2B-Instruct.hef
+      v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Qwen3-VL-2B-Instruct.hef
+  Whisper-Tiny:
+    kind: whisper
+    filename: Whisper-Tiny.hef
+    sizes:
+      v5.4.0: 75307346 # Verified Content-Length via HTTP HEAD on 2026-10-05
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    releases:
+      v5.3.0: https://dev-public.hailo.ai/v5.3.0/blob/Whisper-Tiny.hef
+      v5.4.0: https://dev-public.hailo.ai/v5.4.0/blob/Whisper-Tiny.hef
+  minilm-l6-ruvector:
+    kind: embedding
+    filename: minilm-l6-ruvector.hef
+    minimum_bytes: 1048576
+    maximum_bytes: 104857600
+    url: https://huggingface.co/cstr/all-MiniLM-L6-v2-hailo10h/resolve/main/minilm-l6-ruvector.hef?download=true
+    note: Community HEF; HailoRT checks compatibility on loading.
+  minilm-tokenizer:
+    kind: asset
+    filename: minilm-tokenizer.json
+    minimum_bytes: 100000
+    maximum_bytes: 2000000
+    url: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json
+  minilm-weights:
+    kind: asset
+    filename: minilm-model.safetensors
+    minimum_bytes: 10000000
+    maximum_bytes: 150000000
+    url: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/model.safetensors
+  gemma-4-E2B-it:
+    kind: litert
+    filename: gemma-4-E2B-it.litertlm
+    minimum_bytes: 100000000
+    maximum_bytes: 8589934592
+    url: https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm
+

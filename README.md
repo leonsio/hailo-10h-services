@@ -1,6 +1,7 @@
 # Hailo-10H Services
 
-One resident gateway for **Qwen2-VL**, **Whisper Base**, **MiniLM** and **Gemma 4 E2B**.
+One resident gateway for **Qwen2-VL / Qwen3-VL**, **Whisper Tiny/Base/Small**,
+**MiniLM**, optional **Hailo HEF LLMs** and optional **Gemma 4 E2B**.
 Qwen2-VL handles images, Whisper speech, MiniLM HA context retrieval, and Gemma
 text/tool reasoning. Hailo models use `VDevice group_id="SHARED"`; Gemma runs
 through LiteRT-LM on the CPU with its own serialized queue. Models stay loaded.
@@ -8,8 +9,10 @@ through LiteRT-LM on the CPU with its own serialized queue. Models stay loaded.
 ## Install and update
 
 Requires working HailoRT GenAI, matching HEFs and access to `/dev/h1x-0`.
-Provision the Gemma `.litertlm` artifact and configure `HAILO_LITERT_MODEL_PATH`.
-MiniLM's HEF/tokenizer resources are prepared at startup.
+Select models in `/etc/hailo-10h-services.yaml`. Enabled models and MiniLM host
+assets download automatically at startup; valid cached files are reused. All links
+are centralized in `src/hailo_services/model_catalog.yaml`; no helper repository
+is installed or imported. HailoRT 5.4 selects the documented v5.4.0 HEFs.
 
 ```bash
 git clone https://github.com/leonsio/hailo-10h-services.git
@@ -21,11 +24,11 @@ For an existing installation:
 
 ```bash
 git pull --ff-only
-sudo /opt/hailo-10h-services/venv/bin/pip install --no-deps --force-reinstall .
-sudo systemctl restart hailo-10h-services
+sudo bash scripts/install.sh
 ```
 
-Configure `/etc/hailo-10h-services.env`. Gemma's default input ceiling remains
+Configure `/etc/hailo-10h-services.yaml`; an existing ENV file remains an optional
+override. Gemma's default input ceiling remains
 **4096 tokens**. `/health` reports actual readiness, loaded models and errors;
 a configured but unavailable Gemma never silently falls back to another model.
 
@@ -34,7 +37,7 @@ a configured but unavailable Gemma never silently falls back to another model.
 - Browser playground: `http://<host>:8090/` (chat, images, speech and status).
 - OpenAI clients/HA: `http://<host>:8090/v1`, model `gemma-4-E2B-it` for text and
   device control, `Qwen2-VL-2B-Instruct` for images. Use the configured API key.
-- Wyoming STT: port **10300**, multilingual Whisper Base.
+- Wyoming STT: port **10300**, the selected multilingual Whisper model.
 - MCP `/mcp`, WebSocket `/ws`, MQTT and HTTPS are supported.
 
 The UI uses the first supported browser language, with a persistent manual
