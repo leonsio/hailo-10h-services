@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Hailo-10H · Service & Playground</title>
+  <title data-i18n="ui.page_title">Hailo-10H · Service & Playground</title>
   <link rel="stylesheet" href="ui/style.css">
   <script src="ui/app.js" defer></script>
 </head>
 <body>
 <main>
   <section aria-label="Language settings" data-i18n-aria="ui.language_settings"><label for="ui-language" data-i18n="ui_80">Oberflächensprache</label><select id="ui-language"><option value="auto" data-i18n="ui_81">Automatisch (Browser)</option><option value="de" data-i18n="ui_69">Deutsch</option><option value="en" data-i18n="ui_70">Englisch</option><option value="ru" data-i18n="ui_74">Russisch</option></select></section>
-  <header><div><p class="eyebrow">LOCAL AI GATEWAY</p><h1>Hailo-10H <span>Playground</span></h1><p data-i18n="ui_36">Status prüfen. Bilder verstehen. Sprache transkribieren.</p></div><span id="connection" class="badge" data-i18n="ui_37">Verbinde …</span></header>
+  <header><div><p class="eyebrow" data-i18n="ui.gateway">LOCAL AI GATEWAY</p><h1>Hailo-10H <span data-i18n="ui.playground">Playground</span></h1><p data-i18n="ui_36">Status prüfen. Bilder verstehen. Sprache transkribieren.</p></div><span id="connection" class="badge" data-i18n="ui_37">Verbinde …</span></header>
   <section aria-labelledby="status-title">
     <div class="section-title"><h2 id="status-title" data-i18n="ui_38">Service-Status</h2><button id="refresh" type="button" class="quiet" data-i18n="ui_39">Aktualisieren</button></div>
     <div class="stats">
@@ -30,7 +30,7 @@
   </section>
   <div class="playgrounds">
     <section aria-labelledby="chat-title">
-      <div class="section-title"><div><p class="eyebrow" data-i18n="ui_50">LOKALE MODELLE</p><h2 id="chat-title">Chat</h2></div><button id="clear-chat" type="button" class="quiet" data-i18n="ui_51">Neuer Chat</button></div>
+      <div class="section-title"><div><p class="eyebrow" data-i18n="ui_50">LOKALE MODELLE</p><h2 id="chat-title" data-i18n="ui.chat">Chat</h2></div><button id="clear-chat" type="button" class="quiet" data-i18n="ui_51">Neuer Chat</button></div>
       <label for="chat-model" data-i18n="ui_52">Modell</label><select id="chat-model"><option value="Qwen2-VL-2B-Instruct">Qwen2-VL-2B-Instruct · Hailo</option></select>
       <div id="conversation" class="conversation" role="log" aria-label="Chat-Verlauf" data-i18n-aria="ui_53"><p class="empty" data-i18n="ui_54">Stelle eine Frage oder lade ein Bild zur Analyse hoch.</p></div>
       <form id="chat-form">
@@ -54,7 +54,7 @@
       <label for="transcript" data-i18n="ui_76">Transkript</label><textarea id="transcript" rows="5" readonly placeholder="Der erkannte Text erscheint hier." data-i18n-placeholder="ui_77"></textarea>
     </section>
   </div>
-  <footer><span data-i18n="ui_78">Verarbeitung auf deinem Hailo-Service</span> · <a href="health">Health-API</a> · <span data-i18n="ui_79">Audio wird erst mit „Transkribieren“ gesendet.</span></footer>
+  <footer><span data-i18n="ui_78">Verarbeitung auf deinem Hailo-Service</span> · <a href="health" data-i18n="ui.health">Health-API</a> · <span data-i18n="ui_79">Audio wird erst mit „Transkribieren“ gesendet.</span></footer>
 </main>
 </body>
 </html>

@@ -138,7 +138,12 @@
     "ui_extra_2": "Gemma 4 E2B работает через LiteRT-LM на CPU. Qwen2-VL анализирует изображения.",
     "ui_extra_3": "Qwen2-VL обрабатывает текст и изображения на Hailo.",
     "ui_extra_4": "Не удалось загрузить конфигурацию страницы: {v0}",
-    "ui.language_settings": "Настройки языка"
+    "ui.language_settings": "Настройки языка",
+    "ui.page_title": "Hailo-10H · Сервис и тестирование",
+    "ui.gateway": "ЛОКАЛЬНЫЙ ШЛЮЗ ИИ",
+    "ui.playground": "Тестирование",
+    "ui.chat": "Чат",
+    "ui.health": "API состояния"
   },
   "aliases": {
     "licht": [

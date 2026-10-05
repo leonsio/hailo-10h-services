@@ -43,11 +43,18 @@ path invents an area or rewrites an entity name in outgoing arguments.
 Ambient measurements rank HA domains, areas, device classes, units and generic
 environment/process vocabulary. There are no vendor/model-specific selectors.
 `climate.temperature` is a setpoint, never an ambient measurement;
-`current_temperature` is the measurement. An inactive/unavailable thermostat is
-not a trusted source for a general ambient-temperature question. Ambiguous data
+`current_temperature` is the measurement. An unavailable/unknown thermostat
+cannot supply it. A controller in `off` may still measure temperature, so `off`
+alone is not an availability or freshness signal. Missing `current_temperature`
+never falls back to the setpoint. Ambiguous data
 remains an LLM decision; unavailable data produces a localized explanation.
 Freshness depends on the availability/measurement metadata supplied by HA; a
 numeric value without freshness information cannot prove when a sensor last ran.
+
+Weather lookups include both weather providers and environmental sensors, so an
+unavailable provider does not hide a working sensor. Multiple available providers
+or equally plausible measurements defer to Gemma with their measurement attributes;
+catalogue order never chooses between them.
 
 ## Streaming and diagnostics
 

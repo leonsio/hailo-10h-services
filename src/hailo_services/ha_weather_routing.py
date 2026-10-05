@@ -484,7 +484,12 @@ def _weather_response(entities: list[dict], query: str = "") -> str | None:
         key=lambda row: (-row[0], row[1]),
     )
     if temperature is None and temp_candidates:
+        if len(temp_candidates) > 1 and temp_candidates[0][0] - temp_candidates[1][0] < 15:
+            return None
         temperature = _temperature_value(temp_candidates[0][2])
+    for extractor, existing in ((_humidity_value, humidity), (_dew_point_value, dew_point)):
+        if existing is None and len([item for item in group if extractor(item) is not None]) > 1:
+            return None
     for entity in group:
         if humidity is None:
             humidity = _humidity_value(entity)
@@ -529,7 +534,14 @@ def _compact_environment_decision(request, entities: list[dict], query: str, kin
             f"- {entity.get('name')}; domain={entity.get('domain')}; "
             f"area={entity.get('area')}; state={entity.get('state')}; "
             f"device_class={attrs.get('device_class', '')}; unit={_unit(entity)}; "
-            f"current_temperature={attrs.get('current_temperature', '')}"
+            f"current_temperature={attrs.get('current_temperature', '')}; "
+            "attributes=" + json.dumps({
+                key: attrs[key] for key in (
+                    "temperature", "temperature_unit", "humidity", "pressure", "pressure_unit",
+                    "wind_speed", "wind_speed_unit", "wind_bearing", "current_temperature",
+                    "device_class", "unit_of_measurement",
+                ) if key in attrs
+            }, ensure_ascii=False)
         )
     task = (
         t('ha_weather_routing.589')
@@ -566,8 +578,6 @@ def _initial_live_arguments(
         arguments = {"domain": ["weather", "sensor"]}
     if area:
         arguments["area"] = area
-    elif kind == "weather" and any(item.get("domain") == "weather" for item in static_entities):
-        arguments = {"domain": ["weather"]}
     return arguments
 
 
