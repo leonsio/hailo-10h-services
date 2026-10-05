@@ -46,12 +46,13 @@ class LiteRTInferenceError(RuntimeError):
 class HailoBackend:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.device = self.vlm = self.whisper = self.minilm = self.llm = None
+        self.device = self.vlm = self.whisper = self.minilm = None
         self.paths = {}
         self.artifact_paths = {}
         self._retrieval_embedding_cache = {}
 
     def start(self):
+        self.settings.check_hailo_llm_support()
         from hailo_platform import VDevice
         from hailo_platform.genai import VLM, Speech2Text
 
@@ -59,7 +60,6 @@ class HailoBackend:
         for key, model, kind, enabled in (
             ("vlm", self.settings.vlm_hef, "vlm", self.settings.vlm_enabled),
             ("whisper", self.settings.whisper_hef, "whisper", self.settings.whisper_enabled),
-            ("llm", self.settings.hailo_llm_model, "llm", self.settings.hailo_llm_enabled),
         ):
             if enabled:
                 self.paths[key] = str(manager.resolve(model, kind))
@@ -85,10 +85,6 @@ class HailoBackend:
             if self.settings.whisper_enabled:
                 _LOG.info("Loading resident Whisper %s", self.paths["whisper"])
                 self.whisper = Speech2Text(self.device, self.paths["whisper"])
-            if self.settings.hailo_llm_enabled:
-                from hailo_platform.genai import LLM
-                _LOG.info("Loading resident LLM %s", self.paths["llm"])
-                self.llm = LLM(self.device, self.paths["llm"])
             if self.settings.minilm_enabled:
                 self.minilm = MiniLM(self.device, self.artifact_paths["minilm_hef"], manager)
                 self.artifact_paths.update(self.minilm.artifacts)
@@ -119,11 +115,9 @@ class HailoBackend:
                 else:
                     converted.append({"type": "text", "text": part["text"]})
             prompt.append({"role": message["role"], "content": converted})
-        model = self.llm if request.model == self.settings.hailo_llm_model else self.vlm
+        model = self.vlm
         if model is None:
             raise BusyError(f"{request.model} is disabled")
-        if model is self.llm and frames:
-            raise ValueError("Hailo LLM models do not accept images")
         output = []
         # Clear only KV context, never unload the model weights.
         try:
@@ -266,7 +260,7 @@ class HailoBackend:
 
     def close(self):
         # Release models before the device, including after partial startup.
-        for name in ("minilm", "llm", "whisper", "vlm", "device"):
+        for name in ("minilm", "whisper", "vlm", "device"):
             resource = getattr(self, name)
             if resource is not None:
                 try:
@@ -717,7 +711,7 @@ class Runtime:
 
     @property
     def hailo_chat_models(self):
-        return ([self.settings.vlm_model] if self.settings.vlm_enabled else []) + ([self.settings.hailo_llm_model] if self.settings.hailo_llm_enabled else [])
+        return [self.settings.vlm_model] if self.settings.vlm_enabled else []
 
     def status(self):
         return {

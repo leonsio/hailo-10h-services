@@ -4,11 +4,32 @@
 settings:
   host: 0.0.0.0
   port: 8090
+  wyoming_host: 0.0.0.0
   wyoming_port: 10300
   api_key: ""
   language: de
   service_language: de
   debug_log: false
+  ha_wait_messages: true
+  queue_size: 8
+  request_timeout: 180
+  max_body: 16777216
+  max_audio_seconds: 120
+
+  # MQTT: empty host disables the bridge. Credentials are plain strings.
+  mqtt_host: ""
+  mqtt_port: 1883
+  mqtt_username: ""
+  mqtt_password: ""
+  mqtt_prefix: hailo10h
+  mqtt_tls: false
+
+  # MCP: comma-separated allowed Host headers and keyless peer networks.
+  # Add the hostname/IP actually used by your clients.
+  mcp_hosts: "localhost:*,127.0.0.1:*,hailo.local:*"
+  # Empty string requires API-key authentication on every network.
+  mcp_no_auth_networks: "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
+
   model_store: /usr/local/hailo/resources/models/hailo10h
   model_release: auto  # HailoRT 5.4.x selects documented v5.4.0 URLs.
   model_catalog: ""   # Optional absolute path to your own catalogue YAML.
@@ -22,8 +43,10 @@ models:
     enabled: true
     model: Whisper-Base # Or Whisper-Tiny / Whisper-Small
   hailo_llm:
+    # Reserved for future hardware-tested support; true is rejected before download/load.
+    # The catalogue keeps HEF LLM links, but this release cannot run them on Hailo.
     enabled: false
-    model: Qwen2.5-1.5B-Instruct # Any kind: llm entry from the catalogue
+    model: Qwen2.5-1.5B-Instruct
   minilm:
     enabled: true
     # path: /usr/local/hailo/resources/models/hailo10h/minilm-l6-ruvector.hef

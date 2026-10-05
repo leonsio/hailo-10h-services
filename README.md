@@ -1,7 +1,9 @@
 # Hailo-10H Services
 
 One resident gateway for **Qwen2-VL / Qwen3-VL**, **Whisper Tiny/Base/Small**,
-**MiniLM**, optional **Hailo HEF LLMs** and optional **Gemma 4 E2B**.
+**MiniLM** and optional **Gemma 4 E2B on CPU**.
+Hailo HEF LLM execution is disabled pending hardware tests; its catalogue links
+remain available for future support.
 Qwen2-VL handles images, Whisper speech, MiniLM HA context retrieval, and Gemma
 text/tool reasoning. Hailo models use `VDevice group_id="SHARED"`; Gemma runs
 through LiteRT-LM on the CPU with its own serialized queue. Models stay loaded.

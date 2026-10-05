@@ -102,13 +102,13 @@ def test_selected_models_appear_in_http_and_wyoming():
         def chat(self, request, emit=None, cancelled=None):
             return request.model
     s = replace(Settings(), vlm_hef="Qwen3-VL-2B-Instruct", whisper_hef="Whisper-Small",
-                hailo_llm_enabled=True, hailo_llm_model="Qwen3-1.7B-Instruct", wyoming_port=0)
+                wyoming_port=0)
     with TestClient(create_app(s, backend=Backend())) as client:
         ids = {m["id"] for m in client.get('/v1/models').json()['data']}
-        assert ids == {"Qwen3-VL-2B-Instruct", "whisper-small", "Qwen3-1.7B-Instruct"}
+        assert ids == {"Qwen3-VL-2B-Instruct", "whisper-small"}
         assert client.get('/ui/config').json()['whisper_model'] == 'whisper-small'
         response = client.post('/v1/chat/completions', json={
-            "model": "Qwen3-1.7B-Instruct", "messages": [{"role": "user", "content": "hi"}]})
+            "model": "Qwen3-VL-2B-Instruct", "messages": [{"role": "user", "content": "hi"}]})
         assert response.status_code == 200
     assert wyoming_info(s).asr[0].models[0].name == 'whisper-small'
 
@@ -148,27 +148,6 @@ def test_exact_size_rejects_partial_cache_and_failed_replacement_preserves_it(tm
     assert list(tmp_path.iterdir()) == [path]
 
 
-def test_native_llm_routes_text_without_frames_and_keeps_model_loaded():
-    from contextlib import contextmanager
-
-    from hailo_services.schemas import ChatRequest
-    class LLM:
-        clears = 0
-        def clear_context(self):
-            self.clears += 1
-        @contextmanager
-        def generate(self, **kwargs):
-            assert 'frames' not in kwargs
-            assert kwargs['prompt'][0]['content'][0]['text'] == 'hello'
-            yield iter(['hello'])
-    s = replace(Settings(), hailo_llm_enabled=True, hailo_llm_model='Qwen3-1.7B-Instruct')
-    backend = HailoBackend(s)
-    backend.llm = LLM()
-    request = ChatRequest(model=s.hailo_llm_model, messages=[{'role': 'user', 'content': 'hello'}])
-    assert backend.chat(request) == 'hello'
-    assert backend.llm.clears == 2
-
-
 def test_vlm_uses_selected_model_frame_shape():
     import base64
     import io
@@ -193,3 +172,72 @@ def test_vlm_uses_selected_model_frame_shape():
     request = ChatRequest(model='Qwen3-VL-2B-Instruct', messages=[{'role': 'user', 'content': [{
         'type': 'image_url', 'image_url': {'url': base64.b64encode(buffer.getvalue()).decode()}}]}])
     assert backend.chat(request) == 'image'
+
+
+@pytest.mark.parametrize('vlm_enabled', [True, False])
+def test_hailo_hef_llm_is_blocked_even_without_vlm(vlm_enabled):
+    with pytest.raises(ValueError, match='HEF LLM support is disabled'):
+        Settings(vlm_enabled=vlm_enabled, hailo_llm_enabled=True)
+
+
+@pytest.mark.parametrize('content', [
+    'models: {hailo_llm: {enabled: true}}',
+    'settings: {hailo_llm_enabled: true, vlm_enabled: false}',
+])
+def test_yaml_cannot_enable_hailo_llm(tmp_path, monkeypatch, content):
+    path = tmp_path / 'config.yaml'
+    path.write_text(content)
+    monkeypatch.setenv('HAILO_CONFIG', str(path))
+    with pytest.raises(ValueError, match='HEF LLM support is disabled'):
+        Settings.from_env()
+
+
+def test_env_cannot_enable_hailo_llm(tmp_path, monkeypatch):
+    path = tmp_path / 'config.yaml'
+    path.write_text('models: {hailo_llm: {enabled: false}}')
+    monkeypatch.setenv('HAILO_CONFIG', str(path))
+    monkeypatch.setenv('HAILO_HAILO_LLM_ENABLED', 'true')
+    with pytest.raises(ValueError, match='HEF LLM support is disabled'):
+        Settings.from_env()
+
+
+def test_backend_guard_runs_before_vendor_import_or_download(monkeypatch):
+    s = Settings()
+    # Also protect startup if an embedding application bypasses frozen Settings.
+    object.__setattr__(s, 'hailo_llm_enabled', True)
+    monkeypatch.setattr(ModelManager, 'resolve', lambda *a, **k: pytest.fail('download started'))
+    with pytest.raises(ValueError, match='HEF LLM support is disabled'):
+        HailoBackend(s).start()
+
+
+def test_yaml_example_covers_every_legacy_env_parameter(monkeypatch):
+    import re
+    from pathlib import Path
+
+    import yaml
+    root = Path(__file__).resolve().parents[1]
+    path = root / 'deploy/hailo-10h-services.yaml.example'
+    document = yaml.safe_load(path.read_text())
+    covered = set(document['settings'])
+    for role, fields in {
+        'vlm': ('vlm_enabled', 'vlm_hef'),
+        'whisper': ('whisper_enabled', 'whisper_hef'),
+        'hailo_llm': ('hailo_llm_enabled', 'hailo_llm_model'),
+        'minilm': ('minilm_enabled', 'minilm_hef_path'),
+        'gemma': ('litert_enabled', 'litert_model_path'),
+    }.items():
+        assert role in document['models']
+        covered.update(fields)
+    legacy = {match.lower() for match in re.findall(
+        r'^HAILO_(\w+)=', (root / 'deploy/hailo-10h-services.env.example').read_text(), re.M)}
+    assert legacy <= covered
+    assert set(vars(Settings())) <= covered
+    monkeypatch.setenv('HAILO_CONFIG', str(path))
+    s = Settings.from_env()
+    assert s.mqtt_port == 1883 and s.mcp_hosts.endswith('hailo.local:*')
+    # Both Hailo VLM and CPU Gemma are explicitly allowed together.
+    s = replace(s, litert_enabled=True)
+    runtime = Runtime(s)
+    assert runtime.hailo_chat_models == ['Qwen2-VL-2B-Instruct']
+    assert runtime.litert_backend is not None
+    asyncio.run(runtime.close())

@@ -53,7 +53,11 @@ model names, paths, mandatory SHARED group, pending work and MQTT connection sta
 
 Edit `/etc/hailo-10h-services.yaml`; see `deploy/hailo-10h-services.yaml.example`.
 The `models` mapping selects Qwen2-VL or Qwen3-VL, Whisper Tiny/Base/Small,
-an optional Hailo text LLM, MiniLM retrieval, and optional Gemma E2B on CPU.
+MiniLM retrieval, and optional Gemma E2B on CPU. Hailo HEF LLM execution is
+currently disabled pending hardware tests. `models.hailo_llm.enabled: true`
+is rejected before any download/device allocation, even if VLM is disabled.
+This also applies to ENV overrides and programmatic configuration. The catalogue
+retains HEF LLM links for future support. VLM plus Gemma on CPU is supported.
 Only enabled models are downloaded at startup, before device allocation, and
 remain resident. Requests never cause model swapping. Enabling Gemma requires
 `litert-lm` in the service interpreter; rerun the installer after enabling it.
@@ -84,10 +88,10 @@ All `Settings` fields can be configured under `settings`, including MQTT/secrets
 A non-default model store needs matching permissions and a systemd `ReadWritePaths`
 exception. HTTPS setup reads numeric proxy settings from YAML, then legacy ENV.
 
-The optional Hailo LLM uses `hailo_platform.genai.LLM` for text chat and streaming;
-OpenAI tool calling and `max_input_tokens` remain on the existing Gemma backend.
-Activating additional resident models depends on available Hailo memory; validate
-that your selected combination fits before enabling it in production.
+The complete YAML example includes all legacy ENV parameters, with model paths
+and enable flags under `models`; MQTT and MCP settings live under `settings`.
+Existing YAML files are preserved by the installer: add the new example keys
+manually as needed. Missing settings retain their defaults.
 
 ## HTTPS with a local self-signed CA
 

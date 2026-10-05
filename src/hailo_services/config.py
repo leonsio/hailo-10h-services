@@ -48,6 +48,17 @@ class Settings:
     mcp_no_auth_networks: str = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
     mcp_hosts: str = "localhost:*,127.0.0.1:*"
 
+    def __post_init__(self):
+        self.check_hailo_llm_support()
+
+    def check_hailo_llm_support(self):
+        if self.hailo_llm_enabled:
+            raise ValueError(
+                "Hailo-10H HEF LLM support is disabled in this version pending hardware tests; "
+                "VLM and HEF LLM cannot be loaded together. Set models.hailo_llm.enabled=false "
+                "(HAILO_HAILO_LLM_ENABLED=false). Gemma E2B through LiteRT on CPU remains supported."
+            )
+
     @property
     def vlm_model(self):
         return Path(self.vlm_hef).stem
