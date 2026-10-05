@@ -2,15 +2,18 @@
 
 ## Endpoints
 
-| Protocol | Endpoint / port | VLM | Whisper |
-|---|---|---|---|
-| OpenAI-style HTTP | `:8090/v1/chat/completions` | Text, images, SSE | — |
-| OpenAI-style HTTP | `:8090/v1/audio/transcriptions` | — | File upload |
-| Models / readiness | `/v1/models`, `/health` | Model status | Model status |
-| WebSocket | `ws://HOST:8090/ws` | `chat` | `transcribe` |
-| MCP Streamable HTTP | `http://HOST:8090/mcp/` | `analyze_image`, `chat_text` | `transcribe_audio` |
-| MQTT (optional) | `hailo10h/request/chat`, `…/transcribe` | JSON requests | Base64 audio |
-| Wyoming TCP | `HOST:10300` | — | Home Assistant Assist STT |
+| Protocol | Endpoint / port | VLM | LLM | Whisper |
+|---|---|---|---|---|
+| OpenAI-style HTTP | `:8090/v1/chat/completions` | Text, images, SSE | Text, SSE, function tools | — |
+| OpenAI-style HTTP | `:8090/v1/audio/transcriptions` | — | — | File upload |
+| Models / readiness | `/v1/models`, `/health` | Model status | Model status | Model status |
+| WebSocket | `ws://HOST:8090/ws` | `chat` | `chat` | `transcribe` |
+| MCP Streamable HTTP | `http://HOST:8090/mcp/` | `analyze_image`, `chat_text` | `chat_text` | `transcribe_audio` |
+| MQTT (optional) | `hailo10h/request/chat`, `…/transcribe` | JSON requests | JSON requests | Base64 audio |
+| Wyoming TCP | `HOST:10300` | — | — | Home Assistant Assist STT |
+
+The **LLM** column currently describes the optional Gemma 4 E2B LiteRT-LM backend.
+Hailo HEF LLM execution remains disabled pending hardware validation.
 
 HTTP and WebSocket require `Authorization: Bearer API_KEY` when configured.
 MCP skips API-key authentication for loopback and private LAN peers by default
@@ -48,13 +51,14 @@ Home Assistant source IP. HTTP/WebSocket authentication and MCP body/Host limits
 remain active. The allowlist uses the socket peer; the bundled listener disables proxy-header
 trust. Restrict access when using a local proxy, whose peer IP is what the service sees.
 
-This is an inference gateway, not an HA conversation agent that executes tools.
-The built-in OpenAI Conversation integration is not automatically redirected to
-this server just by installing it; use an integration/client that supports a
-custom OpenAI base URL (`http://HOST:8090/v1`) for text/image calls. For HA home
-control, a separate agent must handle permitted HA actions. Qwen does not receive
-HA entity access from this service. MCP exposes inference tools to clients;
-it does not make Qwen itself a tool-calling agent.
+This is an inference gateway. For Home Assistant device control, the client or
+conversation integration supplies function schemas and executes the resulting
+tool calls using its own Home Assistant permissions. Gemma can select and return
+those function calls through the OpenAI-compatible chat endpoint, but the gateway
+itself does not receive a Home Assistant access token and does not execute device
+actions. Qwen remains the VLM path for text/images and does not receive HA entity
+access from this service. MCP exposes inference tools to clients; it does not make
+Qwen itself a tool-calling agent.
 
 ### HTTP examples
 
@@ -82,11 +86,11 @@ An image content list in a `user` message:
 Images are decoded to RGB uint8 and resized to the model's 336×336 input, at most
 four per request. Only inline base64/data URLs are accepted; snapshot HTTP URLs
 are not fetched. `stream:true` enables native-token SSE ending in `[DONE]`.
-`max_tokens` is 1..1024; `temperature` is 0..1. Unsupported OpenAI parameters,
-including `tools`, `tool_choice` and JSON-schema response formats, are rejected;
-this implements a documented subset, not the entire OpenAI API. Token usage is
-not fabricated. Text-only Qwen requests pass `frames=[]` and need target-device
-validation alongside image requests.
+`max_tokens` is 1..1024; `temperature` is 0..1. The gateway implements a documented
+subset of the OpenAI API. Gemma accepts function `tools`/`tool_choice` as described
+below; Qwen rejects tool requests. JSON-schema response formats remain unsupported.
+Token usage is not fabricated. Text-only Qwen requests pass `frames=[]` and need
+target-device validation alongside image requests.
 
 Whisper accepts WAV/FLAC/OGG formats supported by libsndfile, averages channels,
 resamples to 16 kHz and submits float32 PCM. `response_format=json|text`.
