@@ -28,47 +28,62 @@ def _semantic_ranking(query_text, tools, encoder, embedding_cache):
     query_vector = _embedding(encoder, query_text, embedding_cache)
     ranked = []
     for tool in tools:
-        similarity = float(np.dot(
-            query_vector,
-            _embedding(encoder, _routing._tool_description(tool), embedding_cache),
-        ))
+        similarity = float(
+            np.dot(
+                query_vector,
+                _embedding(encoder, _routing._tool_description(tool), embedding_cache),
+            )
+        )
         ranked.append((similarity, tool.get("function", {}).get("name")))
     ranked.sort(key=lambda item: -item[0])
     return ranked
 
 
+def _allowed_capabilities(tool_names):
+    selected = set(tool_names)
+    return {
+        capability
+        for capability, capability_tools in _compiler._CAPABILITY_TOOLS.items()
+        if selected & capability_tools
+    }
+
+
 def _capability(query: str, tools, encoder, embedding_cache):
-    """Infer semantics only among capabilities represented by selected tools."""
-    tool_caps = {
-        _compiler._TOOL_CAPABILITY.get(name)
-        for name in _compiler._tool_names(tools)
-    } - {None}
+    """Infer semantics only inside capability families of selected tools."""
+    tool_names = _compiler._tool_names(tools)
+    tool_caps = {_compiler._TOOL_CAPABILITY.get(name) for name in tool_names} - {None}
     action_caps = tool_caps & {"device.turn_on", "device.turn_off"}
     if len(action_caps) == 1:
         return next(iter(action_caps)), "selected_tool", None
 
+    allowed = _allowed_capabilities(tool_names)
     deterministic = _compiler._deterministic_capability(query)
-    if deterministic is not None:
+    if deterministic is not None and deterministic in allowed:
         return deterministic, "deterministic", None
 
+    # Preserve the established fast path when retrieval left exactly one tool
+    # family. For example a lone light tool intentionally compiles as
+    # light.adjust unless the query was deterministically more specific above.
     if len(tool_caps) == 1:
         return next(iter(tool_caps)), "selected_tool", None
 
-    if encoder is None or not query or not tool_caps:
+    if encoder is None or not query or not allowed:
         return None, "selected_tools", {"best": None, "second": None}
 
     import numpy as np
 
     query_vector = _embedding(encoder, query, embedding_cache)
     ranked = []
-    for name in tool_caps:
+    for name in allowed:
         description = _compiler._CAPABILITIES.get(name)
         if not description:
             continue
-        similarity = float(np.dot(
-            query_vector,
-            _embedding(encoder, description, embedding_cache),
-        ))
+        similarity = float(
+            np.dot(
+                query_vector,
+                _embedding(encoder, description, embedding_cache),
+            )
+        )
         ranked.append((similarity, name))
     ranked.sort(reverse=True)
     if not ranked:
@@ -100,8 +115,14 @@ def install():
     original_compact_tool = _compiler._compact_tool
 
     @wraps(original_assess)
-    def assess_ha_relevance(messages, tools, *, encoder=None, embedding_cache=None,
-                            semantic_threshold=_routing._SEMANTIC_RELEVANCE_THRESHOLD):
+    def assess_ha_relevance(
+        messages,
+        tools,
+        *,
+        encoder=None,
+        embedding_cache=None,
+        semantic_threshold=_routing._SEMANTIC_RELEVANCE_THRESHOLD,
+    ):
         result = original_assess(
             messages,
             tools,
@@ -112,23 +133,28 @@ def install():
         if result.get("reason") != "semantic_tool":
             return result
 
-        ranked = _semantic_ranking(result.get("query_text", ""), tools or [], encoder, embedding_cache)
+        ranked = _semantic_ranking(
+            result.get("query_text", ""), tools or [], encoder, embedding_cache
+        )
         if not ranked:
             return result
         best_score, best_name = ranked[0]
         second_score, second_name = ranked[1] if len(ranked) > 1 else (-1.0, None)
         margin = best_score - second_score
-        result.update({
-            "semantic_tool_max": best_score,
-            "semantic_tool_name": best_name,
-            "semantic_tool_second_max": second_score,
-            "semantic_tool_second_name": second_name,
-            "semantic_tool_margin": margin,
-            "semantic_margin_threshold": _SEMANTIC_RELEVANCE_MARGIN,
-            "semantic_strong_threshold": _SEMANTIC_STRONG_RELEVANCE,
-        })
+        result.update(
+            {
+                "semantic_tool_max": best_score,
+                "semantic_tool_name": best_name,
+                "semantic_tool_second_max": second_score,
+                "semantic_tool_second_name": second_name,
+                "semantic_tool_margin": margin,
+                "semantic_margin_threshold": _SEMANTIC_RELEVANCE_MARGIN,
+                "semantic_strong_threshold": _SEMANTIC_STRONG_RELEVANCE,
+            }
+        )
         if margin < _SEMANTIC_RELEVANCE_MARGIN and best_score < max(
-            _SEMANTIC_STRONG_RELEVANCE, semantic_threshold + _SEMANTIC_RELEVANCE_MARGIN
+            _SEMANTIC_STRONG_RELEVANCE,
+            semantic_threshold + _SEMANTIC_RELEVANCE_MARGIN,
         ):
             result["relevant"] = False
             result["reason"] = "semantic_ambiguous"
@@ -140,11 +166,18 @@ def install():
         allowed_domains = _source_domain_enum(tool)
         if allowed_domains and domain is not None and domain not in allowed_domains:
             source = copy.deepcopy(
-                tool.get("function", {}).get("parameters", {}).get("properties", {}).get("domain", {})
+                tool.get("function", {})
+                .get("parameters", {})
+                .get("properties", {})
+                .get("domain", {})
             )
             if isinstance(source, dict):
                 source.pop("description", None)
-            properties = compact.get("function", {}).get("parameters", {}).get("properties", {})
+            properties = (
+                compact.get("function", {})
+                .get("parameters", {})
+                .get("properties", {})
+            )
             if isinstance(properties, dict) and "domain" in properties:
                 properties["domain"] = source
         return compact
