@@ -61,7 +61,7 @@ class FrigateZmqServer:
                     })
                     continue
                 if header.get("model_data"):
-                    # Model lifecycle is deliberately server-owned.  Accepting arbitrary
+                    # Model lifecycle is deliberately server-owned. Accepting arbitrary
                     # HEFs over an unauthenticated detector socket would also be unsafe.
                     await self._reply_json({
                         "model_saved": False,
@@ -83,9 +83,10 @@ class FrigateZmqServer:
                 if expected != len(frames[1]) or expected > self.settings.max_body:
                     raise ValueError("Invalid or oversized detector tensor")
                 tensor = np.frombuffer(frames[1], dtype=dtype).reshape(shape)
-                detections = await self.vision.detect_array(tensor)
-                detections = np.ascontiguousarray(detections, dtype=np.float32)
-                response = {"shape": list(detections.shape), "dtype": "float32"}
+                # Frigate's detector shared-memory contract is exactly (20, 6).
+                detections = await self.vision.detect_array(tensor, maximum=20)
+                detections = np.ascontiguousarray(detections, dtype=np.float32).reshape((20, 6))
+                response = {"shape": [20, 6], "dtype": "float32"}
                 await self.socket.send_multipart([
                     json.dumps(response, separators=(",", ":")).encode("utf-8"),
                     detections.tobytes(order="C"),
@@ -96,11 +97,11 @@ class FrigateZmqServer:
                 # Frigate treats a correctly shaped zero result as "no detections";
                 # keeping REP state intact is more useful than breaking the detector loop.
                 _LOG.exception("ZMQ detector request failed")
-                zeros = np.zeros((self.settings.vision_max_detections, 6), dtype=np.float32)
+                zeros = np.zeros((20, 6), dtype=np.float32)
                 try:
                     await self.socket.send_multipart([
                         json.dumps({
-                            "shape": list(zeros.shape), "dtype": "float32", "error": str(exc)
+                            "shape": [20, 6], "dtype": "float32", "error": str(exc)
                         }, separators=(",", ":")).encode("utf-8"),
                         zeros.tobytes(order="C"),
                     ])
