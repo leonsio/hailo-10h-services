@@ -1,4 +1,4 @@
-"""Regression tests for low-latency LiteRT Home Assistant handling."""
+"""Regression tests for production LiteRT optimizations and timings."""
 
 import json
 import sys
@@ -98,16 +98,6 @@ class FakeConversation:
         self.sent.append(prompt)
         return {"content": "ok"}
 
-    def get_benchmark_info(self):
-        return SimpleNamespace(
-            init_time_in_second=0.02,
-            time_to_first_token_in_second=0.35,
-            last_prefill_token_count=900,
-            last_prefill_tokens_per_second=300.0,
-            last_decode_token_count=30,
-            last_decode_tokens_per_second=15.0,
-        )
-
 
 class FakeEngine:
     def __init__(self):
@@ -120,18 +110,16 @@ class FakeEngine:
         return text.split()
 
 
-def test_native_litert_benchmark_metrics_are_logged(caplog):
+def test_wall_clock_timing_is_logged_without_native_benchmark(caplog):
     backend = SimpleNamespace(engine=FakeEngine(), debug_log=True)
     instrument_engine(backend)
     with caplog.at_level("DEBUG", logger="hailo_services.litert_optimizations"):
         with backend.engine.create_conversation(messages=[]) as conversation:
             assert conversation.send_message("hello") == {"content": "ok"}
     assert "gemma_timing request_id=-" in caplog.text
-    assert "prefill_tokens=900" in caplog.text
-    assert "decode_tokens=30" in caplog.text
-    assert '"prefill_ms_estimate":3000.0' in caplog.text
-    assert '"decode_ms_estimate":2000.0' in caplog.text
-    assert '"time_to_first_token_ms":350.0' in caplog.text
+    assert "wall_ms=" in caplog.text
+    assert "prefill_tokens" not in caplog.text
+    assert "decode_tokens" not in caplog.text
 
 
 def test_exact_rendered_prompt_is_logged_in_debug(caplog):
@@ -148,14 +136,13 @@ def test_exact_rendered_prompt_is_logged_in_debug(caplog):
     assert '"raw_tokens":6' in caplog.text
 
 
-def test_debug_start_enables_native_litert_benchmark(monkeypatch, tmp_path):
+def test_start_does_not_enable_native_benchmark(monkeypatch, tmp_path):
     model = tmp_path / "gemma.litertlm"
     model.write_bytes(b"fake")
     captured = {}
 
     class EngineContext:
         def __init__(self, *args, **kwargs):
-            captured["args"] = args
             captured["kwargs"] = kwargs
             self.engine = FakeEngine()
 
@@ -173,81 +160,28 @@ def test_debug_start_enables_native_litert_benchmark(monkeypatch, tmp_path):
     backend = LiteRTLMBackend(model, max_num_tokens=4096, debug_log=True)
     backend.start()
     try:
-        assert captured["kwargs"]["enable_benchmark"] is True
+        assert "enable_benchmark" not in captured["kwargs"]
         assert captured["kwargs"]["max_num_tokens"] == 4096
     finally:
         backend.close()
 
 
-def test_non_debug_start_enables_native_metrics_for_webgui(monkeypatch, tmp_path):
-    model = tmp_path / "gemma.litertlm"
-    model.write_bytes(b"fake")
-    captured = {}
-
-    class EngineContext:
-        def __init__(self, *args, **kwargs):
-            captured["kwargs"] = kwargs
-            self.engine = FakeEngine()
-
-        def __enter__(self):
-            return self.engine
-
-        def __exit__(self, *args):
-            return None
-
-    fake_litert = SimpleNamespace(
-        Engine=EngineContext,
-        Backend=SimpleNamespace(CPU=lambda: "cpu"),
-    )
-    monkeypatch.setitem(sys.modules, "litert_lm", fake_litert)
-    backend = LiteRTLMBackend(model, max_num_tokens=4096, debug_log=False)
-    backend.start()
-    try:
-        assert captured["kwargs"]["enable_benchmark"] is True
-    finally:
-        backend.close()
-
-
-def test_metrics_collected_without_debug_and_native_counts_override_tokenizer(monkeypatch):
+def test_wall_metrics_are_collected_without_native_counts(monkeypatch):
     from hailo_services.litert_optimizations import _REQUEST, _log_timing
 
     metrics = {"input_tokens": 20, "input_tokens_source": "tokenizer"}
     monkeypatch.setattr(_REQUEST, "metrics", metrics, raising=False)
-    _log_timing(SimpleNamespace(debug_log=False), FakeConversation(),
-                wall_ms=5100, create_call_ms=10, enter_ms=20)
-    assert metrics["input_tokens"] == 900
-    assert metrics["input_tokens_source"] == "native"
-    assert metrics["output_tokens"] == 30
-    assert metrics["ttft_ms"] == 350
-    assert metrics["ttft_source"] == "native"
-    assert metrics["inference_ms"] == 5100
-    assert metrics["decode_tokens_per_second"] == 15
-
-
-def test_legacy_benchmark_absent_does_not_invent_ttft_or_counts(monkeypatch):
-    from hailo_services.litert_optimizations import _REQUEST, _log_timing
-
-    metrics = {}
-    monkeypatch.setattr(_REQUEST, "metrics", metrics, raising=False)
-    _log_timing(SimpleNamespace(debug_log=False), object(),
-                wall_ms=50, create_call_ms=1, enter_ms=2)
-    assert "ttft_ms" not in metrics
-    assert "input_tokens" not in metrics
-    assert "output_tokens" not in metrics
+    _log_timing(
+        SimpleNamespace(debug_log=False),
+        wall_ms=50,
+        create_call_ms=1,
+        enter_ms=2,
+        first_chunk_ms=12,
+    )
+    assert metrics["input_tokens"] == 20
+    assert metrics["input_tokens_source"] == "tokenizer"
     assert metrics["inference_ms"] == 50
-
-
-def test_old_engine_without_enable_benchmark_still_starts(monkeypatch):
-    from hailo_services.litert_optimizations import _start_with_benchmark
-
-    def old_engine(path, *, backend, max_num_tokens):
-        return (path, backend, max_num_tokens)
-
-    fake_module = SimpleNamespace(Engine=old_engine)
-    monkeypatch.setitem(sys.modules, 'litert_lm', fake_module)
-
-    def original_start(backend):
-        return fake_module.Engine('model', backend='cpu', max_num_tokens=4096)
-
-    assert _start_with_benchmark(SimpleNamespace(debug_log=False), original_start) == ('model', 'cpu', 4096)
-    assert fake_module.Engine is old_engine
+    assert metrics["ttft_ms"] == 12
+    assert metrics["ttft_source"] == "first_text_chunk"
+    assert "prefill_tokens_per_second" not in metrics
+    assert "decode_tokens_per_second" not in metrics
