@@ -116,18 +116,16 @@ plain text responses retain their existing format. Streaming/WS/MQTT formats are
 | `requested_at`, `responded_at` | Server UTC timestamps in ISO 8601 with milliseconds |
 | `processing_ms` | Server time from HTTP arrival through upload buffering, parsing, queueing, preparation and inference to JSON response preparation |
 | `inference_ms` | Model generation call duration; excludes earlier request preparation and queueing |
-| `ttft_ms`, `ttft_source` | Native Gemma time to first token, or VLM generation-start to first nonempty text chunk; excludes earlier HTTP/queue time |
-| `input_tokens`, `input_tokens_source` | Gemma native prefill count when available; otherwise the accepted rendered prompt's tokenizer count. VLM uses `tokenizer_text`, excluding image tokens |
-| `output_tokens`, `output_tokens_source` | Native Gemma decode count when available; otherwise output text retokenized using the loaded model's tokenizer (`tokenizer`) |
+| `ttft_ms`, `ttft_source` | Generation start to the first nonempty text chunk when that timing is observable; excludes earlier HTTP/queue time |
+| `input_tokens`, `input_tokens_source` | Tokenizer count for the accepted rendered prompt. VLM text counts exclude image tokens |
+| `output_tokens`, `output_tokens_source` | Output text retokenized using the loaded model tokenizer where available |
 | `input_budget_tokens` | Conservative input budget including safety/image reserves; separate from reported token counts |
-| `prefill_tokens_per_second`, `decode_tokens_per_second` | Native Gemma throughput, when exposed by LiteRT-LM |
 
 Unavailable metrics are omitted, never inferred from character or chunk counts.
-LiteRT benchmark collection is enabled independently of debug logging, with a
-fallback for older bindings that do not accept `enable_benchmark`. A non-streaming
+The service does not enable LiteRT native benchmark collection. A non-streaming
 response includes OpenAI-style `usage` only when both token counts are available;
 their provenance is described in `metrics`. Retokenized text counts can differ
-from native generation counts, and VLM text counts do not represent image tokens.
+from native internal generation counts, and VLM text counts do not represent image tokens.
 
 The playground displays measurements beside each request, including failed ones,
 and retains separate transcript/measurement entries for Whisper. Its browser timer
@@ -140,56 +138,6 @@ text history; Gemma requests strip image parts while retaining their text, and t
 original image parts remain available for later VLM requests. The UI sends up to
 31 recent messages while keeping the full visible history. The model's existing
 input budget may trim older context independently of the visible history.
-
-### Text performance benchmark
-
-`scripts/benchmark-text.py` sends ten self-contained German text questions to
-the configured Gemma LLM and Qwen VLM, with no images or function tools. Tasks
-progress from arithmetic and translation through extraction, summarization,
-debugging, scheduling, deduction and constrained optimization. Each question
-gets one LLM response and one VLM response; previous answers are not sent as context.
-
-```bash
-python3 scripts/benchmark-text.py \
-  --url http://192.168.1.9:8090 \
-  --api-key 'YOUR_API_KEY'
-```
-
-The script uses only the Python 3.10+ standard library. `--url` also accepts a
-trailing `/v1`. It resolves both model IDs from `/ui/config` and checks availability
-through `/v1/models` before inference. `--api-key` takes precedence over the optional
-`HAILO_API_KEY`/`HAILO_KEY` environment values. The key is not saved in reports.
-
-| Option | Default / purpose |
-|---|---|
-| `--llm-model`, `--vlm-model` | Override the IDs detected from the service |
-| `--max-tokens` | 256 output tokens per model, configurable from 1 to 1024 |
-| `--max-input-tokens` | Omitted by default; existing model limits apply. May lower the limit |
-| `--temperature`, `--seed` | 0.1 and 42, identical for both models; Hailo VLM requires temperature > 0 |
-| `--timeout` | 240 seconds per HTTP request; the service has its own timeout |
-| `--warmup` | An additional unscored request per model before the 20 measured requests |
-| `--output-dir` | Default `benchmark-results/TIMESTAMP`; contains `comparison.html` and `results.json` |
-| `--ca-file` | Certificate/CA file for HTTPS |
-| `--insecure` | Skip certificate verification for a local self-signed HTTPS setup |
-
-Requests run sequentially; the model called first alternates for each question.
-The terminal and HTML report display answers and metrics side by side. JSON
-preserves request settings, answers, finish reason and full returned metrics.
-The reports are updated after each response, retaining progress on interruption.
-On a client timeout or HTTP 504, the run stops with partial results because native
-model work may still be active and would distort subsequent measurements. A failed
-warm-up also stops the run; ordinary per-question HTTP errors are recorded and the
-remaining comparisons continue.
-Client timestamps are UTC with milliseconds and elapsed times use a monotonic
-clock. Total client time includes transfer and JSON parsing. Native token counts,
-tokenizer counts and missing values retain their provenance; TTFT is never
-estimated from a complete non-streaming response. `finish_reason=length` indicates
-the output limit was reached. Reference answers are only included for manual
-review, not submitted to either model. A mixed-task median describes these ten
-tasks, not a general model speed; other workloads affect the measurements.
-Exit codes: 0 = all comparisons succeeded; 1 = at least one inference failed;
-2 = setup/report error; 130 = interrupted. This is an execution script, not a
-stored set of measured results: run it against the real service to obtain hardware timings.
 
 ### WebSocket and MQTT
 
