@@ -50,7 +50,8 @@
     "device.singular": "устройство",
     "device.plural": "устройства",
     "measurement.value": "{noun}: {value}.",
-    "prompt.reply_language": "Ответь на русском языке."
+    "prompt.reply_language": "Ответь на русском языке.",
+    "ha_plan.unsupported_action": "Согласно переданному каталогу устройств выбранная цель не поддерживает это действие."
   },
   "ui": {
     "ui_0": "Ключ API отсутствует или неверен.",

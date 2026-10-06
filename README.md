@@ -230,6 +230,7 @@ and VLM requests are bounded by their compiled 2048-token contexts. A request ma
 | Protocol | Endpoint / port | Chat / VLM / LLM | STT | YOLO detection |
 |---|---|---|---|---|
 | HTTP | `:8090/v1/chat/completions` | Text, images, SSE, tools | — | — |
+| HTTP | `POST :8090/v1/ha-assist/diagnose` | HA candidates, proposed calls and prepared prompt; no generation/execution | — | — |
 | HTTP | `:8090/v1/audio/transcriptions` | — | File upload | — |
 | HTTP | `POST :8090/v1/audio/speech` | — | Text → Piper CPU speech (WAV/PCM) | — |
 | HTTP | `:8090/v1/vision/detect` | — | — | Base64/data-URL image |

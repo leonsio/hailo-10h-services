@@ -105,7 +105,7 @@ def _arguments(result, tool, entities):
         members = [e for e in members if e["domain"] == domain]
     if "name" in arguments:
         members = [e for e in members if e["name"] == arguments["name"]]
-        keys = {(e["name"], e["area"], e["domain"]) for e in members}
+        keys = {(e["name"], e["area"], e["domain"], e.get("entity_id")) for e in members}
         if len(keys) != 1:
             return None
         # Preserve area qualification for duplicate names across rooms.
@@ -163,7 +163,7 @@ def deterministic_intent(request, settings, language):
     if grammar is None or not grammar.intents:
         trace["reason"] = "no_supported_intents"
         return None, trace
-    entities = _entries(request.messages)
+    entities = getattr(request, "_ha_catalogue", None) or _entries(request.messages)
     # Name slots include actual domain context for grammar requires_context rules.
     names = [
         {"in": e["name"], "out": e["name"], "context": {"domain": e["domain"]}} for e in entities
@@ -231,6 +231,32 @@ def deterministic_intent(request, settings, language):
         if trace["fuzzy"]:
             calls = match(trace["fuzzy"][0]["text"])
             source = "hassil_fuzzy"
+    if not calls and settings.ha_assist_sentence_fuzzy_enabled:
+        from .ha_recognition import template_candidates
+
+        ranked, reason = template_candidates(
+            query,
+            grammar,
+            language.split("-")[0],
+            entities,
+            threshold=settings.ha_assist_sentence_threshold,
+        )
+        trace["sentence_recovery"] = {"reason": reason, "candidates": ranked[:8]}
+        alternatives = {}
+        for candidate in ranked:
+            for key, value in match(candidate["text"]).items():
+                alternatives.setdefault(key, (value, candidate))
+        ranked_calls = sorted(alternatives.values(), key=lambda item: -item[1]["score"])
+        if ranked_calls:
+            best, candidate = ranked_calls[0]
+            second = ranked_calls[1][1]["score"] if len(ranked_calls) > 1 else 0
+            if candidate["score"] - second >= settings.ha_assist_fuzzy_margin:
+                tool, args, _ = best
+                calls = {(tool["function"]["name"], json.dumps(args, sort_keys=True)): best}
+                source = "hassil_sentence_recovery"
+                trace["sentence_recovery"].update(selected=candidate, runner_up=second)
+            else:
+                trace["sentence_recovery"]["reason"] = "ambiguous_calls"
     trace["duration_ms"] = (time.perf_counter() - started) * 1000
     if len(calls) != 1:
         trace.setdefault("reason", "ambiguous" if calls else "no_validated_match")

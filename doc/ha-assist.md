@@ -249,8 +249,20 @@ If exact matching fails because one known entity/area slot is slightly misspelle
 HA-Assist may repair **one** catalogue slot when there is a unique candidate above the
 configured threshold and margin. It then reparses the sentence with HassIL.
 
-The fuzzy stage does not rewrite action vocabulary and is intentionally conservative.
-Ambiguous matches fall through to normal inference rather than guessing.
+Slot ranking combines character similarity and Damerau-Levenshtein transposition
+support, after explicit domain/area constraints. Exact catalogue spans are protected
+from overlapping repairs. Configured HA aliases may be supplied in optional
+`ha_context`; invented spelling lists are never stored.
+
+On an exact/slot miss, bounded official sentence skeletons can repair small
+structural errors. Action polarity, numeric values and explicit target qualifiers
+remain constraints. Each candidate is reparsed through HassIL and schema/semantic
+validation. The structure score excludes long target names so that they cannot
+hide a changed qualifier. Conditions, relative/composite requests, unknown action
+polarity and excessive candidate sets fall back rather than being silently repaired.
+
+Ambiguous target matches go once to the configured LLM with their constrained
+candidates. See [recognition, diagnosis and caching](ha-recognition.md).
 
 ### State and measurement queries
 
