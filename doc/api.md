@@ -1,8 +1,8 @@
 # API and integrations
 
-Hailo-10H-Services exposes resident local inference through an OpenAI-compatible chat
-surface plus dedicated speech, object-detection, Home Assistant, MCP, Wyoming,
-WebSocket, MQTT and Frigate interfaces.
+Hailo-10H-Services exposes local inference through an OpenAI-compatible chat surface
+plus dedicated speech, object-detection, Home Assistant, MCP, Wyoming, WebSocket,
+MQTT and Frigate interfaces.
 
 ## Endpoint overview
 
@@ -22,6 +22,29 @@ WebSocket, MQTT and Frigate interfaces.
 The chat endpoint implements the subset of the OpenAI Chat Completions API required by
 the supported clients. `/v1/vision/detect` is a service-specific OpenAI-style `/v1`
 extension for object detection; it is not an OpenAI public API endpoint.
+
+## HailoRT 5.4.0: VLM and native LLM are mutually exclusive
+
+Hailo's GenAI documentation for the current 5.4.0 stack states that multiple LLM or
+VLM models cannot run simultaneously on the same device. For this service that means:
+
+- `models.vlm.enabled: true` and `models.hailo_llm.enabled: true` must **not** be used
+  together on HailoRT 5.4.0;
+- choose **one Hailo VLM** or **one native Hailo LLM** as the resident GenAI language
+  model;
+- Gemma/LiteRT-LM runs on the CPU and may be enabled together with either choice;
+- the software already has independent VLM and Hailo-LLM adapters, model IDs, routing,
+  queues and token-budget paths, so it is prepared for concurrent VLM+LLM operation
+  when a future Hailo runtime supports that configuration;
+- the service does not unload one GenAI model and load the other on demand.
+
+The configuration parser intentionally remains future-ready and does not turn this
+vendor limitation into a permanent schema rule. **For HailoRT 5.4.0 deployments, the
+administrator must keep one of the two Hailo GenAI roles disabled.**
+
+A useful full Home Assistant configuration today is therefore **Qwen VLM on Hailo +
+Gemma on CPU**. A native Hailo LLM can alternatively be used for text-only operation
+with the VLM disabled.
 
 ## Authentication and network exposure
 
@@ -62,10 +85,12 @@ required. The bundled model catalog currently contains Hailo LLM entries includi
 - `Llama3.2-1B-Instruct`
 - `DeepSeek-R1-Distill-Qwen-1.5B`
 
-Select one under `models.hailo_llm`:
+Select one under `models.hailo_llm` and disable the VLM on HailoRT 5.4.0:
 
 ```yaml
 models:
+  vlm:
+    enabled: false
   hailo_llm:
     enabled: true
     model: Qwen3-1.7B-Instruct
@@ -81,12 +106,13 @@ compiled context after output/template reserves.
 
 Model-specific prompt behavior lives in `model_catalog.yaml`. For example,
 `Llama3.2-1B-Instruct` omits empty tool-call fields and uses a single-call tool contract;
-Qwen models use their configured template behavior. Thinking is disabled in the native
-rendered templates by default where the adapter supports that distinction.
+Qwen models use their configured template behavior. Thinking is disabled in native
+rendered templates where the adapter supports that distinction.
 
 ### VLM support
 
-The configured VLM is selected under `models.vlm`:
+The configured VLM is selected under `models.vlm`. On HailoRT 5.4.0 the native Hailo
+LLM must remain disabled:
 
 ```yaml
 models:
@@ -95,17 +121,19 @@ models:
     model: Qwen2-VL-2B-Instruct
     release: auto
     max_input_tokens: 2048
+  hailo_llm:
+    enabled: false
 ```
 
 Supported catalog VLMs currently include `Qwen2-VL-2B-Instruct` and
 `Qwen3-VL-2B-Instruct`. Their compiled context is also 2048 tokens. Qwen2 defaults to
 the smaller v5.1.1 HEF and uses 336×336 frames; Qwen3 uses the model-provided frame
-shape (currently 512×288 in the catalog) and one image per request.
+shape currently recorded in the model catalog.
 
 ### Gemma on CPU
 
-Optional `gemma-4-E2B-it` runs through LiteRT-LM on the CPU and therefore does not use
-the Hailo accelerator runtime:
+Optional `gemma-4-E2B-it` runs through LiteRT-LM on the CPU and therefore does not
+consume the Hailo GenAI VLM/LLM slot:
 
 ```yaml
 settings:
@@ -129,8 +157,9 @@ order:
 2. configured native Hailo LLM,
 3. resident VLM as a text-capable fallback.
 
-Requests containing images require the configured VLM. This ordinary default routing
-is separate from `HA-Assist`.
+The order is intentionally generic and future-ready. With HailoRT 5.4.0, entries 2 and
+3 cannot both be resident at once. Requests containing images require the configured
+VLM. This ordinary default routing is separate from `HA-Assist`.
 
 ## `POST /v1/chat/completions`
 
@@ -141,7 +170,7 @@ curl -sS http://HOST:8090/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer ${HAILO_API_KEY}" \
   -d '{
-    "model":"Qwen3-1.7B-Instruct",
+    "model":"gemma-4-E2B-it",
     "messages":[{"role":"user","content":"Was ist die Hauptstadt von Frankreich?"}],
     "max_tokens":128
   }'
@@ -204,14 +233,15 @@ request.
 
 ## Function/tool calling
 
-Gemma, native Hailo LLMs and Qwen VLMs can all participate in the service's
-OpenAI-compatible function-tool protocol.
+Gemma, native Hailo LLMs and Qwen VLMs can participate in the service's
+OpenAI-compatible function-tool protocol when that backend is the configured/available
+one.
 
 - Gemma uses the LiteRT-LM tool representation/parser.
 - Native Hailo LLMs use their model-specific prompt template plus the compact tool
   contract.
-- Qwen VLM requests use the same validated compact JSON-call adapter, including
-  image/tool requests.
+- Qwen VLM requests use the validated compact JSON-call adapter, including image/tool
+  requests.
 
 Generated function names and arguments are validated against the functions actually
 offered by the client and their JSON Schemas. `required`, named choices and
@@ -222,33 +252,6 @@ The service **never executes client functions itself**. Home Assistant or anothe
 client receives the returned `tool_calls`, executes them with its own permissions and
 may send the assistant call plus matching `role: "tool"` result back in the next
 request.
-
-Example:
-
-```bash
-curl -sS http://HOST:8090/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer ${HAILO_API_KEY}" \
-  -d '{
-    "model":"Qwen3-1.7B-Instruct",
-    "messages":[{"role":"user","content":"Schalte die Lampe im Wohnzimmer ein."}],
-    "tools":[{
-      "type":"function",
-      "function":{
-        "name":"intent__HassTurnOn",
-        "description":"Turns on a light",
-        "parameters":{
-          "type":"object",
-          "properties":{"name":{"type":"string"}},
-          "required":["name"],
-          "additionalProperties":false
-        }
-      }
-    }],
-    "tool_choice":"required",
-    "max_tokens":256
-  }'
-```
 
 Actual tool-selection quality is model-dependent and should be benchmarked with the
 schemas/devices exposed by the client.
@@ -415,8 +418,7 @@ contacted.
 Response is an OpenAI-style model list. Depending on configuration/readiness it can
 contain:
 
-- configured VLM,
-- configured native Hailo LLM,
+- configured VLM **or** configured native Hailo LLM on HailoRT 5.4.0,
 - Whisper model,
 - resident YOLO model,
 - `gemma-4-E2B-it`,
@@ -435,14 +437,26 @@ HTTP status is 503 when a required enabled runtime failed to become ready.
 ## Home Assistant virtual model
 
 Home Assistant should use `model: "HA-Assist"` when HA-specific deterministic routing,
-context reduction and validation are desired.
+context reduction and validation are desired. `HA-Assist` has no weights of its own.
+
+For HailoRT 5.4.0 the recommended text+image profile is Gemma on CPU plus a Hailo VLM:
 
 ```yaml
 settings:
   ha_assist_enabled: true
-  ha_assist_text_model: Qwen3-1.7B-Instruct
+  ha_assist_text_model: gemma-4-E2B-it
   ha_assist_vision_model: Qwen2-VL-2B-Instruct
   ha_assist_fuzzy_enabled: true
+
+models:
+  vlm:
+    enabled: true
+    model: Qwen2-VL-2B-Instruct
+  hailo_llm:
+    enabled: false
+  gemma:
+    enabled: true
+    max_input_tokens: 4096
 ```
 
 Example request:
@@ -452,25 +466,33 @@ Example request:
   "model": "HA-Assist",
   "messages": [{"role": "user", "content": "Mach das Licht im Wohnzimmer aus"}],
   "max_tokens": 256,
-  "max_input_tokens": 2048
+  "max_input_tokens": 4096
 }
 ```
 
-`HA-Assist` has no model weights. It keeps the external model name `HA-Assist` while
-routing internally:
+The virtual model processes requests in stages rather than blindly forwarding the full
+Home Assistant request to an LLM:
 
-- deterministic Home Assistant intent/state/action paths first,
-- MiniLM ranking/retrieval when needed,
-- text inference to `settings.ha_assist_text_model`,
-- image inference to `settings.ha_assist_vision_model`.
+- exact/deterministic HA intent, state, measurement and action-result paths are tried
+  first;
+- conservative fuzzy correction is limited to known catalogue slots;
+- irrelevant entities/tools/history are removed before generation;
+- MiniLM may rank relevant HA context but does not generate the answer;
+- only ambiguous/general requests reach the configured text backend;
+- image requests go to the configured VLM;
+- generated tool calls are validated before Home Assistant receives them.
 
 A deterministic answer or tool call performs **zero generative model requests**.
-Physical model IDs bypass HA-specific routing even when Home Assistant-like tools are
-present.
+Physical model IDs bypass these HA-specific steps. Home Assistant supplies tool schemas
+and executes returned calls; the gateway never needs an HA access token.
 
-Home Assistant supplies tool schemas and executes returned calls. The gateway does not
-hold an HA access token. Generated calls are validated against the offered schema and,
-for recognized HA paths, against resolved target/value expectations.
+A native Hailo LLM can be selected as `ha_assist_text_model`, but on HailoRT 5.4.0 the
+VLM must then be disabled. The service does not dynamically unload/reload models to
+alternate between those two Hailo GenAI backends.
+
+See [How HA-Assist works](ha-assist.md) for the complete processing sequence and the
+rationale for deterministic routing, retrieval and validation. See also
+[request pipelines](pipelines.md).
 
 ### Context reduction and token limits
 
@@ -486,7 +508,7 @@ compaction rules.
 With Home Assistant's **Local OpenAI LLM** integration, use the generic
 OpenAI-compatible server mode and select `HA-Assist`. A request body parameter
 `max_input_tokens` may be supplied; it can lower but cannot raise the configured model
-limit. Do not choose a llama.cpp-specific server mode solely for this service, because
+limit. Do not choose a llama.cpp-specific server mode solely for this service because
 that may add parameters not part of this gateway's supported request schema.
 
 ## Home Assistant Wyoming STT
@@ -567,13 +589,14 @@ not substituted for TTFT.
 
 ## Configuration summary
 
-Model roles remain under `models:` while object detection has its own top-level
-`vision:` block:
+For HailoRT 5.4.0, use one of the two Hailo GenAI profiles below.
+
+### Full HA text + image profile: VLM on Hailo, Gemma on CPU
 
 ```yaml
 settings:
   ha_assist_enabled: true
-  ha_assist_text_model: Qwen3-1.7B-Instruct
+  ha_assist_text_model: gemma-4-E2B-it
   ha_assist_vision_model: Qwen2-VL-2B-Instruct
 
 models:
@@ -582,33 +605,46 @@ models:
     model: Qwen2-VL-2B-Instruct
     max_input_tokens: 2048
   hailo_llm:
+    enabled: false
+  gemma:
     enabled: true
-    model: Qwen3-1.7B-Instruct
-    max_input_tokens: 2048
+    max_input_tokens: 4096
   whisper:
     enabled: true
     model: Whisper-Base
   minilm:
     enabled: true
-  gemma:
-    enabled: false
-    max_input_tokens: 4096
 
 vision:
   enabled: true
   model: yolov11m
-  confidence: 0.4
-  max_detections: 20
-  queue_size: 16
-  scheduler_priority: 1
   zmq:
     enabled: true
     endpoint: tcp://127.0.0.1:5555
 ```
 
-The legacy `models.vision` form is parsed for backwards compatibility, but new
-configurations should use the dedicated `vision:` block. Do not configure both forms at
-the same time.
+### Native Hailo LLM text profile
+
+```yaml
+settings:
+  ha_assist_enabled: true
+  ha_assist_text_model: Qwen3-1.7B-Instruct
+
+models:
+  vlm:
+    enabled: false
+  hailo_llm:
+    enabled: true
+    model: Qwen3-1.7B-Instruct
+    max_input_tokens: 2048
+```
+
+In the second profile, HA-Assist image requests are unavailable unless the deployment
+is reconfigured. The service intentionally does not swap VLM/LLM HEFs per request.
+
+Object detection keeps its dedicated top-level `vision:` block. The legacy
+`models.vision` form is parsed for backwards compatibility, but new configurations
+should use `vision:` and should not configure both forms at the same time.
 
 ## Updating
 
@@ -621,20 +657,19 @@ sudo bash scripts/install.sh
 sudo systemctl restart hailo-10h-services.service
 ```
 
-No feature branch is required for the APIs documented on this page.
-
 ## Related documentation
 
 - [README / feature overview](../README.md)
+- [How HA-Assist works](ha-assist.md)
 - [Installation and deployment](installation.md)
 - [Request pipelines and HA routing](pipelines.md)
 - [Language behavior](languages.md)
 - [Model benchmark/evaluation](model-benchmark-evaluation.md)
 - [Troubleshooting](troubleshooting.md)
 
-External protocol references:
+External references:
 
+- [Hailo GenAI usage](https://github.com/hailo-ai/hailo_model_zoo_genai/blob/main/docs/USAGE.rst)
 - [Frigate object detectors](https://docs.frigate.video/configuration/object_detectors/)
-- [Hailo GenAI examples](https://github.com/hailo-ai/hailo_model_zoo_genai)
 - [Wyoming protocol](https://github.com/OHF-Voice/wyoming)
 - [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
