@@ -37,12 +37,54 @@ models:
     "settings: {port: true}", 'settings: {debug_log: "false"}',
     "models: {gemma: {enabled: 'false'}}", "[]",
     "models: {whisper: {model: Whisper-Small, typo: 1}}",
+    "vision: {typo: 1}",
+    "vision: {zmq: {typo: 1}}",
 ])
 def test_yaml_rejects_invalid_config(tmp_path, monkeypatch, text):
     path = tmp_path / "config.yaml"
     path.write_text(text)
     monkeypatch.setenv("HAILO_CONFIG", str(path))
     with pytest.raises(ValueError):
+        Settings.from_env()
+
+
+def test_yaml_vision_block_selects_model_and_zmq(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text('''vision:
+  enabled: true
+  model: yolo26s
+  release: v5.4.0
+  confidence: 0.35
+  iou_threshold: 0.5
+  max_detections: 30
+  queue_size: 24
+  scheduler_priority: 7
+  zmq:
+    enabled: true
+    endpoint: tcp://0.0.0.0:5555
+''')
+    monkeypatch.setenv("HAILO_CONFIG", str(path))
+    s = Settings.from_env()
+    assert s.vision_enabled
+    assert s.vision_model == "yolo26s"
+    assert s.vision_release == "v5.4.0"
+    assert s.vision_confidence == 0.35
+    assert s.vision_iou_threshold == 0.5
+    assert s.vision_max_detections == 30
+    assert s.vision_queue_size == 24
+    assert s.vision_scheduler_priority == 7
+    assert s.vision_zmq_enabled
+    assert s.vision_zmq_endpoint == "tcp://0.0.0.0:5555"
+
+
+def test_yaml_vision_block_rejects_duplicate_legacy_role(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text('''vision: {enabled: true, model: yolov11m}
+models:
+  vision: {enabled: true, model: yolov11s}
+''')
+    monkeypatch.setenv("HAILO_CONFIG", str(path))
+    with pytest.raises(ValueError, match="either in top-level vision"):
         Settings.from_env()
 
 
@@ -238,12 +280,17 @@ def test_yaml_example_covers_every_legacy_env_parameter(monkeypatch):
         'whisper': ('whisper_enabled', 'whisper_hef'),
         'hailo_llm': ('hailo_llm_enabled', 'hailo_llm_model', 'hailo_llm_release',
                       'hailo_llm_max_input_tokens'),
-        'vision': ('vision_enabled', 'vision_model', 'vision_release'),
         'minilm': ('minilm_enabled', 'minilm_hef_path'),
         'gemma': ('litert_enabled', 'litert_model_path', 'litert_max_input_tokens'),
     }.items():
         assert role in document['models']
         covered.update(fields)
+    assert 'vision' in document
+    covered.update((
+        'vision_enabled', 'vision_model', 'vision_release', 'vision_zmq_enabled',
+        'vision_zmq_endpoint', 'vision_confidence', 'vision_iou_threshold',
+        'vision_max_detections', 'vision_queue_size', 'vision_scheduler_priority',
+    ))
     legacy = {match.lower() for match in re.findall(
         r'^HAILO_(\w+)=', (root / 'deploy/hailo-10h-services.env.example').read_text(), re.M)}
     assert legacy <= covered
@@ -251,6 +298,7 @@ def test_yaml_example_covers_every_legacy_env_parameter(monkeypatch):
     monkeypatch.setenv('HAILO_CONFIG', str(path))
     s = Settings.from_env()
     assert s.mqtt_port == 1883 and s.mcp_hosts.endswith('hailo.local:*')
+    assert s.vision_model == 'yolov11m' and not s.vision_enabled
     # Both Hailo VLM and CPU Gemma are explicitly allowed together.
     s = replace(s, litert_enabled=True)
     runtime = Runtime(s)

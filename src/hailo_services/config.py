@@ -126,8 +126,8 @@ class Settings:
         if config_path or path.exists():
             with path.open(encoding="utf-8") as stream:
                 document = yaml.safe_load(stream)
-            if not isinstance(document, dict) or set(document) - {"settings", "models"}:
-                raise ValueError("YAML config must contain only settings and models mappings")
+            if not isinstance(document, dict) or set(document) - {"settings", "models", "vision"}:
+                raise ValueError("YAML config must contain only settings, models and vision mappings")
             values = document.get("settings", {}) or {}
             if not isinstance(values, dict) or set(values) - set(vars(defaults)):
                 raise ValueError("Unknown setting in YAML configuration")
@@ -138,6 +138,8 @@ class Settings:
                 "whisper": ("whisper_enabled", "whisper_hef"),
                 "minilm": ("minilm_enabled", None),
                 "hailo_llm": ("hailo_llm_enabled", "hailo_llm_model"),
+                # Kept for backwards compatibility. New configurations should use
+                # the dedicated top-level vision: block below.
                 "vision": ("vision_enabled", "vision_model"),
                 "gemma": ("litert_enabled", None),
             }
@@ -178,6 +180,39 @@ class Settings:
             # Explicit false wins over a legacy model path.
             if selections.get("gemma", {}).get("enabled") is False:
                 values["litert_model_path"] = ""
+
+            vision = document.get("vision", {}) or {}
+            if vision and "vision" in selections:
+                raise ValueError("Configure vision either in top-level vision or legacy models.vision, not both")
+            allowed_vision = {
+                "enabled", "model", "path", "release", "confidence", "iou_threshold",
+                "max_detections", "queue_size", "scheduler_priority", "zmq",
+            }
+            if not isinstance(vision, dict) or set(vision) - allowed_vision:
+                raise ValueError("Invalid top-level vision configuration")
+            if "model" in vision and "path" in vision:
+                raise ValueError("vision.model and vision.path are mutually exclusive")
+            vision_mapping = {
+                "enabled": "vision_enabled",
+                "model": "vision_model",
+                "path": "vision_model",
+                "release": "vision_release",
+                "confidence": "vision_confidence",
+                "iou_threshold": "vision_iou_threshold",
+                "max_detections": "vision_max_detections",
+                "queue_size": "vision_queue_size",
+                "scheduler_priority": "vision_scheduler_priority",
+            }
+            for key, target in vision_mapping.items():
+                if key in vision:
+                    values[target] = vision[key]
+            zmq = vision.get("zmq", {}) or {}
+            if not isinstance(zmq, dict) or set(zmq) - {"enabled", "endpoint"}:
+                raise ValueError("Invalid vision.zmq configuration")
+            if "enabled" in zmq:
+                values["vision_zmq_enabled"] = zmq["enabled"]
+            if "endpoint" in zmq:
+                values["vision_zmq_endpoint"] = zmq["endpoint"]
         for key, value in vars(defaults).items():
             raw = os.getenv("HAILO_" + key.upper())
             if raw is not None:
