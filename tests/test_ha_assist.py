@@ -518,3 +518,57 @@ def test_embedding_cache_is_bounded_and_reuses_vectors():
     for index in range(600):
         _embedding(encoder, str(index), cache)
     assert len(cache) == 512
+
+
+@pytest.mark.parametrize('area,typo', [('Wohnzimmer', 'Wonzimmer'),
+                                      ('Wohnzimmer', 'Wohnzimer'),
+                                      ('Arbeitszimmer', 'Arbetszimmer'),
+                                      ('Bibliothek', 'Bibliotehk')])
+def test_catalogue_spelling_is_universal(service, area, typo):
+    client, backend, llm = service
+    body = payload(f'Schalte das Licht im {typo} auf 70%')
+    body['messages'][0]['content'] = SYSTEM.replace('Wohnzimmer', area)
+    result = client.post('/v1/chat/completions', json=body).json()
+    function = result['choices'][0]['message']['tool_calls'][0]['function']
+    assert json.loads(function['arguments'])['area'] == area
+    assert not backend.calls and not llm.calls
+
+
+def test_equal_catalogue_scores_use_one_llm_with_candidates(service):
+    client, backend, llm = service
+    body = payload('Schalte das Licht im ArbeitsraumC auf 70%')
+    body['messages'][0]['content'] = '''Home Assistant
+Static Context:
+- names: Leuchte A
+  domain: light
+  areas: ArbeitsraumA
+- names: Leuchte B
+  domain: light
+  areas: ArbeitsraumB
+- names: Andere Leuchte
+  domain: light
+  areas: Garten
+'''
+    result = client.post('/v1/chat/completions', json=body).json()
+    assert len(llm.calls) == 1 and not backend.calls
+    request = llm.calls[0]
+    candidates = request._ha_plan['target_candidates']
+    assert {c['value'] for c in candidates} == {'ArbeitsraumA', 'ArbeitsraumB'}
+    assert len({c['score'] for c in candidates}) == 1
+    assert request.messages[-1]['content'] == body['messages'][-1]['content']
+    assert 'Andere Leuchte' not in request.messages[0]['content']
+    parameters = request.tools[0]['function']['parameters']['properties']
+    assert parameters['area']['enum'] == ['ArbeitsraumA', 'ArbeitsraumB']
+    assert 'brightness' in parameters and 'color' not in parameters
+    from hailo_services.ha_request_plan import validate_action
+    assert validate_action(request, 'light__HassLightSet', {'area': 'ArbeitsraumA', 'brightness': 70})
+    assert not validate_action(request, 'light__HassLightSet', {'area': 'Garten', 'brightness': 70})
+    assert result['metrics']['ha_plan']['target_resolution'] == 'llm'
+
+
+def test_close_runner_up_is_retained_even_below_acceptance_threshold():
+    from hailo_services.ha_fuzzy import slot_rankings
+    matches = slot_rankings('Licht im ArbeitsraumC an', ['ArbeitsraumA', 'ArbeitsraumAB'])
+    assert len(matches) == 1 and matches[0]['ambiguous']
+    assert {c['value'] for c in matches[0]['candidates']} == {'ArbeitsraumA', 'ArbeitsraumAB'}
+    assert not slot_repairs('Licht im ArbeitsraumC an', ['ArbeitsraumA', 'ArbeitsraumAB'])

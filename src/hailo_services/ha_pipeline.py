@@ -231,8 +231,12 @@ def install():
                 object.__setattr__(prepared, "_response_language", language)
                 return prepared
 
-            direct, intent_trace = deterministic_intent(request, self.settings, language)
-            if direct is None:
+            unresolved = getattr(request, "_ha_plan", {}).get("target_resolution") == "llm"
+            if unresolved:
+                direct, intent_trace = None, {"source": "catalogue_scores", "reason": "ambiguous"}
+            else:
+                direct, intent_trace = deterministic_intent(request, self.settings, language)
+            if direct is None and not unresolved:
                 direct = direct_numeric_action(request)
                 if direct is not None:
                     intent_trace.update(source="direct_numeric", reason="validated",
@@ -251,6 +255,10 @@ def install():
                     "ha_route request_id=%s route=direct_hassil skipped_gemma=true",
                     request._request_id,
                 )
+            elif unresolved:
+                from .ha_prompt_compiler import compile_ha_prompt
+
+                prepared, _ = compile_ha_prompt(request, request)
             elif isinstance(request.tool_choice, dict):
                 # A forced tool is authoritative; no competing direct read/action.
                 prepared = request.model_copy()

@@ -6,7 +6,7 @@ import re
 import unicodedata
 from functools import lru_cache
 
-from .ha_fuzzy import slot_repairs
+from .ha_fuzzy import slot_rankings
 from .i18n import normalize_matching, t
 from .tool_retrieval import latest_user_text
 
@@ -55,6 +55,7 @@ def canonical_request(request, settings):
     values = sorted({e[k] for e in entities for k in ("name", "area") if e[k]})
     original = text
     repairs = []
+    target_candidates = []
     if settings.ha_assist_fuzzy_enabled:
         # Orthographic aliases are accepted only when they map uniquely.
         aliases = {}
@@ -66,6 +67,21 @@ def canonical_request(request, settings):
                 start, end = words[index].start(), words[index + count - 1].end()
                 fragment = text[start:end]
                 matches = aliases.get(_fold(fragment), set())
+                if len(matches) > 1 and fragment.casefold() not in {v.casefold() for v in matches}:
+                    for value in sorted(matches):
+                        for entity in entities:
+                            for kind in ("area", "name"):
+                                if entity[kind] == value:
+                                    item = dict(
+                                        value=value,
+                                        score=100.0,
+                                        input=fragment,
+                                        kind=kind,
+                                        area=entity["area"],
+                                        domain=entity["domain"],
+                                    )
+                                    if item not in target_candidates:
+                                        target_candidates.append(item)
                 if len(matches) == 1:
                     value = next(iter(matches))
                     if fragment.casefold() != value.casefold():
@@ -74,21 +90,40 @@ def canonical_request(request, settings):
                             {"input": fragment, "resolved": value, "source": "orthography"}
                         )
                         break
-        fuzzy = slot_repairs(
+        fuzzy = slot_rankings(
             text,
             values,
             threshold=settings.ha_assist_fuzzy_threshold,
             margin=settings.ha_assist_fuzzy_margin,
         )
-        if fuzzy:
+        if len(fuzzy) == 1 and not fuzzy[0]["ambiguous"]:
             text = fuzzy[0]["text"]
             repairs.extend(fuzzy)
+        else:
+            for match in fuzzy:
+                for candidate in match["candidates"]:
+                    for entity in entities:
+                        for kind in ("area", "name"):
+                            if entity[kind] == candidate["value"]:
+                                item = dict(
+                                    candidate,
+                                    input=match["input"],
+                                    kind=kind,
+                                    area=entity["area"],
+                                    domain=entity["domain"],
+                                )
+                                if item not in target_candidates:
+                                    target_candidates.append(item)
         # Generic domain words are separate from catalogue slots. Short action
         # words (on/off/not) are deliberately excluded from spelling repair.
         from rapidfuzz.distance import Levenshtein
 
-        generic = {"licht", "lampe", "beleuchtung", "light", "lights", "свет"}
+        from .ha_state_routing import _DOMAIN_WORDS, _has_action_verb
+
+        generic = set().union(*_DOMAIN_WORDS.values())
         for word in re.findall(r"\w+", text):
+            if _has_action_verb(normalize_matching(word)):
+                continue
             candidates = [
                 v
                 for v in generic
@@ -101,6 +136,7 @@ def canonical_request(request, settings):
     from .ha_state_routing import _query_domain
 
     domain = _query_domain(normalized)
+    target_candidates = [c for c in target_candidates if not domain or c["domain"] == domain]
     areas = sorted(
         {
             e["area"]
@@ -121,7 +157,9 @@ def canonical_request(request, settings):
         "area": areas[0] if len(areas) == 1 else None,
         "value": int(numeric[0]) if len(numeric) == 1 else None,
         "unit": "percent" if len(numeric) == 1 else None,
-        "target_ambiguous": len(areas) > 1,
+        "target_ambiguous": len(areas) > 1 or bool(target_candidates),
+        "target_candidates": target_candidates,
+        "target_resolution": "llm" if target_candidates else "catalogue",
         "catalogue_cache_hit": after.hits > before.hits,
     }
     from .ha_prompt_compiler import _deterministic_capability
@@ -154,6 +192,8 @@ def canonical_request(request, settings):
 
 def target_clarification(request):
     plan = getattr(request, "_ha_plan", {})
+    if plan.get("target_resolution") == "llm":
+        return None
     text = normalize_matching(latest_user_text(request.messages))
     # An unresolved area must not become a guessed individual-device action.
     from .ha_state_routing import _has_action_verb
@@ -206,6 +246,33 @@ def validate_action(request, name, args):
             return False
     if area and args.get("area") not in (None, area):
         return False
+    candidates = plan.get("target_candidates", [])
+    if candidates:
+        allowed_areas = {c["area"] for c in candidates}
+        allowed_names = {
+            e["name"]
+            for e in entities
+            if any(
+                (c["kind"] == "area" and e["area"] == c["area"])
+                or (c["kind"] == "name" and e["name"] == c["value"] and e["area"] == c["area"])
+                for c in candidates
+            )
+            and (not domain or e["domain"] == domain)
+        }
+        if args.get("area") not in allowed_areas and args.get("name") not in allowed_names:
+            return False
+        if args.get("area") and args["area"] not in allowed_areas:
+            return False
+        if args.get("name") and args["name"] not in allowed_names:
+            return False
+        if all(c["kind"] == "name" for c in candidates) and not args.get("name"):
+            return False
+        if (
+            args.get("area")
+            and args.get("name")
+            and not any(e["area"] == args["area"] and e["name"] == args["name"] for e in entities)
+        ):
+            return False
     members = [
         e
         for e in entities

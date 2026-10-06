@@ -419,3 +419,12 @@ Sources used for the implementation:
 - [Hailo shared-device usage and KV-cache limitation](https://github.com/hailo-ai/hailo_model_zoo_genai/blob/main/docs/USAGE.rst)
 - [Official Wyoming protocol](https://github.com/OHF-Voice/wyoming)
 - [Official MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
+
+HA-Assist resolves misspelled target names against the current request catalogue,
+without storing spelling variants. Fuzzy similarity threshold and runner-up margin
+remain configurable. A uniquely ranked target can use the deterministic path. Tied
+or insufficiently separated candidates are sent with scores and area mappings to
+the single configured text backend; only candidate targets are allowed in the
+resulting action. If context does not distinguish them, the model should ask for
+clarification. Similarity scores are not calibrated probabilities. Pure model
+requests do not use this HA-specific target resolution.

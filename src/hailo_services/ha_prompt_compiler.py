@@ -435,6 +435,15 @@ def compile_ha_prompt(source_request, prepared_request, *, encoder=None, embeddi
         domain,
         area,
     )
+    candidates = intent_plan.get("target_candidates", [])
+    if candidates:
+        area = None
+        allowed_areas = {c["area"] for c in candidates}
+        relevant = [e for e in source_entities
+                    if any((c["kind"] == "area" and e["area"] == c["area"])
+                           or (c["kind"] == "name" and e["name"] == c["value"]
+                               and e["area"] == c["area"]) for c in candidates)
+                    and (not domain or e["domain"] == domain)]
     tools = _filter_tools(prepared_request.tools, capability)
     compact_tools = [
         _compact_tool(tool, capability, domain, area, relevant)
@@ -448,6 +457,16 @@ def compile_ha_prompt(source_request, prepared_request, *, encoder=None, embeddi
                              if tool['function']['name'] in called
                              and tool['function']['name'] not in _tool_names(compact_tools))
     system_text = _minimal_system(capability, domain, area, relevant, compact_tools)
+    if candidates:
+        choices = list({(c["value"], c["kind"], c["area"], c["score"]): c for c in candidates}.values())
+        system_text += "\nAmbiguous target candidates (similarity scores, not probabilities): " + json.dumps(
+            [{"target": c["value"], "kind": c["kind"], "area": c["area"], "score": round(c["score"], 2)}
+             for c in choices], ensure_ascii=False)
+        system_text += "\nSelect the intended candidate using the user's request. If context cannot distinguish them, ask for clarification."
+        for tool in compact_tools:
+            properties = tool["function"]["parameters"]["properties"]
+            if "area" in properties:
+                properties["area"] = {"type": "string", "enum": sorted(allowed_areas)}
     messages = _replace_ha_system(prepared_request.messages, system_text)
     compiled = prepared_request.model_copy(update={"messages": messages, "tools": compact_tools})
     compiled._request_id = getattr(prepared_request, "_request_id", "-")
