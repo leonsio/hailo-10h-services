@@ -194,6 +194,28 @@ def test_yaml_can_enable_hailo_llm(tmp_path, monkeypatch, content):
     assert Settings.from_env().hailo_llm_enabled
 
 
+@pytest.mark.parametrize(('release', 'expected_release'), [
+    ('auto', 'v5.4.0'),
+    ('v5.3.0', 'v5.3.0'),
+])
+def test_yaml_hailo_llm_release_selects_catalogue_release(
+        tmp_path, monkeypatch, release, expected_release):
+    path = tmp_path / 'config.yaml'
+    path.write_text(f'''models:
+  hailo_llm:
+    enabled: true
+    model: Qwen3-1.7B-Instruct
+    release: {release}
+''')
+    monkeypatch.setenv('HAILO_CONFIG', str(path))
+    monkeypatch.delenv('model_zoo_version', raising=False)
+    settings = Settings.from_env()
+    assert settings.hailo_llm_release == release
+    assert ModelManager(settings, '5.4.0').url('Qwen3-1.7B-Instruct') == (
+        f'https://dev-public.hailo.ai/{expected_release}/blob/Qwen3-1.7B-Instruct.hef'
+    )
+
+
 def test_env_can_enable_hailo_llm(tmp_path, monkeypatch):
     path = tmp_path / 'config.yaml'
     path.write_text('models: {hailo_llm: {enabled: false}}')
@@ -214,7 +236,8 @@ def test_yaml_example_covers_every_legacy_env_parameter(monkeypatch):
     for role, fields in {
         'vlm': ('vlm_enabled', 'vlm_hef', 'vlm_release', 'vlm_max_input_tokens'),
         'whisper': ('whisper_enabled', 'whisper_hef'),
-        'hailo_llm': ('hailo_llm_enabled', 'hailo_llm_model', 'hailo_llm_max_input_tokens'),
+        'hailo_llm': ('hailo_llm_enabled', 'hailo_llm_model', 'hailo_llm_release',
+                      'hailo_llm_max_input_tokens'),
         'minilm': ('minilm_enabled', 'minilm_hef_path'),
         'gemma': ('litert_enabled', 'litert_model_path', 'litert_max_input_tokens'),
     }.items():
