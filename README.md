@@ -44,7 +44,6 @@ require an enabled VLM. Explicit model IDs select that backend and never fall ba
 Gemma can remain enabled alongside either accelerator model. The service does not
 enforce VLM/HEF-LLM mutual exclusion; choose the enabled models for your hardware.
 
-
 To use a native Hailo text model alongside Gemma, edit the existing YAML:
 
 ```yaml
@@ -93,28 +92,10 @@ The playground keeps the visible chat and its text context when switching models
 or chat modes. Gemma and Hailo LLMs receive text without image attachments; images stay in the
 visible history and remain available to the VLM. **New chat** clears the history.
 Every chat/transcription request shows timestamps with milliseconds, a live timer
-and its final browser/server duration. Available model metrics include input/output
-tokens, TTFT and Gemma prefill/decode speed. Missing values are marked unavailable;
-native counts and tokenizer counts are labeled separately. See [metric definitions](doc/api.md#request-metrics).
-
-### Text performance comparison: LLM vs VLM
-
-Run ten German questions from simple arithmetic through reasoning and optimization
-against both configured models, with identical settings and independent contexts:
-
-```bash
-python3 scripts/benchmark-text.py --url http://127.0.0.1:8090 --api-key 'YOUR_API_KEY'
-```
-
-The script requires only Python 3.10+ and prints each pair of answers and metrics
-side by side. Both models use `temperature=0.1` and `seed=42` by default because
-HailoRT VLM rejects `temperature=0`. The script
-also saves `comparison.html` and `results.json` in a timestamped
-folder under `benchmark-results/`, updating them after every request. Model IDs
-come from `/ui/config` and `/v1/models`; you can override them with `--llm-model`
-and `--vlm-model`. Add `--warmup` for an excluded warm-up call per model, or
-`--max-tokens 512` for longer answers. API keys are not included in reports.
-See [benchmark options and measurement notes](doc/api.md#text-performance-benchmark).
+and its final browser/server duration. Available model metrics include request and
+inference duration, TTFT where measurable, and tokenizer-based input/output token
+counts. Missing values are marked unavailable and their source is labeled. See
+[metric definitions](doc/api.md#request-metrics).
 
 ### API endpoint overview
 
@@ -152,7 +133,7 @@ requires streaming support in the HA agent and TTS provider.
 - [APIs and Home Assistant integration](doc/api.md)
 - [Routing and deterministic pipelines](doc/pipelines.md)
 - [Languages, vocabulary and Wyoming/HA language selection](doc/languages.md)
-- [LLM/VLM benchmark evaluation: quality, hallucinations, languages and latency](doc/model-benchmark-evaluation.md)
+- [Model evaluation on Raspberry Pi 5 + Hailo-10H](doc/model-benchmark-evaluation.md)
 - [Diagnostics, memory and hardware checks](doc/troubleshooting.md)
 
 ## Verification
