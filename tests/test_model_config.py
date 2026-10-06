@@ -177,39 +177,29 @@ def test_vlm_uses_selected_model_frame_shape():
 
 
 @pytest.mark.parametrize('vlm_enabled', [True, False])
-def test_hailo_hef_llm_is_blocked_even_without_vlm(vlm_enabled):
-    with pytest.raises(ValueError, match='HEF LLM support is disabled'):
-        Settings(vlm_enabled=vlm_enabled, hailo_llm_enabled=True)
+def test_hailo_hef_llm_configuration_is_user_controlled(vlm_enabled):
+    s = Settings(vlm_enabled=vlm_enabled, hailo_llm_enabled=True, litert_enabled=True)
+    assert s.hailo_llm_enabled and s.litert_enabled
+    assert s.vlm_enabled == vlm_enabled
 
 
 @pytest.mark.parametrize('content', [
     'models: {hailo_llm: {enabled: true}}',
     'settings: {hailo_llm_enabled: true, vlm_enabled: false}',
 ])
-def test_yaml_cannot_enable_hailo_llm(tmp_path, monkeypatch, content):
+def test_yaml_can_enable_hailo_llm(tmp_path, monkeypatch, content):
     path = tmp_path / 'config.yaml'
     path.write_text(content)
     monkeypatch.setenv('HAILO_CONFIG', str(path))
-    with pytest.raises(ValueError, match='HEF LLM support is disabled'):
-        Settings.from_env()
+    assert Settings.from_env().hailo_llm_enabled
 
 
-def test_env_cannot_enable_hailo_llm(tmp_path, monkeypatch):
+def test_env_can_enable_hailo_llm(tmp_path, monkeypatch):
     path = tmp_path / 'config.yaml'
     path.write_text('models: {hailo_llm: {enabled: false}}')
     monkeypatch.setenv('HAILO_CONFIG', str(path))
     monkeypatch.setenv('HAILO_HAILO_LLM_ENABLED', 'true')
-    with pytest.raises(ValueError, match='HEF LLM support is disabled'):
-        Settings.from_env()
-
-
-def test_backend_guard_runs_before_vendor_import_or_download(monkeypatch):
-    s = Settings()
-    # Also protect startup if an embedding application bypasses frozen Settings.
-    object.__setattr__(s, 'hailo_llm_enabled', True)
-    monkeypatch.setattr(ModelManager, 'resolve', lambda *a, **k: pytest.fail('download started'))
-    with pytest.raises(ValueError, match='HEF LLM support is disabled'):
-        HailoBackend(s).start()
+    assert Settings.from_env().hailo_llm_enabled
 
 
 def test_yaml_example_covers_every_legacy_env_parameter(monkeypatch):

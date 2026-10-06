@@ -9,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .config import LLM_MODEL, Settings
+from .hailo_llm_chat import limit_request as limit_llm_request
+from .hailo_llm_chat import tool_response as llm_tool_response
 from .input_budget import InputBudgetError, history_candidates
 from .media import image_frame
 from .metrics import count_output, record
@@ -46,10 +48,10 @@ class LiteRTInferenceError(RuntimeError):
     pass
 
 
-def _validate_vlm_temperature(request):
+def _validate_hailo_temperature(request, kind="VLM"):
     if request.temperature <= 0:
         raise ValueError(
-            "Hailo VLM requires temperature > 0; use temperature=0.1. "
+            f"Hailo {kind} requires temperature > 0; use temperature=0.1. "
             "Gemma accepts temperature=0, but HailoRT does not."
         )
 
@@ -57,20 +59,20 @@ def _validate_vlm_temperature(request):
 class HailoBackend:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.device = self.vlm = self.whisper = self.minilm = None
+        self.device = self.vlm = self.llm = self.whisper = self.minilm = None
         self.paths = {}
         self.artifact_paths = {}
         self._retrieval_embedding_cache = {}
 
     def start(self):
-        self.settings.check_hailo_llm_support()
-        from hailo_platform import VDevice
-        from hailo_platform.genai import VLM, Speech2Text
-
+        if not any((self.settings.vlm_enabled, self.settings.hailo_llm_enabled,
+                    self.settings.whisper_enabled, self.settings.minilm_enabled)):
+            return
         manager = ModelManager(self.settings, prepare_model_version())
         for key, model, kind, enabled in (
             ("vlm", self.settings.vlm_hef, "vlm", self.settings.vlm_enabled),
             ("whisper", self.settings.whisper_hef, "whisper", self.settings.whisper_enabled),
+            ("llm", self.settings.hailo_llm_model, "llm", self.settings.hailo_llm_enabled),
         ):
             if enabled:
                 self.paths[key] = str(manager.resolve(model, kind))
@@ -81,8 +83,8 @@ class HailoBackend:
             # Host assets are also prepared before accelerator allocation.
             for name in ("minilm-tokenizer", "minilm-weights"):
                 manager.resolve(name, "asset", Path(self.artifact_paths["minilm_hef"]).parent / manager.entry(name)["filename"])
-        if not self.paths and not self.settings.minilm_enabled:
-            return
+        from hailo_platform import VDevice
+
         params = VDevice.create_params()
         params.group_id = "SHARED"  # Mandatory, intentionally not configurable.
         try:
@@ -91,9 +93,18 @@ class HailoBackend:
             _LOG.info("Creating Hailo VDevice with effective group_id=%s", params.group_id)
             self.device = VDevice(params)
             if self.settings.vlm_enabled:
+                from hailo_platform.genai import VLM
+
                 _LOG.info("Loading resident VLM %s", self.paths["vlm"])
                 self.vlm = VLM(self.device, self.paths["vlm"])
+            if self.settings.hailo_llm_enabled:
+                from hailo_platform.genai import LLM
+
+                _LOG.info("Loading resident Hailo LLM %s", self.paths["llm"])
+                self.llm = LLM(self.device, self.paths["llm"])
             if self.settings.whisper_enabled:
+                from hailo_platform.genai import Speech2Text
+
                 _LOG.info("Loading resident Whisper %s", self.paths["whisper"])
                 self.whisper = Speech2Text(self.device, self.paths["whisper"])
             if self.settings.minilm_enabled:
@@ -119,17 +130,31 @@ class HailoBackend:
             if emit:
                 emit(direct)
             return direct
-        model = self.vlm
+        if "model" not in request.model_fields_set:
+            request = request.model_copy(update={"model": (
+                self.settings.hailo_llm_model_id if self.settings.hailo_llm_enabled
+                else self.settings.vlm_model
+            )})
+        if request.model == self.settings.vlm_model and self.settings.vlm_enabled:
+            model, kind = self.vlm, "vlm"
+            configured_limit = self.settings.vlm_max_input_tokens
+            budget, parse_response = limit_request, tool_response
+        elif request.model == self.settings.hailo_llm_model_id and self.settings.hailo_llm_enabled:
+            model, kind = self.llm, "llm"
+            configured_limit = self.settings.hailo_llm_max_input_tokens
+            budget, parse_response = limit_llm_request, llm_tool_response
+        else:
+            raise ValueError(f"Unknown or disabled Hailo model: {request.model}")
         if model is None:
             raise BusyError(f"{request.model} is disabled")
-        _validate_vlm_temperature(request)
-        entry = ModelManager(self.settings).entries.get(self.settings.vlm_model, {})
-        request, prompt = limit_request(
-            model, request, self.settings.vlm_max_input_tokens, entry.get("context_length", 2048),
+        _validate_hailo_temperature(request, kind.upper())
+        entry = ModelManager(self.settings).entries.get(request.model, {})
+        request, prompt = budget(
+            model, request, configured_limit, entry.get("context_length", 2048),
             debug=self.settings.debug_log,
         )
-        size = tuple(entry.get("frame_size", [336, 336]))
-        if callable(getattr(model, "input_frame_shape", None)):
+        size = tuple(entry.get("frame_size", [336, 336])) if kind == "vlm" else None
+        if kind == "vlm" and callable(getattr(model, "input_frame_shape", None)):
             height, width, channels = model.input_frame_shape()
             if channels != 3 or height < 1 or width < 1:
                 raise ValueError("VLM requires an unsupported input frame format")
@@ -142,9 +167,9 @@ class HailoBackend:
                     if len(frames) >= max_images:
                         raise ValueError(f"{request.model} supports at most {max_images} image(s) per request")
                     frames.append(image_frame(part["image_url"]["url"], self.settings.max_body, size))
-        _debug_json(self.settings.debug_log, "final_vlm_request", {
+        _debug_json(self.settings.debug_log, f"final_{kind}_request", {
             "prompt": prompt, "frame_size": size, "images": len(frames),
-            "max_input_tokens": self.settings.vlm_max_input_tokens,
+            "model": request.model, "max_input_tokens": configured_limit,
         }, request_id=request._request_id)
         output = []
         started = time.perf_counter()
@@ -157,7 +182,7 @@ class HailoBackend:
                 on_inference(getattr(request, "_response_language", self.settings.service_language))
             with model.generate(
                 prompt=prompt,
-                **({"frames": frames} if model is self.vlm else {}),
+                **({"frames": frames} if kind == "vlm" else {}),
                 temperature=request.temperature,
                 seed=request.seed,
                 max_generated_tokens=request.max_tokens,
@@ -178,7 +203,7 @@ class HailoBackend:
                    ttft_ms=first_chunk_ms,
                    ttft_source="first_text_chunk" if first_chunk_ms is not None else None)
             count_output(request._metrics, getattr(model, "tokenize", None), raw_output)
-            result = tool_response(raw_output, request)
+            result = parse_response(raw_output, request)
             if emit and has_tool_context(request):
                 emit(result)
             return result
@@ -306,7 +331,7 @@ class HailoBackend:
 
     def close(self):
         # Release models before the device, including after partial startup.
-        for name in ("minilm", "whisper", "vlm", "device"):
+        for name in ("minilm", "whisper", "llm", "vlm", "device"):
             resource = getattr(self, name)
             if resource is not None:
                 try:
@@ -689,11 +714,16 @@ class Runtime:
         if "model" not in request.model_fields_set:
             images = any(part.get("type") == "image_url" for m in request.messages
                          for part in (m.get("content") if isinstance(m.get("content"), list) else []))
-            available = self.hailo_chat_models
-            model = LLM_MODEL if self.litert_ready and not images else (available[0] if available else LLM_MODEL)
+            if images:
+                if not self.settings.vlm_enabled:
+                    raise ValueError("Image requests require an enabled VLM")
+                model = self.settings.vlm_model
+            else:
+                model = self.default_text_model or LLM_MODEL
             request = request.model_copy(update={"model": model})
         if request.model in self.hailo_chat_models:
-            _validate_vlm_temperature(request)
+            kind = "LLM" if request.model == self.settings.hailo_llm_model_id else "VLM"
+            _validate_hailo_temperature(request, kind)
         return request
 
     async def chat(self, request, on_inference=None):
@@ -765,12 +795,24 @@ class Runtime:
 
     @property
     def hailo_chat_models(self):
-        return [self.settings.vlm_model] if self.settings.vlm_enabled else []
+        return ([self.settings.vlm_model] if self.settings.vlm_enabled else []) + (
+            [self.settings.hailo_llm_model_id] if self.settings.hailo_llm_enabled else []
+        )
+
+    @property
+    def default_text_model(self):
+        if self.litert_ready:
+            return LLM_MODEL
+        if self.settings.hailo_llm_enabled:
+            return self.settings.hailo_llm_model_id
+        return self.settings.vlm_model if self.settings.vlm_enabled else None
 
     @property
     def model_limits(self):
         return {
             self.settings.vlm_model: {"max_input_tokens": self.settings.vlm_max_input_tokens, "context_length": 2048},
+            self.settings.hailo_llm_model_id: {
+                "max_input_tokens": self.settings.hailo_llm_max_input_tokens, "context_length": 2048},
             LLM_MODEL: {"max_input_tokens": self.settings.litert_max_input_tokens,
                         "context_length": self.settings.litert_max_num_tokens},
         }
@@ -781,7 +823,7 @@ class Runtime:
             "group_id": "SHARED",
             "pending": self.pending,
             "model_limits": self.model_limits,
-            "default_text_model": LLM_MODEL if self.litert_ready else (self.hailo_chat_models[0] if self.hailo_chat_models else None),
+            "default_text_model": self.default_text_model,
             "litert_lm": {
                 "ready": self.litert_ready,
                 "model": LLM_MODEL if self.litert_backend else None,

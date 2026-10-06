@@ -255,3 +255,35 @@ test('Long chats keep all visible requests while sending bounded recent context'
   assert.equal(last.messages[0].role, 'user');
   assert.equal(last.messages.at(-1).content, 'Frage 17');
 });
+
+test('Hailo LLM is labeled as Hailo, disallows images and preserves text history across Gemma/VLM switches', async () => {
+  const llm = 'Qwen2.5-1.5B-Instruct', gemma = 'gemma-4-E2B-it', vlm = 'Qwen2-VL-2B-Instruct';
+  const p = page({llm_model: gemma, hailo_llm_model: llm, vision_models: [vlm],
+    chat_models: [vlm, llm, gemma], default_text_model: llm,
+    model_limits: {[llm]: {max_input_tokens: 2048, context_length: 2048}}});
+  await p.ready();
+  assert.equal(p.elements['chat-model'].value, llm);
+  assert.equal(p.elements['chat-model'].options[1].text, `${llm} · Hailo`);
+  assert.equal(p.elements['chat-mode'].disabled, true);
+  assert.equal(p.elements.image.disabled, true);
+  assert.match(p.elements['input-limit'].textContent, /2048/);
+  p.run('history = [{role: "user", content: [{type: "text", text: "Bildfrage"}, {type: "image_url", image_url: {url: "data:image/png;base64,AA=="}}]}, {role: "assistant", content: "Bildantwort"}]');
+  p.elements.prompt.value = 'Textfrage';
+  await p.elements['chat-form'].events.submit({preventDefault() {}});
+  const sent = JSON.parse(p.calls.find(c => c.url === 'v1/chat/completions').options.body);
+  assert.equal(sent.model, llm);
+  assert.equal(sent.messages[0].content, 'Bildfrage');
+  assert.equal(p.run('history[0].content[1].type'), 'image_url');
+  p.elements['chat-model'].value = gemma;
+  p.elements['chat-model'].events.change();
+  assert.equal(p.run('history.length'), 4);
+  p.elements['chat-model'].value = vlm;
+  p.elements['chat-model'].events.change();
+  p.elements['chat-mode'].value = 'vision';
+  p.elements['chat-mode'].events.change();
+  assert.equal(p.elements.image.disabled, false);
+  p.elements['chat-model'].value = llm;
+  p.elements['chat-model'].events.change();
+  assert.equal(p.elements['chat-mode'].value, 'text');
+  assert.equal(p.elements.image.disabled, true);
+});

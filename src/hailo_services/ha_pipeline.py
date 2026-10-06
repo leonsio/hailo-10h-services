@@ -161,7 +161,9 @@ def install():
         if request.tool_choice == "none":
             return request
         if not is_home_assistant_request(request):
-            return self.retrieve_context(request) if request.model == self.settings.vlm_model else request
+            return self.retrieve_context(request) if request.model in {
+                self.settings.vlm_model, self.settings.hailo_llm_model_id
+            } else request
         language = request.language or detect_language(
             latest_user_text(request.messages), self.settings.service_language
         )

@@ -44,10 +44,10 @@ models:
     enabled: true
     model: Whisper-Base # Or Whisper-Tiny / Whisper-Small
   hailo_llm:
-    # Reserved for future hardware-tested support; true is rejected before download/load.
-    # The catalogue keeps HEF LLM links, but this release cannot run them on Hailo.
+    # Native hailo_platform.genai.LLM. Enable either VLM or Hailo LLM on your hardware.
+    # The service does not enforce mutual exclusion; Gemma on CPU is independent.
     enabled: false
-    model: Qwen2.5-1.5B-Instruct
+    model: Qwen2.5-1.5B-Instruct # Or another kind: llm entry from the catalogue.
     max_input_tokens: 2048 # Manufacturer limit for the catalogue HEF LLMs.
   minilm:
     enabled: true

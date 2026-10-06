@@ -4,7 +4,7 @@
 
 Prerequisites: working Hailo-10H kernel driver, firmware, matching **HailoRT 5.x
 GenAI Python wheel** for your architecture and Python version. `hailo_platform`
-with `VLM` and `Speech2Text` must already import. The installer does not replace
+with `VLM`, `LLM` and `Speech2Text` must already import. The installer does not replace
 your kernel driver, HailoRT or firmware. In LXC, `/dev/h1x-0` must first be passed
 through by the Proxmox host; a service inside LXC cannot grant itself that device.
 For sharing with host/other containers, they need compatible HailoRT libraries
@@ -187,11 +187,17 @@ cannot verify the eventual application startup or simultaneous Hailo inference.
 
 Edit `/etc/hailo-10h-services.yaml`; see `deploy/hailo-10h-services.yaml.example`.
 The `models` mapping selects Qwen2-VL or Qwen3-VL, Whisper Tiny/Base/Small,
-MiniLM retrieval, and optional Gemma E2B on CPU. Hailo HEF LLM execution is
-currently disabled pending hardware tests. `models.hailo_llm.enabled: true`
-is rejected before any download/device allocation, even if VLM is disabled.
-This also applies to ENV overrides and programmatic configuration. The catalogue
-retains HEF LLM links for future support. VLM plus Gemma on CPU is supported.
+MiniLM retrieval, native Hailo HEF LLMs, and optional Gemma E2B on CPU.
+Set `models.hailo_llm.enabled: true` and select any `kind: llm` catalogue entry
+(e.g. `Qwen2.5-1.5B-Instruct` or `Qwen3-1.7B-Instruct`). The service instantiates
+`hailo_platform.genai.LLM` directly on its SHARED VDevice. Ollama is not needed.
+Enable either VLM or Hailo LLM according to your hardware; the service intentionally
+does not enforce mutual exclusion or swap models on requests. All Hailo inference
+shares the serialized owner thread. Gemma runs independently on CPU with a separate
+engine and queue and can stay enabled with either Hailo model type.
+Legacy ENV equivalents are `HAILO_VLM_ENABLED=false`,
+`HAILO_HAILO_LLM_ENABLED=true`, `HAILO_HAILO_LLM_MODEL=Qwen2.5-1.5B-Instruct`,
+and `HAILO_HAILO_LLM_MAX_INPUT_TOKENS=2048`. ENV overrides YAML.
 Only enabled models are downloaded at startup, before device allocation, and
 remain resident. Requests never cause model swapping. Enabling Gemma requires
 `litert-lm` in the service interpreter; rerun the installer after enabling it.
@@ -330,10 +336,11 @@ Use the selected `Qwen2-VL-2B-Instruct` or `Qwen3-VL-2B-Instruct` for text and
 image analysis. The service asks the loaded VLM for its frame shape; the catalogue
 fallback is 336×336 for Qwen2 and 512×288 for Qwen3. Qwen3 accepts one image per
 request; Qwen2 accepts up to four. Frames are writable contiguous RGB UINT8 arrays.
-Gemma is text-only. Omitted `model` selects ready Gemma for text, or the VLM if
-Gemma is disabled/not ready. Explicit Gemma requests still require ready Gemma.
-The web model selector uses the actual enabled models and provides a **Text only**
-mode that sends no image and resets history when switching model or mode.
+Gemma and Hailo LLMs are text-only. Omitted `model` selects ready Gemma, then
+an enabled Hailo LLM, then VLM for text; images require an enabled VLM.
+Explicit model IDs select that backend without fallback. The web model selector
+lists the enabled models, disables images for text-only models, and retains
+history when switching. Image parts are omitted only from requests to text models.
 
 Configure the model-bound limits beside their models:
 
@@ -348,7 +355,7 @@ models:
     enabled: false
     max_input_tokens: 4096
   hailo_llm:
-    enabled: false # Execution remains disabled pending hardware tests.
+    enabled: false # Set true (and VLM false above) to load a native Hailo LLM.
     model: Qwen2.5-1.5B-Instruct
     max_input_tokens: 2048
 ```
@@ -360,12 +367,18 @@ and image tokens also consume context; the usable text input may be smaller.
 The API `max_input_tokens` can only lower the configured budget. HTTP requests
 may exceed it (up to `max_body`) because retrieval/compilation precedes the final
 native-tokenizer check. Required current-turn contents that still do not fit
-produce HTTP 400 `input_token_limit_exceeded`. Debug logs show the final VLM prompt,
-measured budget, image count and frame size.
+produce HTTP 400 `input_token_limit_exceeded`. Debug logs show the final prompt
+(`final_vlm_request` or `final_llm_request`) and measured budget
+(`vlm_input_budget` or `llm_input_budget`); VLM logs also show frame size/image count.
+Native Hailo LLMs render their own HEF template with string text content and
+`enable_thinking=false`, then pass that exact measured raw prompt to `LLM.generate`.
+Both Hailo chat types require `temperature > 0` (default 0.1). Gemma also accepts 0.
+Validate loading/inference on the target hardware; automated tests use simulated
+Hailo bindings and cannot establish hardware residency compatibility.
 Home Assistant or another OpenAI-compatible client can point to the same service
 base URL (`https://<raspberry-pi>:8443/v1` with the default HTTPS setup or
 `http://<raspberry-pi>:8090/v1` without HTTPS), use the service API key, and
-select `gemma-4-E2B-it` or `Qwen2-VL-2B-Instruct`. For a self-signed certificate,
+select `gemma-4-E2B-it`, the enabled Hailo LLM ID, or `Qwen2-VL-2B-Instruct`. For a self-signed certificate,
 the client must trust that certificate. LiteRT-LM and
 Gemma share system RAM with the service; verify memory headroom on the Pi before
 raising the request queue size.

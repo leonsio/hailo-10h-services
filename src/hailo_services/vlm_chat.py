@@ -113,15 +113,15 @@ def model_prompt(request):
     return prompt
 
 
-def render_prompt(model, prompt):
+def render_prompt(model, prompt, *, model_kind="VLM"):
     template_method = getattr(model, "prompt_template", None)
     if not callable(template_method):
         # Older bindings: ChatML plus conservative margin; native tokenize still required.
         return "".join(
-            "<|im_start|>" + message["role"] + "\n" + "".join(
+            "<|im_start|>" + message["role"] + "\n" + (message["content"] if isinstance(message["content"], str) else "".join(
                 part.get("text", "<|vision_start|><|image_pad|><|vision_end|>")
                 for part in message["content"]
-            ) + "<|im_end|>\n" for message in prompt
+            )) + "<|im_end|>\n" for message in prompt
         ) + "<|im_start|>assistant\n"
     environment = ImmutableSandboxedEnvironment(undefined=StrictUndefined)
 
@@ -141,35 +141,39 @@ def render_prompt(model, prompt):
     try:
         return environment.from_string(template_method()).render(
             messages=template_messages, add_generation_prompt=True, tools=None,
-            bos_token="", eos_token="<|im_end|>", enable_thinking=False,
+            bos_token="", eos_token="" if model_kind == "LLM" else "<|im_end|>",
+            enable_thinking=False,
             add_vision_id=False,
         )
     except TemplateError as exc:
-        raise ValueError("Cannot render the loaded VLM's prompt template for input budgeting") from exc
+        raise ValueError(f"Cannot render the loaded {model_kind}'s prompt template for input budgeting") from exc
 
 
-def limit_request(model, request, configured_limit, context_length, *, debug=False):
+def limit_request(model, request, configured_limit, context_length, *, debug=False,
+                  prompt_builder=model_prompt, model_kind="VLM"):
     """Count the model-bound prompt, never the unfiltered HTTP tool catalogue."""
     tokenize = getattr(model, "tokenize", None)
     if not callable(tokenize):
-        raise ValueError("VLM input budgeting requires HailoRT VLM.tokenize; upgrade HailoRT")
+        raise ValueError(f"{model_kind} input budgeting requires HailoRT {model_kind}.tokenize; upgrade HailoRT")
     capacity = getattr(model, "max_context_capacity", None)
     context = min(context_length, int(capacity())) if callable(capacity) else context_length
     requested = min(configured_limit, request.max_input_tokens or configured_limit)
     limit = min(requested, context - request.max_tokens - 1)
     if limit < 1:
-        raise ValueError("The VLM context leaves no room for input and requested output")
-    model_prompt(request)  # Validate original call/result dependencies before trimming.
+        raise ValueError(f"The {model_kind} context leaves no room for input and requested output")
+    prompt_builder(request)  # Validate original call/result dependencies before trimming.
     for candidate in history_candidates(request.messages):
         trimmed = request.model_copy(update={"messages": candidate})
-        prompt = model_prompt(trimmed)
-        rendered = render_prompt(model, prompt)
-        images = sum(part["type"] == "image" for m in prompt for part in m["content"])
+        prompt = prompt_builder(trimmed)
+        rendered = render_prompt(model, prompt, model_kind=model_kind)
+        images = sum(part["type"] == "image" for m in prompt
+                     if isinstance(m["content"], list) for part in m["content"])
         raw_tokens = len(tokenize(rendered))
         tokens = raw_tokens + _TEMPLATE_MARGIN + images * _IMAGE_TOKEN_RESERVE
         if debug:
             _LOG.debug(
-                "event=vlm_input_budget request_id=%s json=%s",
+                "event=%s_input_budget request_id=%s json=%s",
+                model_kind.lower(),
                 request._request_id,
                 json.dumps({
                     "model": request.model, "input_tokens": tokens, "input_limit": limit,

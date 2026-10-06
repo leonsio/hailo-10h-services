@@ -52,18 +52,9 @@ class Settings:
     mcp_hosts: str = "localhost:*,127.0.0.1:*"
 
     def __post_init__(self):
-        self.check_hailo_llm_support()
         for name in ("vlm_max_input_tokens", "hailo_llm_max_input_tokens"):
             if not 1 <= getattr(self, name) <= 2048:
                 raise ValueError(f"{name} must be between 1 and the compiled HEF limit of 2048")
-
-    def check_hailo_llm_support(self):
-        if self.hailo_llm_enabled:
-            raise ValueError(
-                "Hailo-10H HEF LLM support is disabled in this version pending hardware tests; "
-                "VLM and HEF LLM cannot be loaded together. Set models.hailo_llm.enabled=false "
-                "(HAILO_HAILO_LLM_ENABLED=false). Gemma E2B through LiteRT on CPU remains supported."
-            )
 
     @property
     def vlm_model(self):
@@ -72,6 +63,11 @@ class Settings:
     @property
     def stt_model(self):
         return Path(self.whisper_hef).stem.lower()
+
+    @property
+    def hailo_llm_model_id(self):
+        name = Path(self.hailo_llm_model).name
+        return name[:-4] if name.endswith(".hef") else name
 
     @classmethod
     def from_env(cls):

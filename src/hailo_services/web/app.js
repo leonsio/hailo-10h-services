@@ -127,13 +127,17 @@ async function measuredRequest(path, options, parent) {
 function canRecord() {
   return window.isSecureContext && navigator.mediaDevices?.getUserMedia && window.AudioContext && window.AudioWorkletNode;
 }
+function textOnlyModel(model = $("chat-model").value) {
+  return config?.vision_models ? !config.vision_models.includes(model)
+    : model === config?.llm_model || model === config?.hailo_llm_model;
+}
 function controls() {
   $("send-chat").disabled = chatBusy || !config;
   $("clear-chat").disabled = chatBusy;
   $("prompt").disabled = chatBusy;
   $("chat-model").disabled = chatBusy;
-  $("chat-mode").disabled = chatBusy || $("chat-model").value === config?.llm_model;
-  $("image").disabled = chatBusy || $("chat-mode").value === "text" || $("chat-model").value === config?.llm_model;
+  $("chat-mode").disabled = chatBusy || textOnlyModel();
+  $("image").disabled = chatBusy || $("chat-mode").value === "text" || textOnlyModel();
   $("record").disabled = !config || !canRecord() || !!recording || starting || stopping || audioBusy;
   $("stop").disabled = !recording || stopping;
   $("audio-file").disabled = !!recording || starting || stopping || audioBusy;
@@ -191,14 +195,14 @@ $("chat-form").addEventListener("submit", async (event) => {
   try {
     const model = $("chat-model").value;
     const file = $("chat-mode").value === "text" ? null : $("image").files[0];
-    if (file && model === config.llm_model) throw new Error(tr("ui_12"));
+    if (file && textOnlyModel(model)) throw new Error(tr("ui_12"));
     if (file && !["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new Error(tr("ui_13"));
     if (file && file.size * 4 / 3 > config.max_body - 1024) throw new Error(tr("ui_14"));
     const image = file ? await readImage(file) : null;
     const content = image ? [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: image } }] : prompt;
     const originalMessages = [...history, { role: "user", content }];
     const recentMessages = originalMessages.slice(-31);
-    const messages = model === config.llm_model ? recentMessages.map(message => ({
+    const messages = textOnlyModel(model) ? recentMessages.map(message => ({
       ...message, content: Array.isArray(message.content)
         ? message.content.filter(part => part.type === "text").map(part => part.text).join("\n") : message.content,
     })) : recentMessages;
@@ -333,7 +337,7 @@ document.addEventListener("visibilitychange", () => { if (document.hidden) void 
 window.addEventListener("pagehide", () => { pageHidden = true; void stopRecording(); });
 window.addEventListener("pageshow", () => { pageHidden = false; controls(); });
 function updateChatMode() {
-  if ($("chat-mode").value === "text" || $("chat-model").value === config?.llm_model) {
+  if ($("chat-mode").value === "text" || textOnlyModel()) {
     $("image").value = ""; $("image-preview").hidden = true;
     if (imageURL) URL.revokeObjectURL(imageURL); imageURL = null;
   }
@@ -349,7 +353,7 @@ async function init() {
     await refreshStatus(); setInterval(refreshStatus, 5000);
     $("chat-model").replaceChildren();
     for (const model of config.chat_models || [config.vlm_model]) {
-      $("chat-model").add(new Option(`${model} · ${model === config.vlm_model ? "Hailo" : "LiteRT-LM / CPU"}`, model));
+      $("chat-model").add(new Option(`${model} · ${model === config.llm_model ? "LiteRT-LM / CPU" : "Hailo"}`, model));
     }
     $("chat-model").value = config.default_text_model || config.vlm_model;
     config.model_labels = { [config.vlm_model]: config.vlm_model, [config.llm_model]: "GEMMA 4 E2B" };
@@ -363,7 +367,7 @@ async function init() {
       tr("ui_extra_0"), !canRecord());
     note("audio-name", tr("ui_extra_1", {v0: config.max_audio_seconds, v1: (config.max_body / 1024 / 1024).toFixed(1)}));
     $("chat-model").addEventListener("change", () => {
-      if ($("chat-model").value === config.llm_model) $("chat-mode").value = "text";
+      if (textOnlyModel()) $("chat-mode").value = "text";
       updateChatMode(); controls();
     });
     $("chat-mode").addEventListener("change", () => {

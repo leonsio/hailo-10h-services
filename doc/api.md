@@ -12,8 +12,12 @@
 | MQTT (optional) | `hailo10h/request/chat`, `…/transcribe` | JSON requests | JSON requests | Base64 audio |
 | Wyoming TCP | `HOST:10300` | — | — | Home Assistant Assist STT |
 
-The **LLM** column currently describes the optional Gemma 4 E2B LiteRT-LM backend.
-Hailo HEF LLM execution remains disabled pending hardware validation.
+The **LLM** column covers both native Hailo HEF LLMs and optional Gemma 4 E2B
+through LiteRT-LM on CPU. Select an enabled model by its exact `/v1/models` ID:
+`Qwen2.5-1.5B-Instruct` (or another configured HEF LLM), `gemma-4-E2B-it`, or the
+configured VLM. Gemma is independent of the enabled Hailo chat model. The service
+does not enforce VLM/HEF-LLM mutual exclusion; configure the enabled hardware
+models yourself. Disabled/unknown IDs never silently select another backend.
 
 HTTP and WebSocket require `Authorization: Bearer API_KEY` when configured.
 MCP skips API-key authentication for loopback and private LAN peers by default
@@ -86,8 +90,8 @@ An image content list in a `user` message:
 Images are decoded to writable contiguous RGB UINT8 and resized to the loaded
 model's input shape (Qwen2: 336×336, up to four images; Qwen3: 512×288, one image). Only inline base64/data URLs are accepted; snapshot HTTP URLs
 are not fetched. `stream:true` enables native-token SSE ending in `[DONE]`.
-`max_tokens` is 1..1024; Gemma accepts `temperature` in 0..1, while Hailo VLM requires
-`0 < temperature <= 1` (default 0.1). A VLM request with `temperature=0` returns
+`max_tokens` is 1..1024; Gemma accepts `temperature` in 0..1, while Hailo LLM/VLM require
+`0 < temperature <= 1` (default 0.1). A Hailo request with `temperature=0` returns
 HTTP 400 with an explanatory error instead of failing inside HailoRT. The gateway implements a documented
 subset of the OpenAI API. Gemma accepts function `tools`/`tool_choice` as described
 below; Qwen supports text-only tool requests through the validated JSON adapter. JSON-schema response formats remain unsupported.
@@ -260,14 +264,26 @@ native bookkeeping and image tokens. The usable input ceiling is the minimum of
 minus output reserve. Qwen3 images are resized to **512×288** (one image per
 request); Qwen2 defaults to the **v5.1.1 HEF**, with **336×336** frames.
 
-Omit `model` for automatic routing: text uses ready Gemma, otherwise the resident
-VLM; images use the configured VLM. Explicit model IDs remain authoritative.
+Native Hailo LLMs have a separate text adapter: their own HEF prompt template
+and tokenizer measure the actual string prompt sent to `LLM.generate` without
+vision placeholders or frames. The effective input limit is the minimum of
+`models.hailo_llm.max_input_tokens`, the request limit, and native/catalogue context
+capacity minus the requested output reserve and one start-token slot. Current
+catalogue LLMs have 2048 context tokens; template headroom is reserved as well.
+Tool calling uses the compact contract and strict schema validation before
+returning OpenAI `tool_calls`; native `<tool_call>` JSON wrappers are accepted.
+Thinking is disabled in the rendered template by default.
+
+Omit `model` for automatic routing: text uses ready Gemma, then an enabled Hailo
+LLM, then the resident VLM; images require an enabled VLM. Explicit model IDs remain authoritative.
 The incoming JSON may be much larger than the model budget: tool/entity retrieval
 and HA prompt compilation run first. The final model-bound prompt, including
 selected schemas, template and tool history, must fit. `tool_choice: "none"`
 excludes tool schemas from inference. `/health` and `/ui/config` expose
-`model_limits` and `default_text_model`; debug logs include `vlm_input_budget`
-and `final_vlm_request` with the rendered prompt and frame dimensions.
+`model_limits` and `default_text_model`; `/ui/config` also exposes `hailo_llm_model`
+and `vision_models`. Debug logs include `llm_input_budget` / `final_llm_request`
+or `vlm_input_budget` / `final_vlm_request`. Both Hailo chat types report tokenizer
+input/output counts and first-text-chunk TTFT; VLM logs include frame dimensions.
 
 With the Home Assistant **Local OpenAI LLM** conversation integration, choose
 server type **Generic OpenAI-Compatible**. In the Conversation Agent options,
