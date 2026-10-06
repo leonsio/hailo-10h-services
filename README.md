@@ -1,23 +1,98 @@
 # Hailo-10H Services
 
-One resident gateway for **Qwen2-VL / Qwen3-VL**, **Whisper Tiny/Base/Small**,
-**MiniLM**, native **Hailo HEF LLMs** (such as Qwen2.5-1.5B or Qwen3-1.7B),
-and optional **Gemma 4 E2B on CPU**. Hailo LLMs run directly through
-`hailo_platform.genai.LLM`; no Ollama server is required.
-Qwen2-VL/Qwen3-VL handle images and text, Whisper speech, and MiniLM context
-retrieval. Gemma optionally handles text/tool reasoning on CPU; otherwise the
-resident VLM can handle text and validated function calls. Hailo models use `VDevice group_id="SHARED"`; Gemma runs
-through LiteRT-LM on the CPU with its own serialized queue. Models stay loaded.
+A resident inference gateway for **Hailo-10H** that exposes local VLM, LLM, speech,
+embedding and object-detection models through a small set of reusable APIs.
+
+The service can keep **Qwen VLM**, **Whisper**, **MiniLM**, a native **Hailo HEF LLM**
+and a resident **YOLO** detector available behind one process. Optional **Gemma 4 E2B**
+runs independently on the CPU through LiteRT-LM. Hailo accelerator workloads use
+`VDevice group_id="SHARED"`, so the service can coexist with other correctly configured
+Hailo applications without unloading models between requests.
+
+## What it provides
+
+| Capability | Models / backend | Main interfaces |
+|---|---|---|
+| Vision-language | Qwen2-VL-2B-Instruct, Qwen3-VL-2B-Instruct | `/v1/chat/completions`, MCP, WebSocket, MQTT |
+| Native Hailo LLM | Qwen, Llama, DeepSeek and other HEF LLMs from the model catalog | `/v1/chat/completions`, WebSocket, MQTT |
+| CPU LLM | Gemma 4 E2B through LiteRT-LM | `/v1/chat/completions`, WebSocket, MQTT |
+| Speech-to-text | Whisper Tiny / Base / Small | `/v1/audio/transcriptions`, Wyoming, MCP |
+| Object detection | YOLOv8, YOLO11, YOLO26 | `/v1/vision/detect`, Frigate ZMQ |
+| HA routing / retrieval | `HA-Assist`, HassIL, MiniLM | OpenAI-compatible chat model |
+
+Native Hailo LLMs run directly through `hailo_platform.genai.LLM`; **Ollama is not
+required**. The service owns model loading, input budgeting, queues and validated tool
+calling, while clients such as Home Assistant remain responsible for executing their
+own actions.
+
+## Architecture
+
+```text
+                         HTTP / OpenAI-compatible
+                  ┌──── /v1/chat/completions
+                  │     /v1/audio/transcriptions
+                  │     /v1/vision/detect
+                  │
+Home Assistant ───┼──── Wyoming / MCP
+Frigate ──────────┼──── ZMQ detector
+Other clients ────┼──── WebSocket / MQTT
+                  │
+                  ▼
+        ┌──────────────────────────────┐
+        │       Hailo-10H-Services     │
+        │                              │
+        │  Qwen VLM     Hailo LLM      │
+        │  Whisper      YOLO            │
+        │  MiniLM                       │
+        │         VDevice SHARED        │
+        │                              │
+        │  Gemma 4 E2B ── LiteRT/CPU   │
+        └──────────────┬───────────────┘
+                       │
+                   Hailo-10H
+```
+
+HTTP and ZMQ object-detection clients use the **same resident YOLO runtime**. Frigate
+does not need to open the Hailo device or load its own detector HEF when it uses the
+ZMQ bridge.
+
+## Supported model families
+
+The bundled `src/hailo_services/model_catalog.yaml` is the single source for supported
+downloads, filenames, releases and model metadata. Enabled catalog models are downloaded
+on first start and valid cached files are reused.
+
+### Hailo LLMs
+
+The current catalog includes, among others:
+
+- `Qwen3-1.7B-Instruct`
+- `Qwen2.5-1.5B-Instruct`
+- `Qwen2.5-Coder-1.5B-Instruct`
+- `Qwen2-1.5B-Instruct`
+- `Qwen2-1.5B-Instruct-Function-Calling-v1`
+- `Llama3.2-1B-Instruct`
+- `DeepSeek-R1-Distill-Qwen-1.5B`
+
+These models use their own HEF prompt template and tokenizer. Current catalog Hailo
+LLMs have a compiled **2048-token context** shared by prompt and generated output.
+Tool requests are converted to the model-specific compact contract and validated again
+before OpenAI-compatible `tool_calls` are returned.
+
+### VLM, speech and detection
+
+- VLM: `Qwen2-VL-2B-Instruct`, `Qwen3-VL-2B-Instruct`
+- STT: `Whisper-Tiny`, `Whisper-Base`, `Whisper-Small`
+- YOLO: `yolov8n/s/m`, `yolov11n/s/m`, `yolo26n/s/m`
+
+Qwen2-VL defaults to the smaller v5.1.1 HEF. Qwen3-VL and the other catalog models use
+the configured/runtime-matched release where available. YOLO catalog models use COCO-80
+labels and 640×640 input.
 
 ## Install and update
 
-Requires working HailoRT GenAI, matching HEFs and access to `/dev/h1x-0`.
-Select models in `/etc/hailo-10h-services.yaml`. Enabled models and MiniLM host
-assets download automatically at startup; valid cached files are reused. All links
-are centralized in `src/hailo_services/model_catalog.yaml`; no helper repository
-is installed or imported. Qwen2-VL defaults to the smaller **v5.1.1 HEF**. Qwen3-VL and Whisper use
-runtime-matched releases; VLM preprocessing reads the loaded model shape
-(Qwen2: 336×336; Qwen3: 512×288, one image per request).
+Requires working HailoRT/HailoRT GenAI matching the selected models and access to
+`/dev/h1x-0`.
 
 ```bash
 git clone https://github.com/leonsio/hailo-10h-services.git
@@ -32,147 +107,190 @@ git pull --ff-only
 sudo bash scripts/install.sh
 ```
 
-Configure `/etc/hailo-10h-services.yaml`; an existing ENV file remains an optional
-override. Gemma's default input ceiling remains
-**4096 tokens**; Qwen2/Qwen3-VL use **2048 context tokens**, shared by input and
-output. Set `max_input_tokens` beside each model in YAML. A client may lower,
-but cannot raise, the configured ceiling. Larger HTTP requests with tools are
-retrieved/compiled first; only the final model prompt must fit. `/health` reports
-readiness, model limits and the default text model. When `model` is omitted,
-text uses ready Gemma, then an enabled Hailo LLM, then the resident VLM; images
-require an enabled VLM. Explicit model IDs select that backend and never fall back.
-Gemma can remain enabled alongside either accelerator model. The service does not
-enforce VLM/HEF-LLM mutual exclusion; choose the enabled models for your hardware.
-
-To use a native Hailo text model alongside Gemma, edit the existing YAML:
-
-```yaml
-models:
-  vlm:
-    enabled: false
-  hailo_llm:
-    enabled: true
-    model: Qwen2.5-1.5B-Instruct # Or Qwen3-1.7B-Instruct, etc. from the catalogue.
-    max_input_tokens: 2048
-  gemma:
-    enabled: true
-    max_input_tokens: 4096
-```
-
-After restarting, `/v1/models` and the playground list both text models. Send
-`"model": "Qwen2.5-1.5B-Instruct"` or `"model": "gemma-4-E2B-it"` to select one.
-Hailo inference uses the existing SHARED owner thread; Gemma keeps its own CPU
-engine and queue. Hailo LLM input and output share the compiled 2048-token context.
+The primary configuration file is `/etc/hailo-10h-services.yaml`. Existing
+`HAILO_<SETTING>` environment variables remain optional overrides.
 
 ### Docker Compose
 
-Build a Debian 13 image with the matching local HailoRT DEB/Wheel and deploy
-with `docker compose up -d --build`. Models and runtime state use persistent
-volumes; HTTP and Wyoming ports are published. Optional LiteRT-LM is included.
+Build a Debian 13 image with the matching local HailoRT DEB/Wheel and deploy with
+`docker compose up -d --build`. Models and runtime state use persistent volumes.
 See [Docker setup and package placement](doc/installation.md#docker-compose).
 
-### Proxmox LXC (Raspberry Pi 5 / CM5, ARM64)
+### Proxmox LXC / Raspberry Pi 5 / CM5
 
-Run `scripts/install-proxmox-lxc.sh` **on the Proxmox host** to create a Debian 13
-container, pass through the Hailo device and install HailoRT plus this service.
-Place the HailoRT DEB and matching Python wheel under `/root` on the host.
+Run `scripts/install-proxmox-lxc.sh` on the Proxmox host to create a Debian 13 ARM64
+container, pass through the Hailo device and install HailoRT plus this service. Place
+the matching HailoRT DEB and Python wheel under `/root` on the host first.
 See [LXC setup and command example](doc/installation.md#proxmox-lxc-on-arm64).
 
-## Usage
+## Configuration example
 
-- Browser playground: `http://<host>:8090/` (choose **Text only** or text with
-  an optional image; model input limits, speech and status).
-- OpenAI clients/HA: `http://<host>:8090/v1`, model `gemma-4-E2B-it` for text and
-  device control, a configured Hailo LLM such as `Qwen2.5-1.5B-Instruct` for
-  text/tools, or Qwen2/Qwen3-VL for text/tools and images. Use the configured API key.
-- Wyoming STT: port **10300**, the selected multilingual Whisper model.
-- MCP `/mcp`, WebSocket `/ws`, MQTT and HTTPS are supported.
+```yaml
+settings:
+  host: 0.0.0.0
+  port: 8090
+  api_key: ""
+  ha_assist_enabled: true
+  ha_assist_text_model: Qwen3-1.7B-Instruct
+  ha_assist_vision_model: Qwen2-VL-2B-Instruct
+  litert_max_num_tokens: 16384
 
-The playground keeps the visible chat and its text context when switching models
-or chat modes. Gemma and Hailo LLMs receive text without image attachments; images stay in the
-visible history and remain available to the VLM. **New chat** clears the history.
-Every chat/transcription request shows timestamps with milliseconds, a live timer
-and its final browser/server duration. Available model metrics include request and
-inference duration, TTFT where measurable, and tokenizer-based input/output token
-counts. Missing values are marked unavailable and their source is labeled. See
-[metric definitions](doc/api.md#request-metrics).
+models:
+  vlm:
+    enabled: true
+    model: Qwen2-VL-2B-Instruct
+    max_input_tokens: 2048
 
-### API endpoint overview
+  whisper:
+    enabled: true
+    model: Whisper-Base
 
-| Protocol | Endpoint / port | VLM | LLM | Whisper |
+  hailo_llm:
+    enabled: true
+    model: Qwen3-1.7B-Instruct
+    release: auto
+    max_input_tokens: 2048
+
+  gemma:
+    enabled: false
+    max_input_tokens: 4096
+
+  minilm:
+    enabled: true
+
+vision:
+  enabled: true
+  model: yolov11m
+  release: auto
+  confidence: 0.4
+  max_detections: 20
+  queue_size: 16
+  scheduler_priority: 1
+  zmq:
+    enabled: true
+    endpoint: tcp://127.0.0.1:5555
+```
+
+`vision.path` may be used instead of `vision.model`/`release` for an explicit HEF.
+Do not configure both at once. ZMQ has no API-key authentication; bind it to loopback
+or a trusted/firewalled network when Frigate runs elsewhere.
+
+## LLM selection and routing
+
+`GET /v1/models` lists the models that are currently available through the service.
+For `/v1/chat/completions`, an explicit `model` ID always selects that backend and
+never silently falls back to another model.
+
+If `model` is omitted, text routing prefers:
+
+1. ready Gemma/LiteRT-LM,
+2. the enabled native Hailo LLM,
+3. the resident VLM as the final text-capable backend.
+
+Image requests require the configured VLM. `HA-Assist` is different: it is a virtual
+model that first attempts deterministic Home Assistant handling and only then routes
+text to `settings.ha_assist_text_model` or image requests to
+`settings.ha_assist_vision_model`.
+
+Gemma's service input ceiling defaults to **4096 tokens** while its LiteRT engine uses
+a larger total context allocation (`litert_max_num_tokens`, default 16384). Hailo LLM
+and VLM requests are bounded by their compiled 2048-token contexts. A request may lower
+`max_input_tokens`, but cannot raise the configured/model limit.
+
+## API overview
+
+| Protocol | Endpoint / port | Chat / VLM / LLM | STT | YOLO detection |
 |---|---|---|---|---|
-| OpenAI-style HTTP | `:8090/v1/chat/completions` | Text, images, SSE, function tools | Text, SSE, function tools | — |
-| OpenAI-style HTTP | `:8090/v1/audio/transcriptions` | — | — | File upload |
-| Models / readiness | `/v1/models`, `/health` | Model status | Model status | Model status |
-| WebSocket | `ws://HOST:8090/ws` | `chat` | `chat` | `transcribe` |
-| MCP Streamable HTTP | `http://HOST:8090/mcp/` | `analyze_image`, `chat_text` | `chat_text` | `transcribe_audio` |
-| MQTT (optional) | `hailo10h/request/chat`, `…/transcribe` | JSON requests | JSON requests | Base64 audio |
-| Wyoming TCP | `HOST:10300` | — | — | Home Assistant Assist STT |
+| HTTP | `:8090/v1/chat/completions` | Text, images, SSE, tools | — | — |
+| HTTP | `:8090/v1/audio/transcriptions` | — | File upload | — |
+| HTTP | `:8090/v1/vision/detect` | — | — | Base64/data-URL image |
+| HTTP | `/v1/models`, `/health` | Models/readiness | Models/readiness | Model/readiness |
+| Frigate ZMQ | configured `vision.zmq.endpoint` | — | — | Frigate detector protocol |
+| WebSocket | `ws://HOST:8090/ws` | `chat` | `transcribe` | — |
+| MCP | `http://HOST:8090/mcp/` | `analyze_image`, `chat_text` | `transcribe_audio` | — |
+| MQTT | `hailo10h/request/...` | `chat` | `transcribe` | — |
+| Wyoming | `HOST:10300` | — | Home Assistant Assist STT | — |
 
-See [APIs and Home Assistant integration](doc/api.md) for authentication,
-request formats, Home Assistant tool calling and protocol-specific details.
+See [API and integrations](doc/api.md) for complete schemas, authentication,
+Frigate configuration, tool calling, metrics and Home Assistant details.
 
-The UI uses the first supported browser language, with a persistent manual
-language selector and the service default as fallback. German, English and
-Russian resources live in `src/hailo_services/locales/`. `HAILO_SERVICE_LANGUAGE`
-sets the general reply/UI fallback; `HAILO_LANGUAGE` sets Whisper's default.
-HA requests detect their input language or accept an explicit `language` field.
-Entity names and API identifiers retain the values supplied by HA.
+## YOLO and Frigate
 
-`model="HA-Assist"` activates conservative deterministic paths first; ambiguous
-requests use MiniLM and the minimal prompt compiler before one configured backend
-inference. Explicit Gemma/Hailo LLM/VLM IDs never activate HA-specific routing,
-retrieval, prompt compilation, action verification or output repairs. Older
-complete turns may be removed; system messages and the active tool round remain.
-Streaming HA requests can receive a varying localized wait sentence at inference
-start. Tool output remains buffered until validated. Spoken early playback also
-requires streaming support in the HA agent and TTS provider.
+The selected YOLO model is configured once and kept resident. `/v1/vision/detect` and
+the Frigate ZMQ bridge share that runtime and its queue.
+
+Example service configuration:
+
+```yaml
+vision:
+  enabled: true
+  model: yolov11m
+  zmq:
+    enabled: true
+    endpoint: tcp://0.0.0.0:5555
+```
+
+Frigate 0.17+ can use its built-in ZMQ detector. The model path is used by Frigate to
+derive the model name for the startup handshake; when the configured resident model
+matches, the service reports it as already loaded and no model upload is required.
+
+```yaml
+detectors:
+  hailo10h:
+    type: zmq
+    endpoint: tcp://HAILO_SERVICE_HOST:5555
+
+model:
+  model_type: yolo-generic
+  width: 640
+  height: 640
+  input_tensor: nhwc
+  input_pixel_format: rgb
+  input_dtype: int
+  path: /config/models/yolov11m.hef
+  labelmap_path: /labelmap/coco-80.txt
+```
+
+The basename in `model.path` must match the selected service model, for example
+`yolov11m.hef`. The file is only needed by Frigate if the remote detector reports that
+the model is unavailable; this service intentionally rejects remote HEF uploads and
+keeps model lifecycle under server configuration.
 
 ## Home Assistant virtual model
 
-Select **`HA-Assist`** in the HA conversation agent. This virtual OpenAI model is
-listed in `/v1/models`, `/health` and the playground. It has no model weights and
-keeps the same external model ID in responses and SSE chunks.
+Select **`HA-Assist`** in an OpenAI-compatible Home Assistant conversation agent.
+`HA-Assist` has no weights of its own. It performs conservative deterministic routing,
+HassIL matching, MiniLM retrieval/context reduction and action validation before using
+one configured text or vision backend when inference is necessary.
 
 ```yaml
 settings:
   ha_assist_enabled: true
-  ha_assist_text_model: gemma-4-E2B-it
+  ha_assist_text_model: Qwen3-1.7B-Instruct
   ha_assist_vision_model: Qwen2-VL-2B-Instruct
-  ha_assist_fuzzy_enabled: true
-models:
-  gemma:
-    enabled: true
-    max_input_tokens: 4096
-  vlm:
-    enabled: true
-    model: Qwen2-VL-2B-Instruct
 ```
 
-Merge these keys into your existing configuration, then restart. For accelerator
-text inference, set `ha_assist_text_model` to the enabled `models.hailo_llm.model`
-ID instead. The image target must match the enabled VLM. Targets are local backend
-model IDs; this setting does not add a remote proxy or load another model.
+A deterministic request performs **zero generative calls**. For generated actions the
+service returns validated function calls; Home Assistant executes them using its own
+permissions. The gateway never receives or needs a Home Assistant access token.
 
-Text commands first use official HassIL grammars with names/areas from the
-client, conservative fuzzy slot repair, and schema validation. State/weather and
-action-result corrections remain inside the virtual model. HA executes the
-returned tools. A deterministic answer makes **zero generative calls**;
-otherwise text reaches **one configured LLM**, images **one configured VLM**.
-There is no complexity-based model switching, retry via another model, or text
-fallback to a VLM. Images bypass text-only deterministic shortcuts. An invalid,
-disabled or unavailable target produces an error. `/health.ha_assist` reports
-text/vision readiness separately. Existing installations must explicitly switch
-their HA agent from a physical model ID to `HA-Assist` to retain HA processing.
+See [request pipelines](doc/pipelines.md) and
+[Home Assistant API configuration](doc/api.md#home-assistant-virtual-model).
 
-See [request pipelines](doc/pipelines.md) and [API configuration](doc/api.md#home-assistant-virtual-model).
+## Browser playground and metrics
+
+The browser UI keeps visible history when switching chat models. It shows request and
+response timestamps with milliseconds, browser/server processing duration and model
+metrics where available. These include inference time, TTFT, tokenizer-derived input
+and output counts and input-budget measurements. Missing native metrics remain
+unavailable rather than being estimated.
 
 ## Documentation
 
+- [APIs, LLM/VLM, YOLO/Frigate and Home Assistant](doc/api.md)
 - [Installation, Gemma provisioning and HTTPS](doc/installation.md)
-- [APIs and Home Assistant integration](doc/api.md)
 - [Routing and deterministic pipelines](doc/pipelines.md)
-- [Languages, vocabulary and Wyoming/HA language selection](doc/languages.md)
+- [Languages and Wyoming/HA language selection](doc/languages.md)
 - [Model evaluation on Raspberry Pi 5 + Hailo-10H](doc/model-benchmark-evaluation.md)
 - [Diagnostics, memory and hardware checks](doc/troubleshooting.md)
 
@@ -183,8 +301,9 @@ pip install -e '.[test]'
 ruff check .
 pytest -q
 node --test tests/test_web.cjs
-bash -n scripts/install.sh scripts/enable-https.sh
+bash -n scripts/install.sh scripts/update.sh scripts/enable-https.sh
 ```
 
-Protocol/routing tests use simulated backends; accelerator initialization,
-measured inference times and audible Assist streaming require target hardware.
+Protocol/routing tests use simulated backends. Accelerator initialization, actual model
+quality, measured inference performance and Frigate end-to-end latency require target
+hardware testing.
