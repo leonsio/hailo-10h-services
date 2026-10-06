@@ -715,3 +715,9 @@ configured input/audio limits; 503 means disabled/unavailable/full queue;
 voice/language, pending count and startup error. Piper startup failure does not
 stop other backends. `GET /v1/models` includes `piper` when ready. The existing
 Wyoming endpoint remains speech-to-text only; this change adds HTTP TTS.
+
+The Playground TTS panel uses `/v1/audio/speech` with WAV output. It lists locally
+installed voices, allows speed adjustment, retains generated audio and displays
+request/response timestamps, total duration, server processing time, sample rate
+and file size. Generated files can be played or downloaded; clear the TTS history
+to release them. The API key entered in the Playground also authenticates TTS.

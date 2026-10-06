@@ -364,3 +364,6 @@ Enable `settings.piper_enabled` after provisioning a local voice. The default
 is German `de_DE-thorsten-medium`; language follows the installed voice model.
 See [Piper installation](doc/installation.md#piper-cpu-text-to-speech) and the
 [`/v1/audio/speech` API](doc/api.md#post-v1audiospeech).
+
+The Playground includes a Piper TTS test with installed voice selection, speed,
+WAV playback/download and retained request timings. Piper must be enabled and ready.

@@ -175,7 +175,26 @@
     "metrics.source.tokenizer_text": "tokenisiert (Text, ohne Bildtokens)",
     "metrics.source.first_text_chunk": "erster Textblock",
     "metrics.ha_route": "HA-Verarbeitung / Ziel",
-    "metrics.source.deterministic": "deterministisch"
+    "metrics.source.deterministic": "deterministisch",
+    "tts.title": "Sprachausgabe testen",
+    "tts.clear": "Verlauf löschen",
+    "tts.description": "Text mit einer installierten Stimme vorlesen lassen, anhören und als WAV herunterladen.",
+    "tts.text": "Text zum Vorlesen",
+    "tts.placeholder": "Hallo! Willkommen beim Hailo-Service.",
+    "tts.voice": "Stimme",
+    "tts.speed": "Tempo",
+    "tts.generate": "Sprache erzeugen",
+    "tts.history": "Sprachausgabe und Messwerte",
+    "tts.ready": "Piper ist bereit · Verarbeitung auf CPU.",
+    "tts.unavailable": "Piper ist nicht verfügbar: {error}",
+    "tts.disabled": "Piper ist deaktiviert. Aktiviere piper_enabled und installiere eine Stimme, um TTS zu testen.",
+    "tts.default_voice": "Service-Standard · {voice}",
+    "tts.language_note": "Sprache: {language} · Max. {limit} Zeichen. Die Sprache wird durch die Stimme bestimmt.",
+    "tts.processing": "Verarbeitung inkl. Warteschlange",
+    "tts.sample_rate": "Abtastrate",
+    "tts.file_size": "Dateigröße",
+    "tts.generating": "Sprachausgabe wird erzeugt …",
+    "tts.download": "WAV herunterladen"
   },
   "aliases": {
     "licht": [

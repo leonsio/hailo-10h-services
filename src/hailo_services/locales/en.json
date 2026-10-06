@@ -175,7 +175,26 @@
     "metrics.source.tokenizer_text": "tokenized (text, excluding image tokens)",
     "metrics.source.first_text_chunk": "first text chunk",
     "metrics.ha_route": "HA route / target",
-    "metrics.source.deterministic": "deterministic"
+    "metrics.source.deterministic": "deterministic",
+    "tts.title": "Test speech output",
+    "tts.clear": "Clear history",
+    "tts.description": "Read text with an installed voice, listen to the result and download a WAV file.",
+    "tts.text": "Text to read",
+    "tts.placeholder": "Hello! Welcome to the Hailo service.",
+    "tts.voice": "Voice",
+    "tts.speed": "Speed",
+    "tts.generate": "Generate speech",
+    "tts.history": "Speech output and measurements",
+    "tts.ready": "Piper is ready · Processing on CPU.",
+    "tts.unavailable": "Piper is unavailable: {error}",
+    "tts.disabled": "Piper is disabled. Enable piper_enabled and install a voice to test TTS.",
+    "tts.default_voice": "Service default · {voice}",
+    "tts.language_note": "Language: {language} · Max. {limit} characters. The voice determines the language.",
+    "tts.processing": "Processing including queue",
+    "tts.sample_rate": "Sample rate",
+    "tts.file_size": "File size",
+    "tts.generating": "Generating speech …",
+    "tts.download": "Download WAV"
   },
   "aliases": {
     "licht": [

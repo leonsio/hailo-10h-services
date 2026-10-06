@@ -36,6 +36,30 @@ def _language_matches(expected, actual):
     return expected == actual or ("_" not in expected and expected == actual.split("_")[0])
 
 
+def installed_voices(settings):
+    """List provisioned voice IDs and languages without loading models.
+
+    Args:
+        settings (Settings): Local directory containing ONNX and JSON pairs.
+
+    Returns:
+        list[dict[str, str]]: Voice identifiers and declared languages, without paths.
+    """
+    voices = []
+    directory = Path(settings.piper_voice_dir).resolve()
+    for model in sorted(directory.glob("*.onnx")):
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", model.stem) or model.resolve().parent != directory:
+            continue
+        try:
+            metadata = json.loads(Path(str(model) + ".json").read_text(encoding="utf-8"))
+            language = metadata["language"]["code"]
+            if isinstance(language, str):
+                voices.append({"id": model.stem, "language": language})
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return voices
+
+
 class PiperBackend:
     """Own one resident CPU voice and replace it when the selected voice changes."""
 

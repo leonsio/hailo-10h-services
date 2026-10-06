@@ -3,6 +3,8 @@
 const $ = (id) => document.getElementById(id);
 let config, history = [], chatBusy = false, audioBusy = false;
 let audioBlob = null, audioName = "aufnahme.wav", audioURL = null, imageURL = null;
+let ttsBusy = false, ttsReady = false;
+const ttsURLs = new Set();
 let recording = null, starting = false, stopping = false, pageHidden = false;
 
 let uiLanguage = "de", uiStrings = {}, uiChoice = "auto", languageNames = {};
@@ -52,6 +54,7 @@ async function loadLanguage(choice) {
   $("language").replaceChildren(new Option(tr("ui_71"), ""),
     ...(config?.stt_languages || ["de", "en", "ru"]).map(code => new Option(languageNames[code] || code, code)));
   $("language").value = selectedSTT;
+  updateTTSVoice();
   document.documentElement.lang = language;
   for (const element of document.querySelectorAll("[data-i18n]")) element.textContent = tr(element.dataset.i18n);
   for (const element of document.querySelectorAll("[data-i18n-placeholder]")) element.placeholder = tr(element.dataset.i18nPlaceholder);
@@ -87,10 +90,12 @@ function headers() {
  * Send an authenticated API request and decode its JSON response.
  * @param {string} path Relative API path.
  * @param {RequestInit} [options] Fetch request options.
+ * @param {Function|null} [decode] Optional successful response decoder.
  * @returns {Promise<Object>} Decoded response; rejects on HTTP errors.
  */
-async function request(path, options = {}) {
+async function request(path, options = {}, decode = null) {
   const response = await fetch(path, { ...options, headers: { ...headers(), ...options.headers } });
+  if (response.ok && decode) return decode(response);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = data.error || data.detail;
@@ -172,22 +177,24 @@ function renderMeasurement(node, timing, data = {}, error = null) {
  * @param {string} path Relative API path.
  * @param {RequestInit} options Fetch options.
  * @param {HTMLElement} parent Container receiving the metrics element.
+ * @param {Function|null} [decode] Optional binary response decoder.
+ * @param {Function} [render] Measurement renderer for this operation.
  * @returns {Promise<Object>} Decoded API response; propagates request failures.
  */
-async function measuredRequest(path, options, parent) {
+async function measuredRequest(path, options, parent, decode = null, render = renderMeasurement) {
   const node = document.createElement("div"); node.className = "request-metrics";
   parent.append(node);
   const timing = { requested: new Date(), elapsed: 0 }, start = performance.now();
-  renderMeasurement(node, timing);
+  render(node, timing);
   const timer = setInterval(() => {
-    timing.elapsed = performance.now() - start; renderMeasurement(node, timing);
+    timing.elapsed = performance.now() - start; render(node, timing);
   }, 100);
   let data, failure;
-  try { data = await request(path, options); return data; }
+  try { data = await request(path, options, decode); return data; }
   catch (error) { failure = error; throw error; }
   finally {
     clearInterval(timer); timing.responded = new Date(); timing.elapsed = performance.now() - start;
-    renderMeasurement(node, timing, data, failure);
+    render(node, timing, data, failure);
   }
 }
 /**
@@ -211,6 +218,9 @@ function textOnlyModel(model = $("chat-model").value) {
  * @returns {void}
  */
 function controls() {
+  $("send-tts").disabled = ttsBusy || !config || !ttsReady;
+  for (const id of ["tts-input", "tts-voice", "tts-speed"]) $(id).disabled = ttsBusy || !config;
+  $("clear-tts").disabled = ttsBusy;
   $("send-chat").disabled = chatBusy || !config;
   $("clear-chat").disabled = chatBusy;
   $("prompt").disabled = chatBusy;
@@ -236,9 +246,14 @@ async function refreshStatus() {
     $("pending").textContent = data.pending ?? "—";
     $("models").textContent = (data.models || []).join(" · ") || "—";
     $("mqtt").textContent = data.mqtt_connected ? tr("ui_3") : tr("ui_4");
+    ttsReady = !!data.piper?.ready;
+    note("tts-status", ttsReady ? tr("tts.ready") : data.piper?.enabled
+      ? tr("tts.unavailable", {error: data.piper.error || tr("metrics.unavailable")}) : tr("tts.disabled"), !!data.piper?.enabled && !ttsReady);
+    controls();
     $("raw-status").textContent = JSON.stringify(data, null, 2);
     note("status-note", tr("ui_5", {v0: new Date().toLocaleTimeString(uiLanguage)}));
   } catch (error) {
+    ttsReady = false; controls(); note("tts-status", tr("ui_6"), true);
     $("connection").textContent = tr("ui_6");
     $("connection").className = "badge error";
     for (const id of ["group", "pending", "models", "mqtt"]) $(id).textContent = "—";
@@ -445,6 +460,76 @@ $("transcribe").addEventListener("click", async () => {
   } catch (error) { note("whisper-note", error.message, true); }
   finally { audioBusy = false; controls(); }
 });
+/**
+ * Populate installed voices while retaining the current selection.
+ * @returns {void}
+ */
+function updateTTSVoice() {
+  const selected = $("tts-voice").value;
+  $("tts-voice").replaceChildren(new Option(tr("tts.default_voice", {voice: config?.piper?.default_voice || "Piper"}), ""),
+    ...(config?.piper?.voices || []).map(voice => new Option(`${voice.id} · ${voice.language}`, voice.id)));
+  $("tts-voice").value = [...$("tts-voice").options].some(option => option.value === selected) ? selected : "";
+  const voice = config?.piper?.voices?.find(item => item.id === $("tts-voice").value);
+  note("tts-voice-note", tr("tts.language_note", {language: voice?.language || config?.piper?.language || "—", limit: config?.piper?.max_input_chars || 4096}));
+}
+/**
+ * Show speech-specific measurements without LLM token counters.
+ * @param {HTMLElement} node Destination.
+ * @param {Object} timing Browser timestamps and total request duration.
+ * @param {Object} [data] Binary response metadata.
+ * @param {Error|null} [error] Request error.
+ * @returns {void}
+ */
+function renderSpeechMeasurement(node, timing, data = {}, error = null) {
+  const rows = [
+    [tr("metrics.requested"), preciseTime(timing.requested)],
+    [tr("metrics.responded"), timing.responded ? preciseTime(timing.responded) : tr("metrics.pending")],
+    [tr("metrics.elapsed"), duration(timing.elapsed)],
+    [tr("tts.processing"), duration(data.processing_ms)],
+  ];
+  if (data.sample_rate) rows.push([tr("tts.sample_rate"), `${data.sample_rate} Hz`]);
+  if (data.blob) rows.push([tr("tts.file_size"), `${(data.blob.size / 1024).toFixed(1)} KB · WAV`]);
+  const list = document.createElement("dl");
+  for (const [label, value] of rows) {
+    const dt = document.createElement("dt"), dd = document.createElement("dd");
+    dt.textContent = label; dd.textContent = value; list.append(dt, dd);
+  }
+  node.replaceChildren(list);
+  if (error) { const message = document.createElement("p"); message.className = "error";
+    message.textContent = `${tr("metrics.failed")}: ${error.message}`; node.append(message); }
+}
+$("tts-voice").addEventListener("change", updateTTSVoice);
+$("tts-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (ttsBusy || !config || !ttsReady) return;
+  const input = $("tts-input").value.trim(); if (!input) return;
+  const voice = $("tts-voice").value, speed = Number($("tts-speed").value);
+  const body = {model: "piper", input, speed, response_format: "wav"};
+  if (voice) body.voice = voice;
+  ttsBusy = true; controls(); note("tts-note", tr("tts.generating"));
+  const entry = document.createElement("article"), title = document.createElement("strong"), text = document.createElement("p");
+  title.textContent = `${voice || config.piper.default_voice} · ${speed}×`;
+  text.textContent = input; entry.append(title, text); $("tts-history").append(entry);
+  try {
+    const data = await measuredRequest("v1/audio/speech", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)}, entry,
+      async response => {
+        const value = response.headers.get("X-Inference-Ms");
+        return {blob: await response.blob(), processing_ms: value === null ? undefined : Number(value),
+          sample_rate: Number(response.headers.get("X-Audio-Sample-Rate"))};
+      }, renderSpeechMeasurement);
+    const url = URL.createObjectURL(data.blob); ttsURLs.add(url);
+    const audio = document.createElement("audio"), download = document.createElement("a");
+    audio.controls = true; audio.src = url; audio.preload = "metadata";
+    download.href = url; download.download = "piper-speech.wav"; download.textContent = tr("tts.download");
+    entry.append(audio, download); note("tts-note", tr("metrics.complete"));
+  } catch (error) { note("tts-note", error.message, true); }
+  finally { ttsBusy = false; controls(); }
+});
+$("clear-tts").addEventListener("click", () => {
+  $("tts-history").querySelectorAll("audio").forEach(audio => { audio.pause(); audio.removeAttribute("src"); audio.load(); });
+  $("tts-history").replaceChildren(); ttsURLs.forEach(url => URL.revokeObjectURL(url)); ttsURLs.clear();
+  note("tts-note", "");
+});
 $("check-key").addEventListener("click", async () => {
   try { await request("v1/models"); note("auth-note", tr("ui_32")); }
   catch (error) { note("auth-note", error.message, true); }
@@ -477,6 +562,7 @@ async function init() {
 
   try {
     config = await request("ui/config");
+    $("tts-input").maxLength = config.piper?.max_input_chars || 4096;
     $("ui-language").value = savedChoice();
     await loadLanguage($("ui-language").value);
     await refreshStatus(); setInterval(refreshStatus, 5000);

@@ -41,7 +41,7 @@ from .models import ModelManager
 from .protocols import LANGUAGES, MQTTBridge, WyomingServer, dispatch
 from .runtime import Runtime
 from .schemas import ChatRequest, SpeechRequest, TranscribeRequest, VisionDetectRequest
-from .speech_piper import SpeechRuntime
+from .speech_piper import SpeechRuntime, installed_voices
 from .tool_calling import has_tool_context
 from .vision import COCO80, VisionRuntime
 from .vision_zmq import FrigateZmqServer
@@ -553,6 +553,13 @@ def create_app(
             .entries.get(settings.vlm_model, {})
             .get("max_images", 1),
             "chat_models": runtime.chat_models,
+            "piper": {
+                "enabled": settings.piper_enabled,
+                "default_voice": Path(settings.piper_voice).stem,
+                "language": settings.piper_language,
+                "max_input_chars": settings.piper_max_input_chars,
+                "voices": installed_voices(settings),
+            },
             "whisper_model": settings.stt_model,
             "language": settings.language,
             "service_language": settings.service_language,
