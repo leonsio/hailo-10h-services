@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .config import LLM_MODEL, Settings
+from .config import HA_ASSIST_MODEL, LLM_MODEL, Settings
 from .hailo_llm_chat import limit_request as limit_llm_request
 from .hailo_llm_chat import tool_response as llm_tool_response
 from .input_budget import InputBudgetError, history_candidates
@@ -117,10 +117,11 @@ class HailoBackend:
 
     def chat(self, request, emit=None, cancelled=None):
         from .ha_action_verification import action_verification_response
+        from .ha_assist import has_images
         from .i18n import using_language
 
         with using_language(getattr(request, "_response_language", request.language or self.settings.service_language)):
-            decision = action_verification_response(request) if getattr(request, "_ha_request", False) else None
+            decision = action_verification_response(request) if getattr(request, "_ha_assist", False) and not has_images(request) else None
         direct = decision["response"] if decision else next((
             getattr(request, name) for name in (
                 "_direct_ha_response", "_direct_ha_state_response", "_direct_weather_response"
@@ -540,7 +541,7 @@ class LiteRTLMBackend:
             raise RuntimeError("LiteRT-LM is not ready")
         if request.max_input_tokens is None:
             request = request.model_copy(update={"max_input_tokens": self.max_input_tokens})
-        if not tools_prepared and request.tools and not any(
+        if getattr(request, "_ha_assist", False) and not tools_prepared and request.tools and not any(
             message.get("role") == "tool" or message.get("tool_calls")
             for message in request.messages
         ):
@@ -735,24 +736,29 @@ class Runtime:
 
     async def chat(self, request, on_inference=None):
         request = self.default_chat_request(request)
+        if request.model == HA_ASSIST_MODEL:
+            from .ha_assist import prepare, target_model
+
+            target = target_model(self.settings, request)
+            request = request.model_copy(update={"model": target})
+            request, direct = await self.call(prepare, self.backend, request)
+            if direct is not None:
+                record(request._metrics, inference_ms=0, input_tokens=0, output_tokens=0,
+                       input_tokens_source="deterministic", output_tokens_source="deterministic")
+                return direct
+            if on_inference is not None:
+                object.__setattr__(request, "_on_inference", on_inference)
+            # Validate the selected backend once, never reroute on failure.
+            request = self.default_chat_request(request)
         if request.model == LLM_MODEL:
             if not self.litert_ready:
                 detail = self.litert_error or "LiteRT-LM model is not configured"
                 raise BusyError(f"{LLM_MODEL} is unavailable: {detail}")
-            if isinstance(self.backend, HailoBackend):
-                request = await self.call(self.backend.select_tools, request)
-                if on_inference is not None and getattr(request, "_ha_request", False):
-                    object.__setattr__(request, "_on_inference", on_inference)
-                return await self.call_litert(
-                    self.litert_backend.chat, request, None, None, True
-                )
+            if isinstance(self.litert_backend, LiteRTLMBackend):
+                return await self.call_litert(self.litert_backend.chat, request, None, None, True)
             return await self.call_litert(self.litert_backend.chat, request)
         if request.model not in self.hailo_chat_models:
             raise ValueError(f"Unknown model: {request.model}")
-        if has_tool_context(request) and isinstance(self.backend, HailoBackend):
-            request = await self.call(self.backend.select_tools, request)
-            if on_inference is not None and getattr(request, "_ha_request", False):
-                object.__setattr__(request, "_on_inference", on_inference)
         return await self.call(self.backend.chat, request)
 
     async def call_litert(self, function, *args):
@@ -763,7 +769,7 @@ class Runtime:
 
     async def stream(self, request):
         request = self.default_chat_request(request)
-        if has_tool_context(request):
+        if request.model == HA_ASSIST_MODEL or has_tool_context(request):
             yield await self.chat(request)
             return
         loop = asyncio.get_running_loop()
@@ -775,8 +781,6 @@ class Runtime:
         if litert and not self.litert_ready:
             detail = self.litert_error or "LiteRT-LM model is not configured"
             raise BusyError(f"{LLM_MODEL} is unavailable: {detail}")
-        if litert and isinstance(self.backend, HailoBackend):
-            request = await self.call(self.backend.select_tools, request)
         future = self.submit(
             self.litert_backend.chat if litert else self.backend.chat,
             request,
@@ -807,6 +811,12 @@ class Runtime:
         )
 
     @property
+    def chat_models(self):
+        return self.hailo_chat_models + ([LLM_MODEL] if self.litert_ready else []) + (
+            [HA_ASSIST_MODEL] if self.settings.ha_assist_enabled else []
+        )
+
+    @property
     def default_text_model(self):
         if self.litert_ready:
             return LLM_MODEL
@@ -831,6 +841,16 @@ class Runtime:
             "pending": self.pending,
             "model_limits": self.model_limits,
             "default_text_model": self.default_text_model,
+            "ha_assist": {"enabled": self.settings.ha_assist_enabled,
+                          "model": HA_ASSIST_MODEL,
+                          "text_model": self.settings.ha_assist_text_model,
+                          "vision_model": self.settings.ha_assist_vision_model,
+                          "text_ready": bool(self.settings.ha_assist_enabled and self.ready and (
+                              self.settings.ha_assist_text_model == LLM_MODEL and self.litert_ready
+                              or self.settings.hailo_llm_enabled and
+                              self.settings.ha_assist_text_model == self.settings.hailo_llm_model_id)),
+                          "vision_ready": bool(self.settings.ha_assist_enabled and self.ready and self.settings.vlm_enabled and
+                                               self.settings.ha_assist_vision_model == self.settings.vlm_model)},
             "litert_lm": {
                 "ready": self.litert_ready,
                 "model": LLM_MODEL if self.litert_backend else None,
@@ -841,7 +861,8 @@ class Runtime:
                 "error": self.litert_error,
             },
             "models": (self.hailo_chat_models + ([self.settings.stt_model] if self.settings.whisper_enabled else []) if self.ready else [])
-            + ([LLM_MODEL] if self.litert_ready else []),
+            + ([LLM_MODEL] if self.litert_ready else [])
+            + ([HA_ASSIST_MODEL] if self.settings.ha_assist_enabled else []),
             "model_paths": self.backend.paths,
             "artifact_paths": getattr(self.backend, "artifact_paths", {}),
             "minilm_ready": bool(self.ready and getattr(self.backend, "minilm", None)),

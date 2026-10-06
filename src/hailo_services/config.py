@@ -7,6 +7,7 @@ import yaml
 VLM_MODEL = "Qwen2-VL-2B-Instruct"
 STT_MODEL = "whisper-base"
 LLM_MODEL = "gemma-4-E2B-it"
+HA_ASSIST_MODEL = "HA-Assist"
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,12 @@ class Settings:
     whisper_hef: str = "Whisper-Base"
     language: str = "de"
     service_language: str = "de"
+    ha_assist_enabled: bool = True
+    ha_assist_text_model: str = LLM_MODEL
+    ha_assist_vision_model: str = VLM_MODEL
+    ha_assist_fuzzy_enabled: bool = True
+    ha_assist_fuzzy_threshold: float = 90.0
+    ha_assist_fuzzy_margin: float = 8.0
     ha_wait_messages: bool = True
     queue_size: int = 8
     request_timeout: float = 180
@@ -53,6 +60,12 @@ class Settings:
     mcp_hosts: str = "localhost:*,127.0.0.1:*"
 
     def __post_init__(self):
+        if HA_ASSIST_MODEL in {self.ha_assist_text_model, self.ha_assist_vision_model}:
+            raise ValueError("HA-Assist cannot route to itself")
+        if not self.ha_assist_text_model.strip() or not self.ha_assist_vision_model.strip():
+            raise ValueError("HA-Assist target model IDs must not be empty")
+        if not 80 <= self.ha_assist_fuzzy_threshold <= 100 or not 0 < self.ha_assist_fuzzy_margin <= 100:
+            raise ValueError("Invalid HA-Assist fuzzy threshold or margin")
         for name in ("vlm_max_input_tokens", "hailo_llm_max_input_tokens"):
             if not 1 <= getattr(self, name) <= 2048:
                 raise ValueError(f"{name} must be between 1 and the compiled HEF limit of 2048")

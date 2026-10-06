@@ -177,6 +177,53 @@ one MQTT request at a time. MQTT JSON includes base64 overhead; adjust broker
 packet limits too. MQTT/WebSocket requests return complete results; token
 streaming is HTTP SSE only. `health` is also supported as an operation.
 
+### Home Assistant virtual model
+
+Home Assistant should request `model: "HA-Assist"`. This model uses the same
+`/v1/chat/completions` and WebSocket chat operation, tools, history, sampling
+parameters and request limits as the physical models. Its responses always name
+`HA-Assist`; `metrics.ha_route.backend_model` identifies the actual target.
+
+```json
+{
+  "model": "HA-Assist",
+  "messages": [{"role": "user", "content": "Mach das Licht im Wohnzimmer aus"}],
+  "max_tokens": 256,
+  "max_input_tokens": 4096
+}
+```
+
+For device control the client additionally supplies its normal system/entity
+context and function tools. The service does not invent tools or execute actions.
+Configure `settings.ha_assist_text_model` and `settings.ha_assist_vision_model`
+with enabled local model IDs. ENV equivalents are
+`HAILO_HA_ASSIST_TEXT_MODEL` and `HAILO_HA_ASSIST_VISION_MODEL`.
+`HAILO_HA_ASSIST_ENABLED=false` hides/disables the virtual model.
+
+Routing is fixed for each request: any image content, including retained image
+history, selects the VLM; text selects the LLM. Deterministic HA answers/calls
+skip generative inference. Otherwise only the selected backend runs; unavailable
+targets, generation errors and token overflow never trigger another model.
+MiniLM may rank HA context/tools during preparation; it is not a second
+answer-generating backend. Physical IDs and omitted-model requests retain
+ordinary backend selection and bypass all HA-specific processing, even when HA
+function names or `Static Context:` appear in the input.
+
+Exact HassIL matching uses the packaged official `home-assistant-intents` grammar
+for the request language (de/en/ru). Only declared HA intent tools are eligible.
+Ambiguous/unsupported matches defer to the text target. Fuzzy repair only changes
+one known entity/area slot with a unique score and reparses with HassIL; it does
+not rewrite action words. Configure `ha_assist_fuzzy_enabled`,
+`ha_assist_fuzzy_threshold` (default 90) and `ha_assist_fuzzy_margin` (default 8).
+Every direct tool call respects the original schema and `tool_choice`.
+
+`metrics.ha_intent` reports candidates, exact/fuzzy results, slots and match time;
+`metrics.ha_route` reports route, target, language and preparation time. A direct
+response reports zero model input/output tokens with `deterministic` sources and
+zero inference time. Model answers retain native metrics when available.
+HA streaming buffers the answer/tool calls in one SSE completion; native-start
+wait messages remain optional. No extra model request is made for a wait message.
+
 ### Home Assistant device control through function tools
 
 Chat requests accept optional `max_input_tokens` (1..131072) and `top_p` (0..1), including the
@@ -234,8 +281,9 @@ The service returns calls to the client and does not execute or sequence them.
 
 Omit `model` for automatic routing: text uses ready Gemma, then an enabled Hailo
 LLM, then the resident VLM; images require an enabled VLM. Explicit model IDs remain authoritative.
-The incoming JSON may be much larger than the model budget: tool/entity retrieval
-and HA prompt compilation run first. The final model-bound prompt, including
+For `HA-Assist`, the incoming JSON may be much larger than the model budget:
+tool/entity retrieval and HA prompt compilation run first. Direct physical-model
+requests retain the original context/tools and may therefore exceed the budget. The final model-bound prompt, including
 selected schemas, template and tool history, must fit. `tool_choice: "none"`
 excludes tool schemas from inference. `/health` and `/ui/config` expose
 `model_limits` and `default_text_model`; `/ui/config` also exposes `hailo_llm_model`
@@ -244,7 +292,7 @@ or `vlm_input_budget` / `final_vlm_request`. Both Hailo chat types report tokeni
 input/output counts and first-text-chunk TTFT; VLM logs include frame dimensions.
 
 With the Home Assistant **Local OpenAI LLM** conversation integration, choose
-server type **Generic OpenAI-Compatible**. In the Conversation Agent options,
+model **HA-Assist** and server type **Generic OpenAI-Compatible**. In the Conversation Agent options,
 open **Request Body Parameters** and add `max_input_tokens` with value `4096`.
 The integration sends it as a top-level request parameter. It also has **Max
 Message History**; that caps the number of messages before the service applies
@@ -263,8 +311,8 @@ larger histories may require a larger context or a shorter conversation.
 The HTTP `/v1/chat/completions` endpoint accepts `user`, `tools`, `tool_choice`
 (`auto`, `none`, `required`, or a named function), and `parallel_tool_calls`.
 Tool calling uses **Gemma through LiteRT-LM** with its native function parser,
-or **Qwen2/Qwen3-VL for text-only tool requests**. The VLM adapter places the
-retrieved schemas and choice instructions into a compact JSON-call contract.
+or **native Hailo LLMs and Qwen2/Qwen3-VL** (including image/tool requests). The VLM adapter places the
+offered schemas and choice instructions into a compact JSON-call contract.
 Generated function names and arguments undergo the same schema validation as
 Gemma, including required/named choice and parallel-call rules. Model tool-call
 quality must be tested with your exposed HA devices; it is not a native Hailo

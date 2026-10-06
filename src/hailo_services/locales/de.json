@@ -170,7 +170,9 @@
     "metrics.source.native": "Modell",
     "metrics.source.tokenizer": "tokenisiert",
     "metrics.source.tokenizer_text": "tokenisiert (Text, ohne Bildtokens)",
-    "metrics.source.first_text_chunk": "erster Textblock"
+    "metrics.source.first_text_chunk": "erster Textblock",
+    "metrics.ha_route": "HA-Verarbeitung / Ziel",
+    "metrics.source.deterministic": "deterministisch"
   },
   "aliases": {
     "licht": [

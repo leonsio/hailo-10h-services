@@ -95,6 +95,9 @@ function renderMeasurement(node, timing, data = {}, error = null) {
   for (const [key, value] of [["server_requested", metrics.requested_at], ["server_responded", metrics.responded_at]]) {
     if (value && Number.isFinite(Date.parse(value))) rows.push([key, preciseTime(new Date(value))]);
   }
+  if (metrics.ha_route) {
+    rows.push(["ha_route", `${metrics.ha_route.route} · ${metrics.ha_route.backend_model}`]);
+  }
   if (metrics.request_id) rows.push(["request_id", metrics.request_id]);
   const list = document.createElement("dl");
   for (const [key, value] of rows) {
@@ -341,7 +344,11 @@ function updateChatMode() {
     $("image").value = ""; $("image-preview").hidden = true;
     if (imageURL) URL.revokeObjectURL(imageURL); imageURL = null;
   }
-  const limits = config?.model_limits?.[$("chat-model").value];
+  const selected = $("chat-model").value;
+  const target = selected === config?.ha_assist_model
+    ? ($("chat-mode").value === "text" ? config.ha_assist?.text_model : config.ha_assist?.vision_model)
+    : selected;
+  const limits = config?.model_limits?.[target];
   note("input-limit", limits ? tr("ui.input_limit", {limit: limits.max_input_tokens, context: limits.context_length}) : "");
 }
 async function init() {
@@ -353,7 +360,7 @@ async function init() {
     await refreshStatus(); setInterval(refreshStatus, 5000);
     $("chat-model").replaceChildren();
     for (const model of config.chat_models || [config.vlm_model]) {
-      $("chat-model").add(new Option(`${model} · ${model === config.llm_model ? "LiteRT-LM / CPU" : "Hailo"}`, model));
+      $("chat-model").add(new Option(`${model} · ${model === config.ha_assist_model ? "Home Assistant" : model === config.llm_model ? "LiteRT-LM / CPU" : "Hailo"}`, model));
     }
     $("chat-model").value = config.default_text_model || config.vlm_model;
     config.model_labels = { [config.vlm_model]: config.vlm_model, [config.llm_model]: "GEMMA 4 E2B" };

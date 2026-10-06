@@ -375,6 +375,7 @@ def test_active_tool_schema_is_preserved_alongside_retrieved_followup_tools():
         }]},
         {"role": "tool", "tool_call_id": "call_live", "content": "on"},
     ], tools=[live, turn_off, todo])
+    object.__setattr__(request, "_ha_assist", True)
     selected = backend.select_tools(request)
     names = [tool["function"]["name"] for tool in selected.tools]
     assert "homeassistant__GetLiveContext" in names
@@ -411,6 +412,7 @@ When controlling Home Assistant always call the intent tools."""
     ], tools=[turn_off, todo])
     request._request_id = "debug-entity-123"
     with caplog.at_level("DEBUG", logger="hailo_services.runtime"):
+        object.__setattr__(request, "_ha_assist", True)
         selected = backend.select_tools(request)
     assert "event=entity_retrieval_trace request_id=debug-entity-123" in caplog.text
     assert "Küchenlicht" in caplog.text

@@ -10,6 +10,13 @@ settings:
   language: de
   service_language: de
   debug_log: false
+  # Only model="HA-Assist" applies HA routing, prompt compilation and verification.
+  ha_assist_enabled: true
+  ha_assist_text_model: gemma-4-E2B-it # Enable models.gemma; or choose enabled Hailo LLM ID.
+  ha_assist_vision_model: Qwen2-VL-2B-Instruct # Must match enabled models.vlm.model.
+  ha_assist_fuzzy_enabled: true
+  ha_assist_fuzzy_threshold: 90.0
+  ha_assist_fuzzy_margin: 8.0
   ha_wait_messages: true
   queue_size: 8
   request_timeout: 180

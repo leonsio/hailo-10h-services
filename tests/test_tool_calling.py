@@ -131,6 +131,7 @@ def test_invalid_generated_actions_are_rejected(name, args):
 
 def test_multi_name_model_argument_expands_to_parallel_calls():
     request = ChatRequest(**payload())
+    object.__setattr__(request, "_ha_assist", True)
     result = response_message(
         model_response(arguments={"name": ["Backofen Licht", "Oberlicht"]}),
         request,
@@ -147,6 +148,7 @@ def test_multi_name_model_argument_expands_to_parallel_calls():
 
 def test_single_name_list_is_normalized_even_without_parallel_calls():
     request = ChatRequest(**payload(parallel_tool_calls=False))
+    object.__setattr__(request, "_ha_assist", True)
     result = response_message(
         model_response(arguments={"name": ["Oberlicht"]}),
         request,
@@ -160,6 +162,7 @@ def test_single_name_list_is_normalized_even_without_parallel_calls():
 
 def test_multi_name_model_argument_requires_parallel_calls():
     request = ChatRequest(**payload(parallel_tool_calls=False))
+    object.__setattr__(request, "_ha_assist", True)
     with pytest.raises(ValueError, match="multiple device names"):
         response_message(
             model_response(arguments={"name": ["Backofen Licht", "Oberlicht"]}),
@@ -206,6 +209,7 @@ def area_request(user_text="schalte das Licht in der Küche aus", entities=None)
 
 def test_generic_area_command_rewrites_single_name_to_area_domain():
     request = area_request()
+    object.__setattr__(request, "_ha_assist", True)
     response = model_response(
         name="intent__HassTurnOff",
         arguments={"name": "Licht - Rechts", "domain": ["light"]},

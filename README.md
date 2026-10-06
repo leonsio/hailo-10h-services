@@ -119,13 +119,53 @@ sets the general reply/UI fallback; `HAILO_LANGUAGE` sets Whisper's default.
 HA requests detect their input language or accept an explicit `language` field.
 Entity names and API identifiers retain the values supplied by HA.
 
-Recognized HA requests use conservative deterministic paths first; ambiguous
-requests use MiniLM and the minimal prompt compiler before model inference.
-General Hailo LLM/VLM tool requests also retrieve relevant tools before budgeting. Older
+`model="HA-Assist"` activates conservative deterministic paths first; ambiguous
+requests use MiniLM and the minimal prompt compiler before one configured backend
+inference. Explicit Gemma/Hailo LLM/VLM IDs never activate HA-specific routing,
+retrieval, prompt compilation, action verification or output repairs. Older
 complete turns may be removed; system messages and the active tool round remain.
 Streaming HA requests can receive a varying localized wait sentence at inference
 start. Tool output remains buffered until validated. Spoken early playback also
 requires streaming support in the HA agent and TTS provider.
+
+## Home Assistant virtual model
+
+Select **`HA-Assist`** in the HA conversation agent. This virtual OpenAI model is
+listed in `/v1/models`, `/health` and the playground. It has no model weights and
+keeps the same external model ID in responses and SSE chunks.
+
+```yaml
+settings:
+  ha_assist_enabled: true
+  ha_assist_text_model: gemma-4-E2B-it
+  ha_assist_vision_model: Qwen2-VL-2B-Instruct
+  ha_assist_fuzzy_enabled: true
+models:
+  gemma:
+    enabled: true
+    max_input_tokens: 4096
+  vlm:
+    enabled: true
+    model: Qwen2-VL-2B-Instruct
+```
+
+Merge these keys into your existing configuration, then restart. For accelerator
+text inference, set `ha_assist_text_model` to the enabled `models.hailo_llm.model`
+ID instead. The image target must match the enabled VLM. Targets are local backend
+model IDs; this setting does not add a remote proxy or load another model.
+
+Text commands first use official HassIL grammars with names/areas from the
+client, conservative fuzzy slot repair, and schema validation. State/weather and
+action-result corrections remain inside the virtual model. HA executes the
+returned tools. A deterministic answer makes **zero generative calls**;
+otherwise text reaches **one configured LLM**, images **one configured VLM**.
+There is no complexity-based model switching, retry via another model, or text
+fallback to a VLM. Images bypass text-only deterministic shortcuts. An invalid,
+disabled or unavailable target produces an error. `/health.ha_assist` reports
+text/vision readiness separately. Existing installations must explicitly switch
+their HA agent from a physical model ID to `HA-Assist` to retain HA processing.
+
+See [request pipelines](doc/pipelines.md) and [API configuration](doc/api.md#home-assistant-virtual-model).
 
 ## Documentation
 

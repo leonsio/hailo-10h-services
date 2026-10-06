@@ -170,7 +170,9 @@
     "metrics.source.native": "модель",
     "metrics.source.tokenizer": "токенизация",
     "metrics.source.tokenizer_text": "токенизация (текст, без токенов изображения)",
-    "metrics.source.first_text_chunk": "первый фрагмент текста"
+    "metrics.source.first_text_chunk": "первый фрагмент текста",
+    "metrics.ha_route": "Маршрут HA / модель",
+    "metrics.source.deterministic": "детерминированно"
   },
   "aliases": {
     "licht": [

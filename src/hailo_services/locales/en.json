@@ -170,7 +170,9 @@
     "metrics.source.native": "native",
     "metrics.source.tokenizer": "tokenized",
     "metrics.source.tokenizer_text": "tokenized (text, excluding image tokens)",
-    "metrics.source.first_text_chunk": "first text chunk"
+    "metrics.source.first_text_chunk": "first text chunk",
+    "metrics.ha_route": "HA route / target",
+    "metrics.source.deterministic": "deterministic"
   },
   "aliases": {
     "licht": [

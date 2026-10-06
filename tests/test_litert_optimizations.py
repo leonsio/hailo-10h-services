@@ -43,6 +43,7 @@ def action_request(*, failed=None, response_type="action_done", speech=None):
             },
         ],
     )
+    object.__setattr__(request, "_ha_assist", True)
     request._request_id = "fast-123"
     return request
 

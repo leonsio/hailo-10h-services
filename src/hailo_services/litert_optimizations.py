@@ -336,4 +336,5 @@ def install():
 
     cls.start = start
     cls.chat = chat
+    cls.plain_chat = chat
     cls._hailo_optimizations_installed = True

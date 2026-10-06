@@ -270,7 +270,8 @@ def response_message(response, request, text):
         arguments = arguments_object(function.get("arguments"))
         schema = tools[name].get("parameters", {})
         original_arguments = dict(arguments)
-        arguments = _prefer_area_target(arguments, schema, request.messages)
+        if getattr(request, "_ha_assist", False):
+            arguments = _prefer_area_target(arguments, schema, request.messages)
         if arguments != original_arguments:
             _LOG.debug(
                 "event=tool_argument_normalization request_id=%s tool=%s "
@@ -280,9 +281,9 @@ def response_message(response, request, text):
                 json.dumps(original_arguments, ensure_ascii=False, separators=(",", ":")),
                 json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
             )
-        expanded_arguments = _expand_name_list_arguments(
+        expanded_arguments = (_expand_name_list_arguments(
             arguments, schema, request.parallel_tool_calls
-        )
+        ) if getattr(request, "_ha_assist", False) else [arguments])
         if len(expanded_arguments) > 1:
             _LOG.debug(
                 "event=tool_argument_normalization request_id=%s tool=%s "
