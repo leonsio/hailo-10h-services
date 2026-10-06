@@ -48,6 +48,7 @@ models:
     # The service does not enforce mutual exclusion; Gemma on CPU is independent.
     enabled: false
     model: Qwen2.5-1.5B-Instruct # Or another kind: llm entry from the catalogue.
+    release: auto # Runtime-matched Hailo model-zoo release, or pin e.g. v5.4.0.
     max_input_tokens: 2048 # Manufacturer limit for the catalogue HEF LLMs.
   minilm:
     enabled: true
