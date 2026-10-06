@@ -3,11 +3,16 @@
 A resident inference gateway for **Hailo-10H** that exposes local VLM, LLM, speech,
 embedding and object-detection models through a small set of reusable APIs.
 
-The service can keep **Qwen VLM**, **Whisper**, **MiniLM**, a native **Hailo HEF LLM**
-and a resident **YOLO** detector available behind one process. Optional **Gemma 4 E2B**
-runs independently on the CPU through LiteRT-LM. Hailo accelerator workloads use
-`VDevice group_id="SHARED"`, so the service can coexist with other correctly configured
-Hailo applications without unloading models between requests.
+The service supports **Qwen VLMs**, native **Hailo HEF LLMs**, **Whisper**, **MiniLM**
+and resident **YOLO** detection. Optional **Gemma 4 E2B** runs independently on the
+CPU through LiteRT-LM. Hailo accelerator workloads use `VDevice group_id="SHARED"` so
+they can coexist with compatible Hailo applications without per-request model reloads.
+
+> **HailoRT / GenAI 5.4.0 limitation:** one Hailo GenAI language model may be resident
+> at a time. Configure **either a VLM or a native Hailo LLM**, not both. The service is
+> architecturally prepared to expose both backends in parallel when Hailo supports that
+> combination, but it does not unload/swap VLM and LLM models per request. Gemma runs on
+> the CPU and can therefore be used together with a Hailo VLM today.
 
 ## What it provides
 
@@ -18,7 +23,7 @@ Hailo applications without unloading models between requests.
 | CPU LLM | Gemma 4 E2B through LiteRT-LM | `/v1/chat/completions`, WebSocket, MQTT |
 | Speech-to-text | Whisper Tiny / Base / Small | `/v1/audio/transcriptions`, Wyoming, MCP |
 | Object detection | YOLOv8, YOLO11, YOLO26 | `/v1/vision/detect`, Frigate ZMQ |
-| HA routing / retrieval | `HA-Assist`, HassIL, MiniLM | OpenAI-compatible chat model |
+| HA routing / retrieval | [`HA-Assist`](#home-assistant-virtual-model), HassIL, MiniLM | OpenAI-compatible chat model |
 
 Native Hailo LLMs run directly through `hailo_platform.genai.LLM`; **Ollama is not
 required**. The service owns model loading, input budgeting, queues and validated tool
@@ -41,16 +46,21 @@ Other clients ────┼──── WebSocket / MQTT
         ┌──────────────────────────────┐
         │       Hailo-10H-Services     │
         │                              │
-        │  Qwen VLM     Hailo LLM      │
-        │  Whisper      YOLO            │
-        │  MiniLM                       │
-        │         VDevice SHARED        │
+        │ Qwen VLM  OR  Hailo LLM      │ ← HailoRT 5.4.0
+        │ Whisper       YOLO            │
+        │ MiniLM                        │
+        │          VDevice SHARED       │
         │                              │
-        │  Gemma 4 E2B ── LiteRT/CPU   │
+        │ Gemma 4 E2B ── LiteRT / CPU  │
         └──────────────┬───────────────┘
                        │
                    Hailo-10H
 ```
+
+The **VLM/LLM choice above applies only to Hailo GenAI models**. The software contains
+separate VLM and Hailo-LLM adapters, routing, queues and model selection and is ready
+for simultaneous operation once the Hailo runtime supports it. With HailoRT 5.4.0,
+set one of `models.vlm.enabled` and `models.hailo_llm.enabled` to `false`.
 
 HTTP and ZMQ object-detection clients use the **same resident YOLO runtime**. Frigate
 does not need to open the Hailo device or load its own detector HEF when it uses the
@@ -78,6 +88,9 @@ These models use their own HEF prompt template and tokenizer. Current catalog Ha
 LLMs have a compiled **2048-token context** shared by prompt and generated output.
 Tool requests are converted to the model-specific compact contract and validated again
 before OpenAI-compatible `tool_calls` are returned.
+
+With HailoRT 5.4.0, enabling a native Hailo LLM requires the VLM to be disabled. This
+is a Hailo GenAI runtime limitation, not a limitation of the service's routing design.
 
 ### VLM, speech and detection
 
@@ -125,13 +138,17 @@ See [LXC setup and command example](doc/installation.md#proxmox-lxc-on-arm64).
 
 ## Configuration example
 
+This profile keeps the **VLM on Hailo** and uses **Gemma on CPU for text**, so
+`HA-Assist` can handle both text and images without violating the HailoRT 5.4.0
+VLM/LLM restriction.
+
 ```yaml
 settings:
   host: 0.0.0.0
   port: 8090
   api_key: ""
   ha_assist_enabled: true
-  ha_assist_text_model: Qwen3-1.7B-Instruct
+  ha_assist_text_model: gemma-4-E2B-it
   ha_assist_vision_model: Qwen2-VL-2B-Instruct
   litert_max_num_tokens: 16384
 
@@ -141,19 +158,20 @@ models:
     model: Qwen2-VL-2B-Instruct
     max_input_tokens: 2048
 
-  whisper:
-    enabled: true
-    model: Whisper-Base
-
+  # HailoRT 5.4.0: do not enable this while the VLM above is enabled.
   hailo_llm:
-    enabled: true
+    enabled: false
     model: Qwen3-1.7B-Instruct
     release: auto
     max_input_tokens: 2048
 
   gemma:
-    enabled: false
+    enabled: true
     max_input_tokens: 4096
+
+  whisper:
+    enabled: true
+    model: Whisper-Base
 
   minilm:
     enabled: true
@@ -171,6 +189,11 @@ vision:
     endpoint: tcp://127.0.0.1:5555
 ```
 
+For a **native Hailo LLM text-only profile**, disable `models.vlm`, enable
+`models.hailo_llm`, and point `ha_assist_text_model` at that LLM. Image requests then
+have no HA-Assist VLM backend until the configuration is switched or a future Hailo
+runtime supports both GenAI model types concurrently.
+
 `vision.path` may be used instead of `vision.model`/`release` for an explicit HEF.
 Do not configure both at once. ZMQ has no API-key authentication; bind it to loopback
 or a trusted/firewalled network when Frigate runs elsewhere.
@@ -184,8 +207,12 @@ never silently falls back to another model.
 If `model` is omitted, text routing prefers:
 
 1. ready Gemma/LiteRT-LM,
-2. the enabled native Hailo LLM,
-3. the resident VLM as the final text-capable backend.
+2. an enabled native Hailo LLM,
+3. a resident VLM as the final text-capable backend.
+
+The second and third entries cannot both be Hailo-resident under HailoRT 5.4.0. The
+ordering is retained because the service is already structured for future parallel
+Hailo VLM/LLM support.
 
 Image requests require the configured VLM. `HA-Assist` is different: it is a virtual
 model that first attempts deterministic Home Assistant handling and only then routes
@@ -263,18 +290,35 @@ Select **`HA-Assist`** in an OpenAI-compatible Home Assistant conversation agent
 HassIL matching, MiniLM retrieval/context reduction and action validation before using
 one configured text or vision backend when inference is necessary.
 
+For HailoRT 5.4.0, the recommended full text+image profile is **Gemma on CPU for text**
+plus **Qwen VLM on Hailo for images**:
+
 ```yaml
 settings:
   ha_assist_enabled: true
-  ha_assist_text_model: Qwen3-1.7B-Instruct
+  ha_assist_text_model: gemma-4-E2B-it
   ha_assist_vision_model: Qwen2-VL-2B-Instruct
+
+models:
+  vlm:
+    enabled: true
+    model: Qwen2-VL-2B-Instruct
+  hailo_llm:
+    enabled: false
+  gemma:
+    enabled: true
+    max_input_tokens: 4096
 ```
+
+A native Hailo LLM may instead be used as the HA-Assist text backend, but with HailoRT
+5.4.0 the VLM must then be disabled. The code paths are already separated so both Hailo
+backends can be enabled together once Hailo removes the current runtime limitation.
 
 A deterministic request performs **zero generative calls**. For generated actions the
 service returns validated function calls; Home Assistant executes them using its own
 permissions. The gateway never receives or needs a Home Assistant access token.
 
-See [request pipelines](doc/pipelines.md) and
+See [How HA-Assist works](doc/ha-assist.md), [request pipelines](doc/pipelines.md) and
 [Home Assistant API configuration](doc/api.md#home-assistant-virtual-model).
 
 ## Browser playground and metrics
@@ -287,6 +331,7 @@ unavailable rather than being estimated.
 
 ## Documentation
 
+- [How HA-Assist works and why it does not send everything to an LLM](doc/ha-assist.md)
 - [APIs, LLM/VLM, YOLO/Frigate and Home Assistant](doc/api.md)
 - [Installation, Gemma provisioning and HTTPS](doc/installation.md)
 - [Routing and deterministic pipelines](doc/pipelines.md)
