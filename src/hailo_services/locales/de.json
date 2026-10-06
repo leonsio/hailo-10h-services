@@ -848,7 +848,7 @@
     "ha_weather_routing.pattern.79.18": "\\b(wetter|wetterlage|weather)\\b",
     "ha_weather_routing.pattern.80.21": "\\b(wie ist es|how is it)\\s+(draussen|aussen|outside)\\b",
     "ha_pipeline.pattern.71.17": "\\b(und|oder|wenn|falls|nicht|um|mehr|weniger|heller|dunkler|color|colour|farbe|warmweiss|kaltweiss|if|unless|except|not|насколько|если|кроме|не)\\b",
-    "ha_pipeline.pattern.68.21": "\\b(stell\\w*|setze\\w*|mach\\w*)\\b",
+    "ha_pipeline.pattern.68.21": "\\b(stell\\w*|setze\\w*|mach\\w*|schalt\\w*)\\b",
     "ha_state_routing.match.63.17": "\\b(status|zustand|modus)\\b",
     "ha_state_routing.words.112.16": {
       "$set": [

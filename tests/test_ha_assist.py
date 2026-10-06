@@ -158,6 +158,64 @@ def test_general_text_uses_one_llm_and_retains_virtual_response_name(service, st
     assert llm.calls[0]._metrics["ha_route"]["route"] == "llm"
 
 
+def completed_light_turn():
+    return [
+        {"role": "user", "content": "Mach das Licht im Wohnzimmer aus"},
+        {"role": "assistant", "content": None, "tool_calls": [{
+            "id": "old_action", "type": "function", "function": {
+                "name": "intent__HassTurnOff", "arguments": '{"area":"Wohnzimmer","domain":["light"]}'}}]},
+        {"role": "tool", "tool_call_id": "old_action", "content": '{"success":true}'},
+        {"role": "assistant", "content": "Erledigt."},
+    ]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_percent_path_after_completed_action(service, stream):
+    client, backend, llm = service
+    body = payload("schalte das Licht im Wohnzimmer auf 70%", stream=stream)
+    body["messages"][1:1] = completed_light_turn()
+    response = client.post("/v1/chat/completions", json=body)
+    assert response.status_code == 200
+    assert "light__HassLightSet" in response.text
+    if not stream:
+        result = response.json()
+        args = json.loads(result["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
+        assert args == {"area": "Wohnzimmer", "domain": ["light"], "brightness": 70}
+        assert result["metrics"]["ha_history"]["messages_after"] == 2
+    assert not backend.calls and not llm.calls
+
+
+def test_general_followup_keeps_geography_but_retires_house_actions(service):
+    client, _, llm = service
+    body = payload("Welche Sehenswürdigkeiten gibt es dort?")
+    geography = [{"role": "user", "content": "Was ist die Hauptstadt von Portugal?"},
+                 {"role": "assistant", "content": "Lisboa."}]
+    body["messages"][1:1] = geography + completed_light_turn()
+    response = client.post("/v1/chat/completions", json=body)
+    assert response.status_code == 200
+    assert len(llm.calls) == 1
+    assert llm.calls[0].tools is None
+    assert [m for m in llm.calls[0].messages if m["role"] != "system"] == geography + body["messages"][-1:]
+    assert all("Static Context:" not in str(m) for m in llm.calls[0].messages)
+
+
+def test_house_prompt_is_compiled_without_finished_history(service):
+    client, _, llm = service
+    body = payload("Ändere die Lichtfarbe im Wohnzimmer auf blau")
+    body["tools"][2]["function"]["parameters"]["properties"]["color"] = {"type": "string"}
+    body["messages"][1:1] = completed_light_turn() + [
+        {"role": "user", "content": "Was ist die Hauptstadt von Portugal?"},
+        {"role": "assistant", "content": "Lisboa."}]
+    response = client.post("/v1/chat/completions", json=body)
+    assert response.status_code == 200
+    assert len(llm.calls) == 1
+    request = llm.calls[0]
+    assert len(request.messages) == 2
+    assert "Lisboa" not in str(request.messages)
+    assert "_ha_prompt_plan" in request.__dict__
+    assert len(request.messages[0]["content"]) < len(SYSTEM) + 100
+
+
 def test_image_bypasses_text_shortcuts_and_uses_one_vlm(service):
     client, backend, llm = service
     body = payload()

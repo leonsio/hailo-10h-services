@@ -40,6 +40,45 @@ def needs_inference(request):
     return not any(getattr(request, name, None) is not None for name in _DIRECT_ATTRIBUTES)
 
 
+def task_history(request, *, encoder=None, embedding_cache=None):
+    """Keep active tool dependencies; retire completed HA turns at the HA boundary."""
+    from .ha_routing import assess_ha_relevance
+
+    systems = [m for m in request.messages if m.get("role") == "system"]
+    turns = []
+    for message in request.messages:
+        if message.get("role") == "system":
+            continue
+        if message.get("role") == "user" or not turns:
+            turns.append([])
+        turns[-1].append(message)
+    if not turns:
+        return request
+
+    def relevant(turn, semantic=False):
+        return assess_ha_relevance(
+            systems + [turn[0]], request.tools,
+            encoder=encoder if semantic else None, embedding_cache=embedding_cache,
+        )["relevant"]
+
+    active = turns[-1]
+    # A result is part of the current user turn, not a new independent request.
+    active_tools = any(m.get("role") == "tool" or m.get("tool_calls") for m in active)
+    house = active_tools or relevant(active, True)
+    retained = []
+    if not house:
+        for turn in turns[:-1]:
+            if not any(m.get("role") == "tool" or m.get("tool_calls") for m in turn) and not relevant(turn):
+                retained.extend(turn)
+    messages = systems + retained + active
+    prepared = request.model_copy(update={"messages": messages})
+    request._metrics["ha_history"] = {
+        "policy": "current_ha_turn" if house else "general_conversation",
+        "messages_before": len(request.messages), "messages_after": len(messages),
+    }
+    return prepared
+
+
 def _target(request, domain, query):
     entities = [e for e in _entries(request.messages) if e["domain"] == domain]
 
@@ -73,7 +112,7 @@ def _target(request, domain, query):
 
 def direct_numeric_action(request):
     """Absolute brightness/cover position only; uncertain/composite requests defer."""
-    if request.tool_choice == "none" or any(m.get("role") == "tool" for m in request.messages):
+    if request.tool_choice == "none" or request.messages[-1].get("role") != "user":
         return None
     query = normalize_matching(latest_user_text(request.messages))
     # normalize_matching removes %, so inspect the original value separately.
@@ -166,6 +205,11 @@ def install():
             return request
         if not is_home_assistant_request(request):
             return request
+        request = task_history(request, encoder=self.minilm,
+                               embedding_cache=self._retrieval_embedding_cache)
+        if self.settings.debug_log:
+            _LOG.debug("event=ha_history request_id=%s json=%s", request._request_id,
+                       json.dumps(request._metrics["ha_history"]))
         language = request.language or detect_language(
             latest_user_text(request.messages), self.settings.service_language
         )
@@ -173,6 +217,11 @@ def install():
             from .ha_intents import deterministic_intent
 
             direct, intent_trace = deterministic_intent(request, self.settings, language)
+            if direct is None:
+                direct = direct_numeric_action(request)
+                if direct is not None:
+                    intent_trace.update(source="direct_numeric", reason="validated",
+                                        arguments=json.loads(direct["tool_calls"][0]["function"]["arguments"]))
             request._metrics["ha_intent"] = intent_trace
             if self.settings.debug_log:
                 _LOG.debug("event=ha_intent request_id=%s json=%s", request._request_id,

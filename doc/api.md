@@ -209,6 +209,19 @@ answer-generating backend. Physical IDs and omitted-model requests retain
 ordinary backend selection and bypass all HA-specific processing, even when HA
 function names or `Static Context:` appear in the input.
 
+For text requests to `HA-Assist`, history is filtered before routing. A house
+request keeps the current user turn and its active tool calls/results. Completed
+house turns are omitted from later backend prompts. General conversation keeps
+previous non-house user/assistant turns, so a follow-up such as “Which sights are
+there?” retains the preceding geography question and answer. The client may
+still display/store the complete conversation: filtering changes only the
+request sent to the backend. `metrics.ha_history` and the debug event
+`ha_history` report the policy and message counts. Explicit absolute brightness
+and cover percentages can produce validated tool calls without LLM inference;
+relative, conditional, composite and ambiguous commands use the normal routing.
+When inference is needed for a house request, the prompt compiler supplies the
+task-specific rules and schemas instead of the long HA examples.
+
 Exact HassIL matching uses the packaged official `home-assistant-intents` grammar
 for the request language (de/en/ru). Only declared HA intent tools are eligible.
 Ambiguous/unsupported matches defer to the text target. Fuzzy repair only changes
