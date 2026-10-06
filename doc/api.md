@@ -274,6 +274,16 @@ Tool calling uses the compact contract and strict schema validation before
 returning OpenAI `tool_calls`; native `<tool_call>` JSON wrappers are accepted.
 Thinking is disabled in the rendered template by default.
 
+Model-specific template behaviour is recorded in `model_catalog.yaml`.
+For `Llama3.2-1B-Instruct`, `prompt_template.empty_tool_calls: omit` prevents
+ordinary messages from being mistaken for tool-call turns. Qwen retains the
+default `include` behaviour for optional template fields.
+Llama's `tool_calling.parallel_calls: false` also forces a single-call prompt
+contract and rejects multiple generated calls, even when the client requests
+`parallel_tool_calls: true`. Tool calls and matched results in history continue
+to use the compact text representation; they are not silently dropped.
+The service returns calls to the client and does not execute or sequence them.
+
 Omit `model` for automatic routing: text uses ready Gemma, then an enabled Hailo
 LLM, then the resident VLM; images require an enabled VLM. Explicit model IDs remain authoritative.
 The incoming JSON may be much larger than the model budget: tool/entity retrieval

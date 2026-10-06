@@ -17,16 +17,19 @@ def model_prompt(request):
     )} for message in vlm_chat.model_prompt(request)]
 
 
-def limit_request(model, request, configured_limit, context_length, *, debug=False):
+def limit_request(model, request, configured_limit, context_length, *, debug=False,
+                  template_options=None):
     if not callable(getattr(model, "prompt_template", None)):
         raise ValueError("LLM input budgeting requires HailoRT LLM.prompt_template; upgrade HailoRT")
     trimmed, prompt = vlm_chat.limit_request(
         model, request, configured_limit, context_length, debug=debug,
-        prompt_builder=model_prompt, model_kind="LLM",
+        prompt_builder=model_prompt, model_kind="LLM", template_options=template_options,
     )
     # LLM.generate accepts a raw string. Send exactly the template we measured,
     # including enable_thinking=False, without a second native template render.
-    return trimmed, vlm_chat.render_prompt(model, prompt, model_kind="LLM")
+    return trimmed, vlm_chat.render_prompt(
+        model, prompt, model_kind="LLM", template_options=template_options,
+    )
 
 
 def tool_response(text, request):

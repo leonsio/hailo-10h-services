@@ -15,6 +15,7 @@ from hailo_services.input_budget import InputBudgetError
 from hailo_services.models import ModelManager
 from hailo_services.runtime import HailoBackend, Runtime
 from hailo_services.schemas import ChatRequest
+from hailo_services.vlm_chat import render_prompt
 
 
 class NativeLLM:
@@ -50,11 +51,31 @@ class NativeLLM:
         self.closed = True
 
 
+class NativeLlama(NativeLLM):
+    def prompt_template(self):
+        # Reduced Llama membership/length check that rejected even plain text
+        # after the adapter added tool_calls=[]. Keep the native error verbatim.
+        return """
+{%- for message in messages %}
+{%- if 'tool_calls' in message %}
+{%- if message.tool_calls|length != 1 %}
+{{- raise_exception('This model only supports single tool-calls at once!') }}
+{%- endif %}
+{{- message.tool_calls[0].function.name }}
+{%- else %}
+<|start_header_id|>{{ message.role }}<|end_header_id|>
+{{ message.content }}<|eot_id|>
+{%- endif %}
+{%- endfor %}
+{%- if add_generation_prompt %}<|start_header_id|>assistant<|end_header_id|>{% endif %}
+"""
+
+
 def backend(**kwargs):
     s = Settings(**{'vlm_enabled': False, 'hailo_llm_enabled': True, 'whisper_enabled': False,
                     'minilm_enabled': False, 'wyoming_port': 0, **kwargs})
     b = HailoBackend(s)
-    b.llm = NativeLLM()
+    b.llm = NativeLlama() if s.hailo_llm_model_id == 'Llama3.2-1B-Instruct' else NativeLLM()
     b.start = lambda: None
     return b
 
@@ -70,7 +91,8 @@ def tool():
         'required': ['zone'], 'additionalProperties': False}}}
 
 
-@pytest.mark.parametrize('model', ['Qwen2.5-1.5B-Instruct', 'Qwen3-1.7B-Instruct'])
+@pytest.mark.parametrize('model', ['Qwen2.5-1.5B-Instruct', 'Qwen3-1.7B-Instruct',
+                                 'Llama3.2-1B-Instruct'])
 def test_native_llm_http_ws_stream_metrics_and_model_selection(model):
     b = backend(hailo_llm_model=model)
     native = b.llm
@@ -334,3 +356,84 @@ def test_llm_sends_non_thinking_template_and_native_empty_special_token_defaults
         '{% if enable_thinking %}<think>{% else %}<think>\n\n</think>\n{% endif %}')
     b.chat(request(model='Qwen3-1.7B-Instruct'))
     assert b.llm.calls[0]['prompt'] == 'Hauptstadt Frankreich?<think>\n\n</think>\n'
+
+
+def test_llama_template_omits_empty_calls_but_preserves_real_calls():
+    options = ModelManager(Settings()).entry('Llama3.2-1B-Instruct')['prompt_template']
+    prompt = [{'role': 'user', 'content': 'Hallo', 'tool_calls': []}]
+    # Prove this fixture reproduces the pre-fix production failure.
+    with pytest.raises(ValueError, match='single tool-calls'):
+        render_prompt(NativeLlama(), prompt, model_kind='LLM')
+    assert 'Hallo' in render_prompt(
+        NativeLlama(), prompt, model_kind='LLM', template_options=options,
+    )
+    assert prompt[0]['tool_calls'] == []  # Rendering only normalizes a copy.
+    call = {'function': {'name': 'get_time', 'arguments': {'zone': 'UTC'}}}
+    prompt = [{'role': 'assistant', 'content': None, 'tool_calls': [call]}]
+    assert 'get_time' in render_prompt(
+        NativeLlama(), prompt, model_kind='LLM', template_options=options,
+    )
+    prompt[0]['tool_calls'].append(call)
+    with pytest.raises(ValueError, match='single tool-calls'):
+        render_prompt(NativeLlama(), prompt, model_kind='LLM', template_options=options)
+
+
+@pytest.mark.parametrize('history_calls', [0, 1, 2])
+def test_llama_tools_and_complete_history_use_single_call_contract(history_calls):
+    b = backend(hailo_llm_model='Llama3.2-1B-Instruct')
+    b.llm.text = '{"name":"get_time","arguments":{"zone":"UTC"}}'
+    messages = [{'role': 'user', 'content': 'Use get_time UTC'}]
+    if history_calls:
+        calls = [{'id': f'call_{i}', 'type': 'function', 'function': {
+            'name': 'get_time', 'arguments': '{"zone":"UTC"}'}}
+            for i in range(history_calls)]
+        messages.append({'role': 'assistant', 'content': None, 'tool_calls': calls})
+        messages.extend({'role': 'tool', 'tool_call_id': call['id'], 'content': f'12:0{i}'}
+                        for i, call in enumerate(calls))
+    r = ChatRequest(model=b.settings.hailo_llm_model_id, messages=messages,
+                    tools=[tool()], tool_choice='required', parallel_tool_calls=True)
+    emitted = []
+    answer = b.chat(r, emitted.append)
+    assert len(answer['tool_calls']) == 1
+    assert emitted == [answer]
+    prompt = b.llm.calls[0]['prompt']
+    assert 'Return at most one function call.' in prompt
+    assert prompt == b.llm.rendered[0]  # Budgeting and generation use the same options.
+    for i in range(history_calls):
+        assert f'call_{i}' in prompt and f'12:0{i}' in prompt
+    assert r.parallel_tool_calls is True
+    assert r.messages == messages
+
+
+def test_llama_multiple_generated_calls_are_rejected_before_streaming():
+    b = backend(hailo_llm_model='Llama3.2-1B-Instruct')
+    call = {'function': {'name': 'get_time', 'arguments': {'zone': 'UTC'}}}
+    b.llm.text = json.dumps({'tool_calls': [call, call]})
+    emitted = []
+    with pytest.raises(ValueError, match='parallel calls when disabled'):
+        b.chat(request(model=b.settings.hailo_llm_model_id, tools=[tool()],
+                       parallel_tool_calls=True), emitted.append)
+    assert emitted == []
+    assert b.llm.clears == 2
+
+
+def test_template_and_single_call_policy_come_from_custom_catalogue(tmp_path):
+    import yaml
+
+    entries = ModelManager(Settings()).entries
+    # An unrelated ID with the same metadata must get the same behaviour.
+    alias = 'Custom-Text-Model'
+    entries[alias] = dict(entries['Llama3.2-1B-Instruct'])
+    path = tmp_path / 'model_catalog.yaml'
+    path.write_text(yaml.safe_dump({'schema_version': 1, 'models': entries}))
+    b = backend(hailo_llm_model=alias, model_catalog=str(path))
+    b.llm = NativeLlama(text='{"name":"get_time","arguments":{"zone":"UTC"}}')
+    assert b.chat(request(model=alias, tools=[tool()]))['tool_calls']
+    assert 'Return at most one function call.' in b.llm.calls[0]['prompt']
+    # Changing only metadata restores the caller's parallel-call preference.
+    entries[alias]['tool_calling'] = {'parallel_calls': True}
+    path.write_text(yaml.safe_dump({'schema_version': 1, 'models': entries}))
+    call = {'function': {'name': 'get_time', 'arguments': {'zone': 'UTC'}}}
+    b.llm.text = json.dumps({'tool_calls': [call, call]})
+    assert len(b.chat(request(model=alias, tools=[tool()]))['tool_calls']) == 2
+    assert 'Return at most one function call.' not in b.llm.calls[-1]['prompt']

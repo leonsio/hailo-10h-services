@@ -1,3 +1,7 @@
+import pytest
+
+from hailo_services.config import Settings
+from hailo_services.models import ModelManager
 from hailo_services.vlm_chat import render_prompt
 
 
@@ -30,14 +34,17 @@ class QwenTemplateModel:
 """
 
 
-def test_qwen3_budget_template_accepts_assistant_chat_history_without_tool_calls():
+@pytest.mark.parametrize("catalogue_model", [None, "Qwen3-1.7B-Instruct", "Qwen3-VL-2B-Instruct"])
+def test_qwen3_budget_template_accepts_assistant_chat_history_without_tool_calls(catalogue_model):
     prompt = [
         {"role": "user", "content": [{"type": "text", "text": "wieviele sind 2+2"}]},
         {"role": "assistant", "content": [{"type": "text", "text": "2 + 2 sind 4."}]},
         {"role": "user", "content": [{"type": "text", "text": "was ist die Hauptstadt von Frankreich?"}]},
     ]
 
-    rendered = render_prompt(QwenTemplateModel(), prompt)
+    options = (ModelManager(Settings()).entry(catalogue_model)["prompt_template"]
+               if catalogue_model else None)
+    rendered = render_prompt(QwenTemplateModel(), prompt, template_options=options)
 
     assert "2 + 2 sind 4." in rendered
     assert "Hauptstadt von Frankreich" in rendered

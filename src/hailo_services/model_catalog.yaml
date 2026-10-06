@@ -108,6 +108,11 @@ models:
   Llama3.2-1B-Instruct:
     kind: llm
     context_length: 2048
+    prompt_template:
+      empty_tool_calls: omit # Membership checks interpret even [] as a tool-call turn.
+    tool_calling:
+      parallel_calls: false
+    note: Native template supports exactly one tool call per assistant turn; omit empty tool_calls. The service requests and validates at most one new call per response.
     filename: Llama3.2-1B-Instruct.hef
     sizes:
       v5.4.0: 1402376894 # Verified Content-Length via HTTP HEAD on 2026-10-05
@@ -120,6 +125,8 @@ models:
   Qwen3-1.7B-Instruct:
     kind: llm
     context_length: 2048
+    prompt_template:
+      empty_tool_calls: include # Keep optional tool_calls reads valid under StrictUndefined.
     filename: Qwen3-1.7B-Instruct.hef
     sizes:
       v5.4.0: 2880748478 # Verified Content-Length via HTTP HEAD on 2026-10-05
@@ -133,6 +140,8 @@ models:
     frame_size: [512, 288] # width, height
     max_images: 1 # Hailo single-frame HEF
     context_length: 2048
+    prompt_template:
+      empty_tool_calls: include # Keep optional tool_calls reads valid under StrictUndefined.
     filename: Qwen3-VL-2B-Instruct.hef
     sizes:
       v5.4.0: 3185773502 # Verified Content-Length via HTTP HEAD on 2026-10-05

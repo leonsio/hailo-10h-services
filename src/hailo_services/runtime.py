@@ -149,9 +149,14 @@ class HailoBackend:
             raise BusyError(f"{request.model} is disabled")
         _validate_hailo_temperature(request, kind.upper())
         entry = ModelManager(self.settings).entries.get(request.model, {})
+        if entry.get("tool_calling", {}).get("parallel_calls") is False:
+            # Apply to both the compact prompt contract and output validation.
+            # A caller cannot override a model's single-call restriction.
+            request = request.model_copy(update={"parallel_tool_calls": False})
         request, prompt = budget(
             model, request, configured_limit, entry.get("context_length", 2048),
             debug=self.settings.debug_log,
+            template_options=entry.get("prompt_template"),
         )
         size = tuple(entry.get("frame_size", [336, 336])) if kind == "vlm" else None
         if kind == "vlm" and callable(getattr(model, "input_frame_shape", None)):
@@ -170,6 +175,8 @@ class HailoBackend:
         _debug_json(self.settings.debug_log, f"final_{kind}_request", {
             "prompt": prompt, "frame_size": size, "images": len(frames),
             "model": request.model, "max_input_tokens": configured_limit,
+            "parallel_tool_calls": request.parallel_tool_calls,
+            "prompt_template": entry.get("prompt_template", {}),
         }, request_id=request._request_id)
         output = []
         started = time.perf_counter()
