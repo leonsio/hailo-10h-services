@@ -433,6 +433,11 @@ Use this endpoint rather than assuming a configured model successfully initializ
 plus the `vision` block and reports information such as selected models, readiness,
 model limits/default text model, pending queues and configured ZMQ endpoint.
 
+`model_limits` contains only initialized, enabled chat backends. Disabled Hailo
+models and failed/unavailable LiteRT models are omitted. The Playground receives
+the same filtered limits via `/ui/config`; no limits are advertised before startup
+or after runtime shutdown.
+
 HTTP status is 503 when a required enabled runtime failed to become ready.
 
 ## Home Assistant virtual model

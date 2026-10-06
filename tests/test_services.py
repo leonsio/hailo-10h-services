@@ -833,3 +833,54 @@ def test_version_detection_uses_binding_without_device_probe(monkeypatch):
     monkeypatch.delenv("hailort_version", raising=False)
     monkeypatch.delenv("model_zoo_version", raising=False)
     assert prepare_model_version() == "5.4.0"
+
+
+@pytest.mark.parametrize(
+    "vlm_enabled,hailo_llm_enabled,litert_state",
+    [
+        (True, False, "ready"),
+        (True, False, "failed"),
+        (False, True, "disabled"),
+        (False, False, "ready"),
+        (False, False, "disabled"),
+    ],
+)
+def test_model_limits_only_expose_ready_enabled_backends(
+    vlm_enabled, hailo_llm_enabled, litert_state
+):
+    class FailedLiteRTBackend(FakeLiteRTBackend):
+        def start(self):
+            raise RuntimeError("Model failed to load")
+
+    settings = Settings(
+        vlm_enabled=vlm_enabled,
+        hailo_llm_enabled=hailo_llm_enabled,
+        hailo_llm_model="Qwen3-1.7B-Instruct",
+        wyoming_port=0,
+    )
+    litert = (
+        FakeLiteRTBackend()
+        if litert_state == "ready"
+        else FailedLiteRTBackend()
+        if litert_state == "failed"
+        else None
+    )
+    app = create_app(settings, FakeBackend(), litert_backend=litert)
+    expected = set()
+    if vlm_enabled:
+        expected.add(settings.vlm_model)
+    if hailo_llm_enabled:
+        expected.add(settings.hailo_llm_model_id)
+    if litert_state == "ready":
+        expected.add("gemma-4-E2B-it")
+    assert app.state.runtime.model_limits == {}
+    with TestClient(app) as client:
+        health = client.get("/health").json()
+        config = client.get("/ui/config").json()
+        assert set(health["model_limits"]) == expected
+        assert config["model_limits"] == health["model_limits"]
+        assert expected <= set(health["models"])
+        assert expected <= set(config["chat_models"])
+        if not hailo_llm_enabled:
+            assert settings.hailo_llm_model_id not in health["model_limits"]
+    assert app.state.runtime.model_limits == {}

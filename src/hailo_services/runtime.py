@@ -363,28 +363,33 @@ class Runtime:
 
     @property
     def model_limits(self):
-        """Expose configured input and image limits for chat models.
+        """Expose input limits only for initialized, enabled chat backends.
 
         Returns:
-            dict[str, Any]: Per-model limits for clients and the UI.
+            dict[str, Any]: Limits for ready chat models; empty before startup or after shutdown.
 
         Notes:
             No application-specific exceptions are raised for valid inputs.
         """
-        return {
-            self.settings.vlm_model: {
+        if not self.ready:
+            return {}
+        limits = {}
+        if self.settings.vlm_enabled:
+            limits[self.settings.vlm_model] = {
                 "max_input_tokens": self.settings.vlm_max_input_tokens,
                 "context_length": 2048,
-            },
-            self.settings.hailo_llm_model_id: {
+            }
+        if self.settings.hailo_llm_enabled:
+            limits[self.settings.hailo_llm_model_id] = {
                 "max_input_tokens": self.settings.hailo_llm_max_input_tokens,
                 "context_length": 2048,
-            },
-            LLM_MODEL: {
+            }
+        if self.litert_ready:
+            limits[LLM_MODEL] = {
                 "max_input_tokens": self.settings.litert_max_input_tokens,
                 "context_length": self.settings.litert_max_num_tokens,
-            },
-        }
+            }
+        return limits
 
     def status(self):
         """Summarize resident readiness, model paths and pending requests.
