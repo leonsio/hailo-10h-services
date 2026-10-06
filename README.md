@@ -152,6 +152,7 @@ requires streaming support in the HA agent and TTS provider.
 - [APIs and Home Assistant integration](doc/api.md)
 - [Routing and deterministic pipelines](doc/pipelines.md)
 - [Languages, vocabulary and Wyoming/HA language selection](doc/languages.md)
+- [LLM/VLM benchmark evaluation: quality, hallucinations, languages and latency](doc/model-benchmark-evaluation.md)
 - [Diagnostics, memory and hardware checks](doc/troubleshooting.md)
 
 ## Verification
