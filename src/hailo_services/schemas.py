@@ -99,3 +99,13 @@ class TranscribeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     audio_base64: str
     language: str | None = Field(default=None, pattern=r"^[a-z]{2}$")
+
+
+class VisionDetectRequest(BaseModel):
+    """OpenAI-style JSON envelope for resident object detection."""
+
+    model_config = ConfigDict(extra="forbid")
+    model: str | None = None
+    image: str = Field(min_length=1)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    max_detections: int | None = Field(default=None, ge=1, le=100)
