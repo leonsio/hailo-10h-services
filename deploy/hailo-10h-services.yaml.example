@@ -1,6 +1,12 @@
 # User configuration. Restart the service after edits.
 # All download links are in the package's model_catalog.yaml.
 # ENV HAILO_<SETTING> values override settings below; HAILO_CONFIG selects this file.
+#
+# HailoRT/GenAI 5.4.0 limitation:
+#   Enable either models.vlm OR models.hailo_llm, not both at the same time.
+# The service has separate adapters for both and is prepared for future parallel
+# support, but it does not unload/swap those Hailo GenAI models per request.
+# Gemma runs on CPU and may be enabled together with a Hailo VLM or Hailo LLM.
 settings:
   host: 0.0.0.0
   port: 8090
@@ -11,9 +17,11 @@ settings:
   service_language: de
   debug_log: false
   # Only model="HA-Assist" applies HA routing, prompt compilation and verification.
+  # This example uses Gemma/CPU for HA text and Qwen VLM/Hailo for images so both
+  # capabilities are available without violating the HailoRT 5.4.0 VLM/LLM limit.
   ha_assist_enabled: true
-  ha_assist_text_model: gemma-4-E2B-it # Enable models.gemma; or choose enabled Hailo LLM ID.
-  ha_assist_vision_model: Qwen2-VL-2B-Instruct # Must match enabled models.vlm.model.
+  ha_assist_text_model: gemma-4-E2B-it
+  ha_assist_vision_model: Qwen2-VL-2B-Instruct
   ha_assist_fuzzy_enabled: true
   ha_assist_fuzzy_threshold: 90.0
   ha_assist_fuzzy_margin: 8.0
@@ -64,25 +72,32 @@ vision:
     endpoint: tcp://127.0.0.1:5555
 
 models:
+  # HailoRT 5.4.0 profile A: resident VLM on Hailo.
   vlm:
     enabled: true
     model: Qwen2-VL-2B-Instruct # Or Qwen3-VL-2B-Instruct
     release: auto # Qwen2: v5.1.1; Qwen3: runtime-matched (e.g. v5.4.0)
     max_input_tokens: 2048 # Includes template/tools; output also shares the 2048 context.
+
   whisper:
     enabled: true
     model: Whisper-Base # Or Whisper-Tiny / Whisper-Small
+
+  # HailoRT 5.4.0 profile B: native Hailo LLM. To use it, set vlm.enabled=false
+  # before setting hailo_llm.enabled=true. Do not enable both Hailo GenAI roles.
   hailo_llm:
-    # Native hailo_platform.genai.LLM. Enable either VLM or Hailo LLM on your hardware.
-    # The service does not enforce mutual exclusion; Gemma on CPU is independent.
     enabled: false
     model: Qwen2.5-1.5B-Instruct # Or another kind: llm entry from the catalogue.
     release: auto # Runtime-matched Hailo model-zoo release, or pin e.g. v5.4.0.
     max_input_tokens: 2048 # Manufacturer limit for the catalogue HEF LLMs.
+
   minilm:
     enabled: true
     # path: /usr/local/hailo/resources/models/hailo10h/minilm-l6-ruvector.hef
+
+  # CPU backend. Enabled here because HA-Assist uses Gemma for text while the VLM
+  # remains resident on Hailo. Increase container/host RAM as appropriate.
   gemma:
-    enabled: false # true: download and load Gemma E2B on CPU
+    enabled: true
     max_input_tokens: 4096 # Service RAM safety limit; API requests may only lower it.
     # path: /usr/local/hailo/resources/models/hailo10h/gemma-4-E2B-it.litertlm
