@@ -1,5 +1,8 @@
 {
   "text": {
+    "ha_plan.clarify_target": "Welchen Bereich oder welches Gerät meinst du genau? Ich habe keine Steuerung ausgeführt.",
+    "ha_plan.tool_failed": "Home Assistant konnte die angeforderte Aktion nicht erfolgreich ausführen. Bitte prüfe Ziel und Wert.",
+    "gemma.concise": "Antworte standardmäßig kurz und direkt, in höchstens drei Sätzen. Gib ausführliche Erklärungen nur, wenn ausdrücklich gewünscht.",
     "ha_state_routing.22": "Beantworte die Nutzerfrage kurz und ausschließlich anhand der folgenden Home-Assistant-Live-Daten. Erfinde keine Zustände oder Werte.",
     "ha_state_routing.486": "Teilweise: {v0} von {v1} {label} sind {expected_label}: {matching_names}. Abweichend: {other_states}.",
     "ha_state_routing.392": "Geräte",

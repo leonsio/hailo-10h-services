@@ -12,7 +12,7 @@ import json
 import logging
 import re
 import uuid
-from functools import wraps
+from functools import lru_cache, wraps
 
 from .i18n import current_language, labels, lexicon, normalize_matching, t
 from .tool_retrieval import _static_context_parts, latest_user_text
@@ -74,8 +74,18 @@ def _is_state_question(text: str) -> bool:
 
 
 def _entries(messages) -> list[dict[str, str]]:
+    systems = tuple(m['content'] for m in messages if m.get('role') == 'system'
+                    and isinstance(m.get('content'), str))
+    parsed = (_cached_entries(systems) if sum(map(len, systems)) <= 65536
+              else _cached_entries.__wrapped__(systems))
+    return [dict(item) for item in parsed]
+
+
+@lru_cache(maxsize=64)
+def _cached_entries(systems):
     entities: list[dict[str, str]] = []
-    for message in messages:
+    for content in systems:
+        message = {'role': 'system', 'content': content}
         if message.get("role") != "system" or not isinstance(message.get("content"), str):
             continue
         parts = _static_context_parts(message["content"])

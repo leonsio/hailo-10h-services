@@ -186,3 +186,28 @@ def test_wall_metrics_are_collected_without_native_counts(monkeypatch):
     assert metrics["ttft_source"] == "first_text_chunk"
     assert "prefill_tokens_per_second" not in metrics
     assert "decode_tokens_per_second" not in metrics
+
+
+def test_native_constraints_enabled_only_for_explicit_python_capability():
+    class CapableEngine(FakeEngine):
+        flags = []
+        def create_conversation(self, enable_constrained_decoding=False, **kwargs):
+            self.flags.append(enable_constrained_decoding)
+            return self.conversation
+
+    class LegacyEngine(FakeEngine):
+        def create_conversation(self, **kwargs):
+            assert 'enable_constrained_decoding' not in kwargs
+            return self.conversation
+
+    for engine, expected in [(CapableEngine(), True), (LegacyEngine(), False)]:
+        backend = LiteRTLMBackend('/unused.litertlm')
+        backend.engine = engine
+        backend.litert_lm = SimpleNamespace(Tool=object, SamplerConfig=lambda **kwargs: kwargs)
+        request = ChatRequest(model=LLM_MODEL, messages=[{'role': 'user', 'content': 'Hello'}],
+                              tools=[{'type': 'function', 'function': {
+                                  'name': 'test', 'parameters': {'type': 'object', 'properties': {}}}}])
+        assert backend.chat(request, tools_prepared=True) == 'ok'
+        assert request._metrics['constrained_decoding']['enabled'] is expected
+        if expected:
+            assert all(engine.flags)

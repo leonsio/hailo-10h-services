@@ -423,3 +423,98 @@ def test_optional_image_tools_can_return_a_validated_description(service):
     required = req.model_copy(update={"tool_choice": "required"})
     with pytest.raises(ValueError, match="required tool call"):
         tool_response('{"content":"Ein heller Raum."}', required)
+
+
+@pytest.mark.parametrize('text,tool_name,key,value', [
+    ('schalte das Licht in der Kuche aus', 'intent__HassTurnOff', 'area', 'Küche'),
+    ('Schalte das Licht in Wonzimmer auf 90%', 'light__HassLightSet', 'brightness', 90),
+    ('schalte das Licht im Wohnzimmer auf 70', 'light__HassLightSet', 'brightness', 70),
+    ('schalte das Lecht im Wohnzimmer auf 70%', 'light__HassLightSet', 'brightness', 70),
+])
+def test_canonical_slots_avoid_gemma(service, text, tool_name, key, value):
+    client, backend, llm = service
+    body = payload(text)
+    body['messages'][0]['content'] += '\n- names: Küchenlampe\n  domain: light\n  areas: Küche\n'
+    result = client.post('/v1/chat/completions', json=body).json()
+    function = result['choices'][0]['message']['tool_calls'][0]['function']
+    assert function['name'] == tool_name
+    assert json.loads(function['arguments'])[key] == value
+    assert not backend.calls and not llm.calls
+    assert result['metrics']['ha_plan']['canonical']
+
+
+def test_unresolved_area_asks_without_model_or_device_guess(service):
+    client, backend, llm = service
+    body = payload('schalte das Licht in der Unbekannt aus')
+    result = client.post('/v1/chat/completions', json=body).json()
+    assert 'tool_calls' not in result['choices'][0]['message']
+    assert 'genau' in result['choices'][0]['message']['content']
+    assert not backend.calls and not llm.calls
+
+
+def test_tool_error_has_no_gemma_followup(service):
+    client, backend, llm = service
+    body = payload('schalte das Licht im Wohnzimmer auf 90%')
+    body['messages'] += [
+        {'role': 'assistant', 'content': None, 'tool_calls': [{
+            'id': 'failure', 'type': 'function', 'function': {
+                'name': 'light__HassLightSet', 'arguments': '{"area":"Wohnzimmer","brightness":90}'}}]},
+        {'role': 'tool', 'tool_call_id': 'failure', 'content': '{"error":"InvalidSlotInfo"}'},
+    ]
+    result = client.post('/v1/chat/completions', json=body).json()
+    assert 'nicht erfolgreich' in result['choices'][0]['message']['content']
+    assert not backend.calls and not llm.calls
+
+
+def test_catalogue_cache_updates_and_does_not_leak_mutations():
+    from hailo_services.ha_request_plan import catalogue, _catalogue
+    _catalogue.cache_clear()
+    messages = payload()['messages']
+    first = catalogue(messages)
+    first[0]['name'] = 'corrupted'
+    assert catalogue(messages)[0]['name'] == 'Deckenlampe'
+    assert _catalogue.cache_info().hits == 1
+    changed = copy.deepcopy(messages)
+    changed[0]['content'] = changed[0]['content'].replace('Deckenlampe', 'Neue Lampe')
+    assert catalogue(changed)[0]['name'] == 'Neue Lampe'
+    assert _catalogue.cache_info().misses == 2
+
+
+def test_wrong_model_target_or_percent_color_is_rejected():
+    from hailo_services.ha_request_plan import canonical_request
+    request = ChatRequest(**payload('schalte das Licht im Wohnzimmer auf 90%'))
+    object.__setattr__(request, '_ha_assist', True)
+    request = canonical_request(request, Settings())
+    request.tools[2]['function']['parameters']['properties']['color'] = {'type': 'string'}
+    response = {'tool_calls': [{'function': {'name': 'light__HassLightSet',
+                'arguments': {'color': '90%', 'name': 'Heizung'}}}]}
+    result = response_message(response, request, '')
+    assert isinstance(result, str)
+    assert request._metrics['ha_validation']['accepted'] is False
+
+
+@pytest.mark.parametrize('text', [
+    'schalte das Licht im Wohnzimmer um 20% heller',
+    'schalte das Licht im Wohnzimmer auf 70% und die Heizung aus',
+    'schalte das Licht im Wohnzimmer auf 120%',
+])
+def test_canonical_percent_does_not_execute_uncertain_commands(service, text):
+    client, _, llm = service
+    result = client.post('/v1/chat/completions', json=payload(text))
+    assert result.status_code == 200
+    assert len(llm.calls) == 1
+
+
+def test_embedding_cache_is_bounded_and_reuses_vectors():
+    from hailo_services.tool_retrieval import _embedding
+    class Encoder:
+        calls = 0
+        def embed(self, text):
+            self.calls += 1
+            return [len(text)]
+    encoder, cache = Encoder(), {}
+    assert _embedding(encoder, 'same', cache) == _embedding(encoder, 'same', cache)
+    assert encoder.calls == 1
+    for index in range(600):
+        _embedding(encoder, str(index), cache)
+    assert len(cache) == 512

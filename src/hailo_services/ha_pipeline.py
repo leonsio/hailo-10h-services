@@ -118,6 +118,9 @@ def direct_numeric_action(request):
     # normalize_matching removes %, so inspect the original value separately.
     original = latest_user_text(request.messages)
     values = re.findall(lexicon("ha_pipeline.match.65.24"), original, re.I)
+    if not values:
+        # An absolute, terminal value is meaningful only for light/cover targets.
+        values = re.findall(r"\b(?:auf|to|на)\s+(\d{1,3})\s*[.!?]?$", original, re.I)
     if len(values) != 1 or len(re.findall(r"\d+(?:[.,]\d+)?", original)) != 1:
         return None
     if not re.search(lexicon("ha_pipeline.pattern.68.21"), query):
@@ -215,6 +218,18 @@ def install():
         )
         with using_language(language):
             from .ha_intents import deterministic_intent
+            from .ha_request_plan import canonical_request, target_clarification, tool_failure
+
+            request = canonical_request(request, self.settings)
+            if self.settings.debug_log and getattr(request, "_ha_plan", None):
+                _LOG.debug("event=ha_plan request_id=%s json=%s", request._request_id,
+                           json.dumps(request._ha_plan, ensure_ascii=False))
+            immediate = tool_failure(request) or target_clarification(request)
+            if immediate is not None and not isinstance(request.tool_choice, dict):
+                prepared = request.model_copy()
+                object.__setattr__(prepared, "_direct_ha_response", immediate)
+                object.__setattr__(prepared, "_response_language", language)
+                return prepared
 
             direct, intent_trace = deterministic_intent(request, self.settings, language)
             if direct is None:
@@ -223,6 +238,9 @@ def install():
                     intent_trace.update(source="direct_numeric", reason="validated",
                                         arguments=json.loads(direct["tool_calls"][0]["function"]["arguments"]))
             request._metrics["ha_intent"] = intent_trace
+            if direct is not None and getattr(request, "_ha_plan", None):
+                request._ha_plan["action"] = (request._ha_plan.get("action") or
+                    direct["tool_calls"][0]["function"]["name"])
             if self.settings.debug_log:
                 _LOG.debug("event=ha_intent request_id=%s json=%s", request._request_id,
                            json.dumps(intent_trace, ensure_ascii=False))
@@ -252,6 +270,8 @@ def install():
                 else:
                     messages.insert(0, {"role": "system", "content": t("prompt.reply_language")})
                 prepared = prepared.model_copy(update={"messages": messages})
+            if getattr(request, "_ha_plan", None):
+                object.__setattr__(prepared, "_ha_plan", request._ha_plan)
             object.__setattr__(prepared, "_response_language", language)
             object.__setattr__(prepared, "_ha_request", True)
             return prepared

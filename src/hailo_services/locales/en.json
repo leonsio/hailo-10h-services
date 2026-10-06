@@ -1,5 +1,8 @@
 {
   "text": {
+    "ha_plan.clarify_target": "Which area or device do you mean? I have not executed a control action.",
+    "ha_plan.tool_failed": "Home Assistant could not complete the requested action. Please check the target and value.",
+    "gemma.concise": "Answer briefly and directly, in at most three sentences by default. Give detailed explanations only when explicitly requested.",
     "ha_state_routing.22": "Answer briefly using only the following live Home Assistant data. Do not invent states or values.",
     "ha_state_routing.486": "Partly: {v0} of {v1} {label} are {expected_label}: {matching_names}. Other states: {other_states}.",
     "ha_state_routing.392": "devices",

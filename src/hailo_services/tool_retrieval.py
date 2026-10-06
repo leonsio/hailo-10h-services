@@ -170,10 +170,15 @@ def _prune_enums(
 
 
 def _embedding(encoder, text: str, cache=None):
+    if len(text) > 8192:
+        return encoder.embed(text)
     if cache is not None and text in cache:
         return cache[text]
     vector = encoder.embed(text)
     if cache is not None:
+        # Bound resident memory; never cache live HA state or tool results.
+        if len(cache) >= 512 and text not in cache:
+            cache.pop(next(iter(cache)))
         cache[text] = vector
     return vector
 

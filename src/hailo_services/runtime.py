@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import inspect
 import logging
 import threading
 import time
@@ -539,6 +540,13 @@ class LiteRTLMBackend:
     def _chat(self, request, emit=None, cancelled=None, tools_prepared=False):
         if self.engine is None:
             raise RuntimeError("LiteRT-LM is not ready")
+        if not has_tool_context(request):
+            from .i18n import detect_language, t, using_language
+            from .tool_retrieval import latest_user_text
+            with using_language(request.language or detect_language(latest_user_text(request.messages), "de")):
+                # Explicit user/system requests for detail override the default.
+                request = request.model_copy(update={"messages": [
+                    {"role": "system", "content": t("gemma.concise")}, *request.messages]})
         if request.max_input_tokens is None:
             request = request.model_copy(update={"max_input_tokens": self.max_input_tokens})
         if getattr(request, "_ha_assist", False) and not tools_prepared and request.tools and not any(
@@ -568,6 +576,18 @@ class LiteRTLMBackend:
                 "tools": native_tools(self.litert_lm, selected_tools(request)),
                 "automatic_tool_calling": False,
             }
+            # The Python API varies by LiteRT version. Enable native constrained
+            # decoding only when explicitly exposed, never assume **kwargs means support.
+            engine = getattr(self.engine, "_engine", self.engine)
+            try:
+                supported = "enable_constrained_decoding" in inspect.signature(
+                    engine.create_conversation).parameters
+            except (ValueError, TypeError):
+                supported = False
+            if supported:
+                tool_options["enable_constrained_decoding"] = True
+            request._metrics["constrained_decoding"] = {
+                "enabled": supported, "validation": "schema_and_ha_target"}
         _debug_json(
             self.debug_log,
             "before_input_budget",

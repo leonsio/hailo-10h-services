@@ -225,7 +225,7 @@ def test_direct_response_requests_are_not_recompiled():
     assert plan is None
 
 
-def test_tool_history_is_not_recompiled():
+def test_active_tool_history_is_compacted_with_dependencies():
     call_id = "call_live"
     messages = [
         {"role": "system", "content": SYSTEM},
@@ -249,5 +249,7 @@ def test_tool_history_is_not_recompiled():
 
     compiled, plan = compile_ha_prompt(source, prepared)
 
-    assert compiled is prepared
-    assert plan is None
+    assert compiled.messages[1:] == prepared.messages[1:]
+    assert plan is not None
+    assert len(system_text(compiled)) < len(SYSTEM)
+    assert compiled.tools[0]["function"]["name"] == "homeassistant__GetLiveContext"

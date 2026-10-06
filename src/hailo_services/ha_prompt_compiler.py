@@ -147,9 +147,9 @@ def _tool_names(tools):
 def _deterministic_capability(query: str) -> str | None:
     text = _normalized(query)
     light_target = bool(re.search(lexicon('ha_prompt_compiler.pattern.152.34'), text))
-    if light_target and re.search(
+    if light_target and (re.search(r"\d+\s*%", query) or re.search(
         lexicon('ha_prompt_compiler.pattern.154.8'), text
-    ):
+    )):
         return "light.brightness"
     if re.search(lexicon('ha_prompt_compiler.pattern.157.17'), text):
         return "light.temperature"
@@ -367,7 +367,9 @@ def _minimal_system(capability, domain, area, entities, tools):
     if context:
         lines.append(t('ha_prompt_compiler.400') + "; ".join(context))
     if entities:
-        lines.append(t('ha_prompt_compiler.402') + " | ".join(item["name"] for item in entities))
+        lines.append(t('ha_prompt_compiler.402') + " | ".join(
+            item["name"] + (f" [{item['area']}]" if item.get("area") and not area else "")
+            for item in entities))
     if domain and not area and len(entities) > 1 and any(
         name in tool_names for name in {"intent__HassTurnOn", "intent__HassTurnOff"}
     ):
@@ -402,8 +404,7 @@ def _schema_stats(tools):
 
 def compile_ha_prompt(source_request, prepared_request, *, encoder=None, embedding_cache=None):
     """Return a request rebuilt from request-specific HA context and schemas."""
-    if _has_tool_history(source_request.messages):
-        return prepared_request, None
+    active_tools = _has_tool_history(source_request.messages)
     if not any(_is_ha_system(message) for message in source_request.messages):
         return prepared_request, None
     if not prepared_request.tools:
@@ -421,6 +422,9 @@ def compile_ha_prompt(source_request, prepared_request, *, encoder=None, embeddi
         encoder,
         embedding_cache,
     )
+    intent_plan = getattr(source_request, '_ha_plan', {})
+    if intent_plan.get('action') in {'light.brightness', 'cover.position'}:
+        capability, capability_source = intent_plan['action'], 'canonical_slots'
     domain = _domain(query, capability)
     source_entities = _entities(source_request.messages)
     area = _area(query, source_entities)
@@ -436,6 +440,13 @@ def compile_ha_prompt(source_request, prepared_request, *, encoder=None, embeddi
         _compact_tool(tool, capability, domain, area, relevant)
         for tool in tools
     ]
+    if active_tools:
+        # Retain declarations required by the current call/result chain.
+        called = {c['function']['name'] for m in source_request.messages
+                  for c in m.get('tool_calls') or []}
+        compact_tools.extend(copy.deepcopy(tool) for tool in prepared_request.tools
+                             if tool['function']['name'] in called
+                             and tool['function']['name'] not in _tool_names(compact_tools))
     system_text = _minimal_system(capability, domain, area, relevant, compact_tools)
     messages = _replace_ha_system(prepared_request.messages, system_text)
     compiled = prepared_request.model_copy(update={"messages": messages, "tools": compact_tools})

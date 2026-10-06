@@ -295,9 +295,19 @@ def response_message(response, request, text):
                 json.dumps(expanded_arguments, ensure_ascii=False, separators=(",", ":")),
             )
         for expanded in expanded_arguments:
+            if getattr(request, "_ha_assist", False):
+                from .ha_request_plan import validate_action
+                if not validate_action(request, name, expanded):
+                    from .i18n import t
+                    request._metrics["ha_validation"] = {"accepted": False, "reason": "target_or_value"}
+                    return t('ha_plan.clarify_target')
             try:
                 Draft202012Validator(schema).validate(expanded)
             except ValidationError as exc:
+                if getattr(request, "_ha_assist", False):
+                    from .i18n import t
+                    request._metrics["ha_validation"] = {"accepted": False, "reason": "schema"}
+                    return t('ha_plan.tool_failed')
                 raise ValueError(
                     f"Model returned invalid arguments for {name}: {exc.message}"
                 ) from exc

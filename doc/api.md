@@ -222,6 +222,32 @@ relative, conditional, composite and ambiguous commands use the normal routing.
 When inference is needed for a house request, the prompt compiler supplies the
 task-specific rules and schemas instead of the long HA examples.
 
+HA preparation now records `metrics.ha_plan`: the original/canonical text,
+catalogue spelling corrections, resolved area/domain and absolute percentage.
+Unambiguous spelling aliases and fuzzy catalogue slots feed the same direct
+action and prompt compilation paths. Unresolved area commands ask for a target
+instead of guessing an individual device. Explicit terminal values such as
+“set the light in the living room to 70” can also use the absolute percentage
+path. Negations, relative adjustments and composite commands retain the normal
+guards. Known tool failures return a deterministic failure message without a
+second inference. Active call/result dependencies remain intact during prompt
+compaction. Generated actions are validated against both JSON Schema and the
+resolved target/value; rejected actions appear in `metrics.ha_validation`.
+
+Static catalogue parsing uses bounded, content-keyed caches (64 entries), and
+each backend embedding cache retains at most 512 entries. Changed catalogue
+content automatically selects a new entry. Cached catalogue results are copied
+before use. Live states, tool results and answers are never cached. Cache hits
+are visible in `metrics.ha_plan.catalogue_cache_hit`.
+
+LiteRT text requests without tools receive a brief-answer default (up to three
+sentences unless the user explicitly asks for detail). Existing conversation
+content and sampling/output limits are retained. This default applies to plain
+Gemma too and does not enable HA processing. Native tool constrained decoding is
+enabled only when the installed Python engine explicitly exposes
+`enable_constrained_decoding`; `metrics.constrained_decoding` reports support.
+Schema/HA validation remains active when native decoding is unavailable.
+
 Exact HassIL matching uses the packaged official `home-assistant-intents` grammar
 for the request language (de/en/ru). Only declared HA intent tools are eligible.
 Ambiguous/unsupported matches defer to the text target. Fuzzy repair only changes
