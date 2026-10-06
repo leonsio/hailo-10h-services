@@ -1,15 +1,16 @@
-"""Low-latency LiteRT helpers for Home Assistant agent requests.
+"""Low-latency LiteRT helpers and request timing diagnostics.
 
 This module is installed once from :mod:`hailo_services.__init__`. It keeps the
-main runtime implementation small while providing production optimizations and
-diagnostics:
+main runtime implementation small while providing production behavior only:
 
 * Successful Home Assistant action results can be acknowledged without a second
   Gemma inference round.
-* LiteRT conversations expose native benchmark information, which is logged
-  together with wall-clock timings for prefill/decode diagnostics.
+* LiteRT conversations expose wall-clock inference and first-text-chunk timing.
 * In debug mode, the exact rendered prompt sent to Gemma is logged after the
   LiteRT chat template and tool declarations have been applied.
+
+No native LiteRT benchmark mode is enabled and no benchmark-only engine options
+are injected into production startup.
 """
 
 from __future__ import annotations
@@ -52,16 +53,7 @@ def _speech(result):
 
 
 def successful_action_followup(request):
-    """Return a deterministic acknowledgement for a completed HA action turn.
-
-    The fast path is deliberately conservative. The current turn must end in
-    tool results that exactly cover the preceding assistant tool calls. Every
-    result must be a Home Assistant ``action_done`` payload with no failures and
-    either at least one successful target or an explicit speech response.
-
-    Data/query tools therefore continue through Gemma, as do failed or partial
-    actions where model interpretation can still be useful.
-    """
+    """Return a deterministic acknowledgement for a completed HA action turn."""
     from .ha_pipeline import is_home_assistant_request
 
     if not is_home_assistant_request(request):
@@ -107,8 +99,7 @@ def successful_action_followup(request):
         data = payload.get("data")
         if not isinstance(data, dict):
             return None
-        failed = data.get("failed")
-        if failed:
+        if data.get("failed"):
             return None
         success = data.get("success")
         spoken = _speech(payload)
@@ -123,10 +114,7 @@ def successful_action_followup(request):
     if set(results) != set(pending):
         return None
 
-    # Prefer Home Assistant's own localized speech when available. Otherwise a
-    # short generic acknowledgement is safer than regenerating a description of
-    # an action that Home Assistant has already confirmed.
-    text = " ".join(dict.fromkeys(speeches)) if speeches else t('litert_optimizations.122')
+    text = " ".join(dict.fromkeys(speeches)) if speeches else t("litert_optimizations.122")
     return {
         "text": text,
         "tool_names": [pending[call["id"]] for call in calls],
@@ -135,97 +123,25 @@ def successful_action_followup(request):
     }
 
 
-def _value(info, name, default=None):
-    if isinstance(info, dict):
-        return info.get(name, default)
-    return getattr(info, name, default)
-
-
-def _duration_ms(tokens, tokens_per_second):
-    try:
-        tokens = float(tokens)
-        tokens_per_second = float(tokens_per_second)
-    except (TypeError, ValueError):
-        return None
-    if tokens < 0 or tokens_per_second <= 0:
-        return None
-    return tokens / tokens_per_second * 1000.0
-
-
-def _benchmark(conversation, *, enabled):
-    if not enabled:
-        return {"available": False, "disabled": True}
-    getter = getattr(conversation, "get_benchmark_info", None)
-    if not callable(getter):
-        return {"available": False, "error": "get_benchmark_info unavailable"}
-    try:
-        info = getter()
-    except Exception as exc:  # Native metrics are diagnostic, never request-fatal.
-        return {"available": False, "error": f"{type(exc).__name__}: {exc}"}
-
-    prefill_tokens = _value(info, "last_prefill_token_count")
-    prefill_tps = _value(info, "last_prefill_tokens_per_second")
-    decode_tokens = _value(info, "last_decode_token_count")
-    decode_tps = _value(info, "last_decode_tokens_per_second")
-    ttft = _value(info, "time_to_first_token_in_second")
-    init_time = _value(info, "init_time_in_second")
-    return {
-        "available": True,
-        "init_ms": float(init_time) * 1000.0 if isinstance(init_time, (int, float)) else None,
-        "time_to_first_token_ms": float(ttft) * 1000.0 if isinstance(ttft, (int, float)) else None,
-        "prefill_tokens": prefill_tokens,
-        "prefill_tokens_per_second": prefill_tps,
-        "prefill_ms_estimate": _duration_ms(prefill_tokens, prefill_tps),
-        "decode_tokens": decode_tokens,
-        "decode_tokens_per_second": decode_tps,
-        "decode_ms_estimate": _duration_ms(decode_tokens, decode_tps),
-    }
-
-
-def _log_timing(backend, conversation, *, wall_ms, create_call_ms, enter_ms, first_chunk_ms=None):
-    benchmark = _benchmark(conversation, enabled=True)
-    prefill_ms = benchmark.get("prefill_ms_estimate")
-    decode_ms = benchmark.get("decode_ms_estimate")
-    accounted = sum(value for value in (prefill_ms, decode_ms) if isinstance(value, (int, float)))
-    payload = {
-        "wall_inference_ms": wall_ms,
-        "conversation_create_call_ms": create_call_ms,
-        "conversation_enter_ms": enter_ms,
-        "first_stream_chunk_ms": first_chunk_ms,
-        "native": benchmark,
-        "native_prefill_decode_ms": accounted if benchmark.get("available") else None,
-        "wall_minus_native_ms": max(0.0, wall_ms - accounted) if benchmark.get("available") else None,
-    }
+def _log_timing(backend, *, wall_ms, create_call_ms, enter_ms, first_chunk_ms=None):
     request_id = getattr(_REQUEST, "request_id", "-")
     metrics = getattr(_REQUEST, "metrics", None)
     if metrics is not None:
-        record(metrics, inference_ms=wall_ms,
-               conversation_create_ms=create_call_ms, conversation_enter_ms=enter_ms,
-               ttft_ms=benchmark.get("time_to_first_token_ms"),
-               prefill_tokens_per_second=benchmark.get("prefill_tokens_per_second"),
-               decode_tokens_per_second=benchmark.get("decode_tokens_per_second"),
-               prefill_ms_estimate=prefill_ms, decode_ms_estimate=decode_ms)
-        if benchmark.get("time_to_first_token_ms") is not None:
-            metrics["ttft_source"] = "native"
-        elif first_chunk_ms is not None:
+        record(
+            metrics,
+            inference_ms=wall_ms,
+            conversation_create_ms=create_call_ms,
+            conversation_enter_ms=enter_ms,
+        )
+        if first_chunk_ms is not None:
             record(metrics, ttft_ms=first_chunk_ms, ttft_source="first_text_chunk")
-        for target, source in (("input_tokens", "prefill_tokens"), ("output_tokens", "decode_tokens")):
-            value = benchmark.get(source)
-            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-                record(metrics, **{target: value, target + "_source": "native"})
+
     _LOG.info(
-        "gemma_timing request_id=%s wall_ms=%.1f ttft_ms=%s prefill_tokens=%s "
-        "prefill_tps=%s prefill_ms=%s decode_tokens=%s decode_tps=%s decode_ms=%s "
+        "gemma_timing request_id=%s wall_ms=%.1f ttft_ms=%s "
         "conversation_create_ms=%.1f conversation_enter_ms=%.1f",
         request_id,
         wall_ms,
-        benchmark.get("time_to_first_token_ms"),
-        benchmark.get("prefill_tokens"),
-        benchmark.get("prefill_tokens_per_second"),
-        benchmark.get("prefill_ms_estimate"),
-        benchmark.get("decode_tokens"),
-        benchmark.get("decode_tokens_per_second"),
-        benchmark.get("decode_ms_estimate"),
+        first_chunk_ms,
         create_call_ms,
         enter_ms,
     )
@@ -233,7 +149,17 @@ def _log_timing(backend, conversation, *, wall_ms, create_call_ms, enter_ms, fir
         _LOG.debug(
             "event=gemma_timing request_id=%s json=%s",
             request_id,
-            json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str),
+            json.dumps(
+                {
+                    "wall_inference_ms": wall_ms,
+                    "conversation_create_call_ms": create_call_ms,
+                    "conversation_enter_ms": enter_ms,
+                    "first_stream_chunk_ms": first_chunk_ms,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+                default=str,
+            ),
         )
 
 
@@ -279,7 +205,6 @@ class _ConversationProxy:
         wall_ms = (time.perf_counter() - started) * 1000.0
         _log_timing(
             self._backend,
-            self._conversation,
             wall_ms=wall_ms,
             create_call_ms=self._create_call_ms,
             enter_ms=self._enter_ms,
@@ -302,7 +227,6 @@ class _ConversationProxy:
                 wall_ms = (time.perf_counter() - started) * 1000.0
                 _log_timing(
                     self._backend,
-                    self._conversation,
                     wall_ms=wall_ms,
                     create_call_ms=self._create_call_ms,
                     enter_ms=self._enter_ms,
@@ -349,49 +273,15 @@ class _EngineProxy:
 
 
 def instrument_engine(backend):
-    """Wrap an initialized LiteRT engine with per-conversation timing metrics."""
+    """Wrap an initialized LiteRT engine with per-conversation wall timings."""
     engine = getattr(backend, "engine", None)
     if engine is None or getattr(engine, "_hailo_metrics_proxy", False):
         return
     backend.engine = _EngineProxy(engine, backend)
 
 
-def _start_with_benchmark(self, original_start, *args, **kwargs):
-    """Enable LiteRT native benchmark collection for API and WebGUI diagnostics.
-
-    ``LiteRTLMBackend.start`` owns engine construction in :mod:`runtime`. Keep
-    that implementation as the single source of truth and temporarily decorate
-    the public ``litert_lm.Engine`` constructor so the native benchmark option
-    is injected with a fallback for older bindings. Startup is serialized before request
-    handling begins, and the constructor is restored immediately afterwards.
-    """
-    import litert_lm
-
-    original_engine = litert_lm.Engine
-
-    @wraps(original_engine)
-    def engine_with_diagnostics(*engine_args, **engine_kwargs):
-        engine_kwargs.setdefault("enable_benchmark", True)
-        try:
-            return original_engine(*engine_args, **engine_kwargs)
-        except TypeError as exc:
-            if "enable_benchmark" not in str(exc):
-                raise
-            engine_kwargs.pop("enable_benchmark", None)
-            return original_engine(*engine_args, **engine_kwargs)
-
-    litert_lm.Engine = engine_with_diagnostics
-    try:
-        result = original_start(self, *args, **kwargs)
-    finally:
-        litert_lm.Engine = original_engine
-    if getattr(self, "debug_log", False):
-        _LOG.info("LiteRT native benchmark diagnostics enabled")
-    return result
-
-
 def install():
-    """Install the fast path and metric hooks on ``LiteRTLMBackend`` once."""
+    """Install production fast paths and timing hooks on ``LiteRTLMBackend`` once."""
     from . import runtime
 
     cls = runtime.LiteRTLMBackend
@@ -403,7 +293,7 @@ def install():
 
     @wraps(original_start)
     def start(self, *args, **kwargs):
-        result = _start_with_benchmark(self, original_start, *args, **kwargs)
+        result = original_start(self, *args, **kwargs)
         instrument_engine(self)
         return result
 
@@ -431,7 +321,7 @@ def install():
         previous = getattr(_REQUEST, "request_id", None)
         previous_metrics = getattr(_REQUEST, "metrics", None)
         _REQUEST.request_id = request_id
-        _REQUEST.metrics = request._metrics
+        _REQUEST.metrics = getattr(request, "_metrics", None)
         try:
             return original_chat(self, request, emit, cancelled, tools_prepared)
         finally:
