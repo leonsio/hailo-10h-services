@@ -119,8 +119,11 @@ class ModelManager:
         if "url" in entry:
             return entry["url"]
         version = self.runtime_version or prepare_model_version()
-        override = (self.settings.vlm_release if entry["kind"] == "vlm"
-                    and self.settings.vlm_release != "auto" else self.settings.model_release)
+        role_release = {
+            "vlm": self.settings.vlm_release,
+            "llm": self.settings.hailo_llm_release,
+        }.get(entry["kind"], "auto")
+        override = role_release if role_release != "auto" else self.settings.model_release
         if override == "auto":
             override = os.getenv("model_zoo_version")
         # Use a documented release for the same HailoRT minor; never silently
