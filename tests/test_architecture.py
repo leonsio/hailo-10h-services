@@ -58,15 +58,10 @@ def test_llm_generation_uses_the_exact_prompt_counted_once():
     assert chat_hailo_vlm.model_prompt is chat_common.model_prompt
 
 
-def test_compatibility_imports_use_canonical_implementations():
-    from hailo_services import hailo_llm_chat, litert_optimizations, vlm_chat
-    from hailo_services.diagnostics_litert import instrument_engine
-    from hailo_services.ha_action_verification import successful_action_followup
-
-    assert hailo_llm_chat.limit_request is chat_hailo_llm.limit_request
-    assert vlm_chat.model_prompt is chat_hailo_vlm.model_prompt
-    assert litert_optimizations.instrument_engine is instrument_engine
-    assert litert_optimizations.successful_action_followup is successful_action_followup
+def test_removed_compatibility_modules_are_not_importable():
+    for name in ("vlm_chat", "hailo_llm_chat", "litert_optimizations"):
+        assert not (SOURCE / f"{name}.py").exists()
+        assert importlib.util.find_spec(f"hailo_services.{name}") is None
 
 
 def test_production_docstrings_cover_definitions_and_return_contracts():

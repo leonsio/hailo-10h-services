@@ -44,7 +44,7 @@
     "ha_weather_routing.597": "{task} Use only the following live Home Assistant data. Prefer room, outdoor or ambient air measurements. Internal device, process, battery, motor, water, cooking and probe temperatures are not ambient temperature. For climate only current_temperature is a measurement; temperature is a setpoint. State clearly when data is ambiguous or unavailable. Do not invent anything.",
     "ha_weather_routing.608": "Question: {query}\nLive candidates:\n",
     "ha_weather_routing.553": "Outside it is ",
-    "litert_optimizations.122": "Done.",
+    "ha_action.done": "Done.",
     "measurement.temperature": "temperature",
     "measurement.humidity": "humidity",
     "device.singular": "device",

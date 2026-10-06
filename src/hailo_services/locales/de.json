@@ -44,7 +44,7 @@
     "ha_weather_routing.597": "{task} Nutze ausschließlich die folgenden Home-Assistant-Live-Daten. Bevorzuge Messwerte, die semantisch die Raum-, Außen- oder Luftumgebung beschreiben. Interne Geräte-, Prozess-, Batterie-, Motor-, Wasser-, Koch- oder Fühlertemperaturen sind keine allgemeine Umgebungstemperatur. Bei climate ist nur current_temperature ein Istwert; temperature ist ein Sollwert. Wenn die Daten nicht eindeutig oder nicht aktuell sind, sage das klar. Erfinde nichts.",
     "ha_weather_routing.608": "Frage: {query}\nLive-Kandidaten:\n",
     "ha_weather_routing.553": "Draußen sind es ",
-    "litert_optimizations.122": "Erledigt.",
+    "ha_action.done": "Erledigt.",
     "measurement.temperature": "Temperatur",
     "measurement.humidity": "Luftfeuchtigkeit",
     "device.singular": "Gerät",

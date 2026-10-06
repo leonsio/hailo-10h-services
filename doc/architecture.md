@@ -150,9 +150,6 @@ All paths below are relative to `src/hailo_services/`.
 | `vision_zmq.py` | Frigate-compatible ZeroMQ model probes and `(20, 6)` float32 tensor responses; model uploads remain server-disabled. |
 | `preflight.py` | Service-namespace write/rename probes before importing native Hailo SDKs. |
 | `tls.py` | Local CA/server certificate generation/reuse, certificate validation, client trust profiles and nginx proxy configuration. |
-| `vlm_chat.py` | Small compatibility facade for the former VLM import path; preferred module is `chat_hailo_vlm`. |
-| `hailo_llm_chat.py` | Small compatibility facade for the former LLM import path; preferred module is `chat_hailo_llm`. |
-| `litert_optimizations.py` | Compatibility facade; new code uses `chat_litert`, `diagnostics_litert` and `ha_action_verification`. |
 
 The former `ha_state_routing_fixes.py` and `ha_semantic_routing_fixes.py` were
 removed. Their behavior now lives directly in the state router, relevance router
@@ -206,16 +203,23 @@ in `ha_pipeline.prepare_request` with an explicit precedence. Add regression
 cases for deterministic paths, ambiguity, tool-policy constraints and fallback.
 Do not install new behavior by modifying another class at import time.
 
-The compatibility facades preserve the previous public import paths, without
-duplicating implementations. Internal code and regression tests use the new
-canonical paths. Public HTTP endpoints, environment/YAML settings and model IDs
-retain their existing contracts.
+The former compatibility modules have been removed. Python integrations must
+use the canonical imports below; the old module paths are no longer available.
+
+| Removed module | Canonical module(s) |
+| --- | --- |
+| `hailo_services.hailo_llm_chat` | `hailo_services.chat_hailo_llm` |
+| `hailo_services.vlm_chat` | `hailo_services.chat_hailo_vlm` |
+| `hailo_services.litert_optimizations` | `run_chat` in `hailo_services.chat_litert`; `instrument_engine` in `hailo_services.diagnostics_litert`; `successful_action_followup` in `hailo_services.ha_action_verification` |
+
+Public HTTP endpoints, environment/YAML settings and model IDs retain their
+existing contracts.
 
 ## Test file map
 
 | File under `tests/` | Main regression coverage |
 | --- | --- |
-| `test_architecture.py` | Side-effect-free imports, backend ownership, one-time prompt rendering, compatibility paths and production return documentation. |
+| `test_architecture.py` | Side-effect-free imports, backend ownership, one-time prompt rendering, absence of removed compatibility modules and production return documentation. |
 | `test_services.py` | HTTP/SSE/WebSocket/MCP, Wyoming wire protocol, MQTT, residency, queue cancellation and model-version detection. |
 | `test_hailo_llm.py` | Native text LLM selection, templates, budgets and model lifecycle. |
 | `test_vlm_chat.py` | VLM text/image prompts, budgets, tool parsing and routing. |

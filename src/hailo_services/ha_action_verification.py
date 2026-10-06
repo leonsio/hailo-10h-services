@@ -509,7 +509,7 @@ def successful_action_followup(request):
     if set(results) != set(pending):
         return None
 
-    text = " ".join(dict.fromkeys(speeches)) if speeches else t("litert_optimizations.122")
+    text = " ".join(dict.fromkeys(speeches)) if speeches else t("ha_action.done")
     return {
         "text": text,
         "tool_names": [pending[call["id"]] for call in calls],
