@@ -84,50 +84,11 @@ def unletterbox_detections(
     if not active.any():
         return result
     rows = result[active]
-    rows[:, [3, 5]] = (
-        rows[:, [3, 5]] * model_width - pad_x
-    ) / resized_width
-    rows[:, [2, 4]] = (
-        rows[:, [2, 4]] * model_height - pad_y
-    ) / resized_height
+    rows[:, [3, 5]] = (rows[:, [3, 5]] * model_width - pad_x) / resized_width
+    rows[:, [2, 4]] = (rows[:, [2, 4]] * model_height - pad_y) / resized_height
     rows[:, 2:6] = np.clip(rows[:, 2:6], 0.0, 1.0)
     result[active] = rows
     return result
-
-
-def _class_aware_nms(
-    boxes: np.ndarray, scores: np.ndarray, classes: np.ndarray, iou: float
-) -> np.ndarray:
-    if not len(boxes):
-        return np.empty((0,), dtype=np.int64)
-    keep: list[int] = []
-    for class_id in np.unique(classes):
-        indices = np.flatnonzero(classes == class_id)
-        order = indices[np.argsort(scores[indices])[::-1]]
-        while order.size:
-            current = int(order[0])
-            keep.append(current)
-            if order.size == 1:
-                break
-            rest = order[1:]
-            xx1 = np.maximum(boxes[current, 0], boxes[rest, 0])
-            yy1 = np.maximum(boxes[current, 1], boxes[rest, 1])
-            xx2 = np.minimum(boxes[current, 2], boxes[rest, 2])
-            yy2 = np.minimum(boxes[current, 3], boxes[rest, 3])
-            inter = np.maximum(0.0, xx2 - xx1) * np.maximum(0.0, yy2 - yy1)
-            area_current = max(
-                0.0,
-                (boxes[current, 2] - boxes[current, 0])
-                * (boxes[current, 3] - boxes[current, 1]),
-            )
-            areas = np.maximum(0.0, boxes[rest, 2] - boxes[rest, 0]) * np.maximum(
-                0.0, boxes[rest, 3] - boxes[rest, 1]
-            )
-            overlap = inter / (area_current + areas - inter + 1e-6)
-            order = rest[overlap <= iou]
-    return np.asarray(
-        sorted(keep, key=lambda idx: scores[idx], reverse=True), dtype=np.int64
-    )
 
 
 def _frigate_array(rows: list[list[float]], maximum: int) -> np.ndarray:
@@ -170,10 +131,15 @@ def decode_yolo26(
     outputs: dict[str, np.ndarray],
     threshold: float,
     maximum: int = 20,
-    iou_threshold: float = 0.45,
     input_size: int = 640,
 ) -> np.ndarray:
-    """Decode Hailo Model-Zoo YOLO26 anchor-free tensors and apply class-aware NMS."""
+    """Decode YOLO26 using the official NMS-free two-stage top-k selection.
+
+    Hailo Model Zoo exposes six raw tensors: three 4-channel LTRB distance maps and
+    three class-logit maps. YOLO26 deliberately has no NMS. Its reference postprocess
+    first chooses top-k anchors by their best class score, then top-k anchor/class
+    pairs from that subset. Multiple classes may therefore refer to the same anchor.
+    """
     bbox_tensors: dict[int, np.ndarray] = {}
     class_tensors: dict[int, np.ndarray] = {}
     for tensor in outputs.values():
@@ -190,49 +156,67 @@ def decode_yolo26(
 
     boxes_all: list[np.ndarray] = []
     scores_all: list[np.ndarray] = []
-    classes_all: list[np.ndarray] = []
     for grid in sorted(bbox_tensors, reverse=True):
         if grid not in class_tensors:
             continue
         bbox = bbox_tensors[grid]
         logits = class_tensors[grid]
         height, width = bbox.shape[:2]
+        if height != width:
+            raise ValueError(f"Unsupported non-square YOLO26 output grid: {bbox.shape}")
         stride = input_size / height
         gy, gx = np.meshgrid(np.arange(height), np.arange(width), indexing="ij")
         cx = (gx + 0.5) * stride
         cy = (gy + 0.5) * stride
+        # _yolo6_decode used by Hailo's YOLO26 implementation: the first two
+        # channels are left/top distances and the last two are right/bottom.
         x1 = np.clip(cx - bbox[..., 0] * stride, 0, input_size) / input_size
         y1 = np.clip(cy - bbox[..., 1] * stride, 0, input_size) / input_size
         x2 = np.clip(cx + bbox[..., 2] * stride, 0, input_size) / input_size
         y2 = np.clip(cy + bbox[..., 3] * stride, 0, input_size) / input_size
-        probabilities = 1.0 / (1.0 + np.exp(-np.clip(logits, -88, 88)))
-        scores = probabilities.max(axis=-1)
-        classes = probabilities.argmax(axis=-1)
-        mask = scores >= threshold
-        if mask.any():
-            boxes_all.append(
-                np.stack((x1[mask], y1[mask], x2[mask], y2[mask]), axis=-1)
-            )
-            scores_all.append(scores[mask])
-            classes_all.append(classes[mask])
+        boxes_all.append(np.stack((y1, x1, y2, x2), axis=-1).reshape(-1, 4))
+        scores_all.append(
+            (1.0 / (1.0 + np.exp(-np.clip(logits, -88, 88)))).reshape(-1, logits.shape[-1])
+        )
 
     if not boxes_all:
         return np.zeros((maximum, 6), dtype=np.float32)
-    boxes = np.concatenate(boxes_all).astype(np.float32, copy=False)
-    scores = np.concatenate(scores_all).astype(np.float32, copy=False)
-    classes = np.concatenate(classes_all).astype(np.int32, copy=False)
-    keep = _class_aware_nms(boxes, scores, classes, iou_threshold)[:maximum]
-    rows = [
-        [
-            float(classes[index]),
-            float(scores[index]),
-            float(boxes[index, 1]),
-            float(boxes[index, 0]),
-            float(boxes[index, 3]),
-            float(boxes[index, 2]),
-        ]
-        for index in keep
-    ]
+
+    boxes = np.concatenate(boxes_all, axis=0).astype(np.float32, copy=False)
+    scores = np.concatenate(scores_all, axis=0).astype(np.float32, copy=False)
+    if scores.shape[0] != boxes.shape[0]:
+        raise ValueError("YOLO26 box/class output shapes do not match")
+
+    # Ultralytics/Hailo stage 1: select k anchors by the maximum class score.
+    k = min(maximum, boxes.shape[0])
+    anchor_best = scores.max(axis=1)
+    if k < anchor_best.size:
+        anchor_indices = np.argpartition(anchor_best, -k)[-k:]
+    else:
+        anchor_indices = np.arange(anchor_best.size)
+
+    # Stage 2: select k anchor/class pairs from k * class_count scores.
+    candidate_scores = scores[anchor_indices]
+    flat = candidate_scores.reshape(-1)
+    pair_k = min(k, flat.size)
+    if pair_k < flat.size:
+        pair_indices = np.argpartition(flat, -pair_k)[-pair_k:]
+    else:
+        pair_indices = np.arange(flat.size)
+    pair_indices = pair_indices[np.argsort(flat[pair_indices])[::-1]]
+    class_count = scores.shape[1]
+
+    rows: list[list[float]] = []
+    for pair_index in pair_indices:
+        score = float(flat[pair_index])
+        if score <= threshold:
+            continue
+        anchor_in_topk = int(pair_index // class_count)
+        class_id = int(pair_index % class_count)
+        box = boxes[int(anchor_indices[anchor_in_topk])]
+        rows.append(
+            [class_id, score, float(box[0]), float(box[1]), float(box[2]), float(box[3])]
+        )
     return _frigate_array(rows, maximum)
 
 
@@ -325,13 +309,7 @@ class HailoVisionBackend:
                 for name in names
             }
         if self.entry.get("postprocess") == "yolo26_anchor_free" or isinstance(output, dict):
-            return decode_yolo26(
-                output,
-                confidence,
-                maximum,
-                self.settings.vision_iou_threshold,
-                max(height, width),
-            )
+            return decode_yolo26(output, confidence, maximum, max(height, width))
         return decode_hailo_nms(output, confidence, maximum)
 
     def close(self):
