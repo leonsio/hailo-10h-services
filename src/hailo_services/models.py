@@ -122,6 +122,7 @@ class ModelManager:
         role_release = {
             "vlm": self.settings.vlm_release,
             "llm": self.settings.hailo_llm_release,
+            "vision": self.settings.vision_release,
         }.get(entry["kind"], "auto")
         override = role_release if role_release != "auto" else self.settings.model_release
         if override == "auto":
