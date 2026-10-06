@@ -129,10 +129,20 @@ def render_prompt(model, prompt):
         raise ValueError(str(message))
 
     environment.globals["raise_exception"] = raise_exception
+    # Qwen3's native template treats tool_calls and add_vision_id as optional
+    # inputs. model_prompt() intentionally flattens tool calls into text for the
+    # compact VLM contract, so make those optional template fields explicit
+    # rather than weakening StrictUndefined for every other variable.
+    template_messages = []
+    for message in prompt:
+        template_message = dict(message)
+        template_message.setdefault("tool_calls", [])
+        template_messages.append(template_message)
     try:
         return environment.from_string(template_method()).render(
-            messages=prompt, add_generation_prompt=True, tools=None,
+            messages=template_messages, add_generation_prompt=True, tools=None,
             bos_token="", eos_token="<|im_end|>", enable_thinking=False,
+            add_vision_id=False,
         )
     except TemplateError as exc:
         raise ValueError("Cannot render the loaded VLM's prompt template for input budgeting") from exc
