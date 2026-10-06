@@ -255,7 +255,7 @@ def test_sse_wait_precedes_inference_completion_and_tools_remain_buffered():
                     ],
                 }
 
-        settings = Settings(wyoming_port=0)
+        settings = Settings(wyoming_port=0, litert_enabled=True)
         app = create_app(settings, RoutingBackend(settings), LLM())
         runtime = app.state.runtime
         runtime.ready = runtime.litert_ready = True
@@ -265,6 +265,7 @@ def test_sse_wait_precedes_inference_completion_and_tools_remain_buffered():
             language="en",
             stream=True,
         )
+        req.model = "HA-Assist"
         req.tool_choice = {
             "type": "function",
             "function": {"name": "homeassistant__GetLiveContext"},

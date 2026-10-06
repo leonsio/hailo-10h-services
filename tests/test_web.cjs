@@ -287,3 +287,28 @@ test('Hailo LLM is labeled as Hailo, disallows images and preserves text history
   assert.equal(p.elements['chat-mode'].value, 'text');
   assert.equal(p.elements.image.disabled, true);
 });
+
+test('HA-Assist shows selected target limits and retains images for virtual routing', async () => {
+  const ha = 'HA-Assist', gemma = 'gemma-4-E2B-it', vlm = 'Qwen2-VL-2B-Instruct';
+  const p = page({ha_assist_model: ha, ha_assist: {text_model: gemma, vision_model: vlm},
+    llm_model: gemma, chat_models: [vlm, gemma, ha], vision_models: [vlm, ha],
+    model_limits: {[gemma]: {max_input_tokens: 4096, context_length: 16384},
+      [vlm]: {max_input_tokens: 2048, context_length: 2048}}});
+  await p.ready();
+  assert.equal(p.elements['chat-model'].options[2].text, `${ha} · Home Assistant`);
+  p.elements['chat-model'].value = ha;
+  p.elements['chat-model'].events.change();
+  assert.match(p.elements['input-limit'].textContent, /4096/);
+  p.elements['chat-mode'].value = 'vision';
+  p.elements['chat-mode'].events.change();
+  assert.match(p.elements['input-limit'].textContent, /2048/);
+  assert.equal(p.elements.image.disabled, false);
+  p.run('history = [{role:"user", content:[{type:"text",text:"Bild"}, {type:"image_url",image_url:{url:"data:image/png;base64,AA=="}}]}, {role:"assistant", content:"Raum"}]');
+  p.elements.prompt.value = 'Was ist rechts?';
+  await p.elements['chat-form'].events.submit({preventDefault() {}});
+  const body = JSON.parse(p.calls.find(c => c.url === 'v1/chat/completions').options.body);
+  assert.equal(body.model, ha);
+  assert.equal(body.messages[0].content[1].type, 'image_url');
+  p.run('renderMeasurement(document.getElementById("auth-note"), {requested:new Date(),elapsed:0}, {metrics:{ha_route:{route:"vlm",backend_model:"Qwen2-VL-2B-Instruct"}}})');
+  assert.match(contents(p.elements['auth-note']), /vlm · Qwen2-VL-2B-Instruct/);
+});

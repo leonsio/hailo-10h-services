@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
-from .config import LLM_MODEL, STT_MODEL, Settings
+from .config import HA_ASSIST_MODEL, LLM_MODEL, STT_MODEL, Settings
 from .i18n import SUPPORTED_LANGUAGES, catalogue, wait_sentence
 from .input_budget import InputBudgetError
 from .media import audio_file, audio_metadata, decode_base64
@@ -307,10 +307,14 @@ def create_app(settings=None, backend=None, litert_backend=None):
             "llm_model": LLM_MODEL,
             "hailo_llm_model": settings.hailo_llm_model_id,
             "default_text_model": runtime.default_text_model,
-            "vision_models": [settings.vlm_model] if settings.vlm_enabled else [],
+            "vision_models": ([settings.vlm_model] if settings.vlm_enabled else [])
+            + ([HA_ASSIST_MODEL] if settings.ha_assist_enabled and settings.vlm_enabled
+               and settings.ha_assist_vision_model == settings.vlm_model else []),
+            "ha_assist_model": HA_ASSIST_MODEL,
+            "ha_assist": runtime.status()["ha_assist"],
             "model_limits": runtime.model_limits,
             "vlm_max_images": ModelManager(settings).entries.get(settings.vlm_model, {}).get("max_images", 1),
-            "chat_models": runtime.hailo_chat_models + ([LLM_MODEL] if runtime.litert_ready else []),
+            "chat_models": runtime.chat_models,
             "whisper_model": settings.stt_model,
             "language": settings.language,
             "service_language": settings.service_language,
@@ -370,7 +374,9 @@ def create_app(settings=None, backend=None, litert_backend=None):
                 {"id": model, "object": "model", "owned_by": "hailo"}
                 for model in runtime.hailo_chat_models + ([settings.stt_model] if settings.whisper_enabled else [])
             ] + ([{"id": LLM_MODEL, "object": "model", "owned_by": "litert-lm"}]
-                 if runtime.litert_ready else []),
+                 if runtime.litert_ready else [])
+            + ([{"id": HA_ASSIST_MODEL, "object": "model", "owned_by": "hailo-services"}]
+               if settings.ha_assist_enabled else []),
         }
 
     @app.post("/v1/chat/completions")
@@ -426,10 +432,10 @@ def create_app(settings=None, backend=None, litert_backend=None):
 
             try:
                 yield event({"role": "assistant", "content": ""})
-                if has_tool_context(request):
+                if request.model == HA_ASSIST_MODEL or has_tool_context(request):
                     # Buffer native tool output so invalid/incomplete calls are never streamed
                     # as actions or spoken as text by the voice assistant.
-                    if settings.ha_wait_messages and isinstance(runtime, Runtime):
+                    if request.model == HA_ASSIST_MODEL and settings.ha_wait_messages and isinstance(runtime, Runtime):
                         loop = asyncio.get_running_loop()
                         started = asyncio.Event()
                         response_language = [settings.service_language]
@@ -455,11 +461,12 @@ def create_app(settings=None, backend=None, litert_backend=None):
                     if isinstance(result, dict):
                         if result.get("content"):
                             yield event({"content": result["content"]})
-                        yield event({"tool_calls": [
-                            {"index": index, **call}
-                            for index, call in enumerate(result["tool_calls"])
-                        ]})
-                        yield event({}, "tool_calls")
+                        if result.get("tool_calls"):
+                            yield event({"tool_calls": [
+                                {"index": index, **call}
+                                for index, call in enumerate(result["tool_calls"])
+                            ]})
+                        yield event({}, "tool_calls" if result.get("tool_calls") else "stop")
                     else:
                         yield event({"content": result})
                         yield event({}, "stop")

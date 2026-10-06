@@ -1,14 +1,8 @@
-"""Low-latency routing for Home Assistant text requests.
+"""HA relevance and general-question handling inside the virtual model.
 
-The Home Assistant client sends a large static entity catalogue and many tool
-schemas with every request. MiniLM is used as a cheap relevance gate before
-Gemma:
-
-* unrelated/general questions drop the HA system prompt and tools and are sent
-  to Gemma like a plain web chat;
-* unambiguous turn-on/turn-off commands are converted directly to an OpenAI
-  tool call without running Gemma;
-* everything else keeps the existing entity/tool retrieval + Gemma path.
+Exact deterministic actions are handled by ha_intents/HassIL at the HA pipeline
+boundary. This module retains legacy matching helpers for compatibility and
+routes unmatched requests through the existing context retrieval path.
 """
 
 from __future__ import annotations
@@ -420,25 +414,7 @@ def install():
             return prepared
 
         prepared = original_select_tools(self, request)
-        direct_trace = {}
-        direct = direct_action_response(
-            prepared,
-            source_messages=request.messages,
-            trace=direct_trace,
-        )
-        if direct is not None:
-            routing = direct.pop("_routing")
-            object.__setattr__(prepared, "_direct_ha_response", direct)
-            _log_route(self.settings.debug_log, request_id, "direct_action", {
-                **relevance,
-                **routing,
-                **direct_trace,
-            })
-        else:
-            _log_route(self.settings.debug_log, request_id, "ha_llm", {
-                **relevance,
-                **direct_trace,
-            })
+        _log_route(self.settings.debug_log, request_id, "ha_llm", relevance)
         return prepared
 
     @wraps(original_litert_chat)

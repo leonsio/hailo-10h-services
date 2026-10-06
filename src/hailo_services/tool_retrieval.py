@@ -8,8 +8,10 @@ user turn. The optional encoder runs MiniLM on the Hailo accelerator.
 from __future__ import annotations
 
 import copy
+import math
 import re
 import unicodedata
+from collections import Counter
 
 from .i18n import lexicon, normalize_matching
 
@@ -90,6 +92,39 @@ def _tool_score(query: set[str], tool) -> int:
     description_score = _score(query, function.get("description", ""))
     parameter_score = _score(query, function.get("parameters", {}))
     return name_score * 4 + description_score + min(parameter_score, 4)
+
+
+# Router hints are independent of descriptions rendered for the language model.
+_ROUTING_KEYWORDS = {
+    "HassTurnOn": "turn on switch on einschalten anschalten anmachen включи",
+    "HassTurnOff": "turn off switch off ausschalten abschalten ausmachen выключи",
+    "HassLightSet": "brightness dim color helligkeit dimmen farbe яркость цвет",
+    "HassSetPosition": "position blinds cover rollladen jalousie жалюзи",
+    "HassClimateSetTemperature": "set temperature heizen temperatur einstellen температура",
+    "GetLiveContext": "state status zustand humidity feuchtigkeit состояние влажность",
+}
+
+
+def _corpus_scores(query, tools):
+    fields = []
+    for tool in tools:
+        fn = tool.get("function", {})
+        fields.append((_tokens(fn.get("name", "")),
+                       _tokens(fn.get("description", "")),
+                       _tokens(_ROUTING_KEYWORDS.get(fn.get("name", "").rsplit("__", 1)[-1], "")),
+                       _tokens(fn.get("parameters", {}))))
+    frequency = Counter(word for parts in fields for word in set().union(*parts))
+
+    def score(parts):
+        result = 0.0
+        for words, weight in zip(parts, (12, 4, 8, 1)):
+            for word in query & words:
+                # Shared boilerplate carries little weight; rare exact terms dominate.
+                idf = math.log((len(tools) + 1) / (frequency[word] + 1)) + 0.25
+                result += weight * idf + (6 * idf if weight >= 8 else 0)
+        return result
+
+    return [score(parts) for parts in fields]
 
 
 def _prune_enums(
@@ -312,6 +347,7 @@ def retrieve_tools(
     encoder=None,
     embedding_cache=None,
     trace=None,
+    semantic_candidates: int = 12,
 ):
     """Return a compact copy of tools relevant to the latest user turn.
 
@@ -339,7 +375,10 @@ def retrieve_tools(
             "selected_tools": [],
             "enum_pruning": [],
         })
-    ranked = [(_tool_score(query, tool), index, tool) for index, tool in enumerate(tools)]
+    scores = _corpus_scores(query, tools)
+    ranked = [(scores[index], tool["function"]["name"], tool) for index, tool in enumerate(tools)]
+    kept_names = {call.get("function", {}).get("name") for message in messages
+                  for call in message.get("tool_calls") or []}
     if trace is not None:
         trace["all_tools"] = [
             {
@@ -354,9 +393,9 @@ def retrieve_tools(
     if hits:
         hits.sort(key=lambda item: (-item[0], item[1]))
         best = hits[0][0]
-        candidates = [item for item in hits if item[0] >= max(1, best - 2)]
+        candidates = [item for item in hits if item[0] >= max(1, best * 0.5)][:semantic_candidates]
     else:
-        candidates = ranked
+        candidates = sorted(ranked, key=lambda item: item[1])[:semantic_candidates]
 
     if trace is not None:
         trace["candidates"] = [
@@ -408,6 +447,10 @@ def retrieve_tools(
         # unmatched tools; preserve legacy behavior in that fallback path.
         chosen = list(tools)
 
+    for tool in sorted(tools, key=lambda item: item["function"]["name"]):
+        if tool["function"]["name"] in kept_names and tool not in chosen:
+            chosen.append(tool)
+
     stats = {
         "tools_before": len(tools),
         "tools_after": len(chosen),
@@ -417,6 +460,8 @@ def retrieve_tools(
     enum_trace = trace["enum_pruning"] if trace is not None else None
     for tool in compact:
         function = tool.get("function", {})
+        if function.get("name") in kept_names:
+            continue
         _prune_enums(
             function.get("parameters", {}),
             query,

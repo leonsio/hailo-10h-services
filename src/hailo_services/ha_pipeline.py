@@ -26,6 +26,8 @@ _DIRECT_ATTRIBUTES = (
 
 def is_home_assistant_request(request):
     """Require identifiable HA tools/history, not a device word in user text."""
+    if not getattr(request, "_ha_assist", False):
+        return False
     names = {tool.get("function", {}).get("name") for tool in request.tools or []}
     for message in request.messages:
         names.update(
@@ -158,22 +160,28 @@ def install():
 
     @wraps(original_select)
     def select(self, request):
+        if not getattr(request, "_ha_assist", False):
+            return request
         if request.tool_choice == "none":
             return request
         if not is_home_assistant_request(request):
-            return self.retrieve_context(request) if request.model in {
-                self.settings.vlm_model, self.settings.hailo_llm_model_id
-            } else request
+            return request
         language = request.language or detect_language(
             latest_user_text(request.messages), self.settings.service_language
         )
         with using_language(language):
-            direct = direct_numeric_action(request)
+            from .ha_intents import deterministic_intent
+
+            direct, intent_trace = deterministic_intent(request, self.settings, language)
+            request._metrics["ha_intent"] = intent_trace
+            if self.settings.debug_log:
+                _LOG.debug("event=ha_intent request_id=%s json=%s", request._request_id,
+                           json.dumps(intent_trace, ensure_ascii=False))
             if direct is not None:
                 prepared = request.model_copy()
                 object.__setattr__(prepared, "_direct_ha_response", direct)
                 _LOG.info(
-                    "ha_route request_id=%s route=direct_numeric_action skipped_gemma=true",
+                    "ha_route request_id=%s route=direct_hassil skipped_gemma=true",
                     request._request_id,
                 )
             elif isinstance(request.tool_choice, dict):
@@ -201,6 +209,8 @@ def install():
 
     @wraps(original_chat)
     def chat(self, request, emit=None, cancelled=None, tools_prepared=False):
+        if not getattr(request, "_ha_assist", False):
+            return self.plain_chat(request, emit, cancelled, True)
         with using_language(getattr(request, "_response_language", request.language or "de")):
             # The successful-action shortcut also needs HA provenance.
             return original_chat(self, request, emit, cancelled, True)

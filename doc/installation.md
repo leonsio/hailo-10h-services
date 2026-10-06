@@ -384,5 +384,42 @@ Gemma share system RAM with the service; verify memory headroom on the Pi before
 raising the request queue size.
 
 For Home Assistant, use the **llama.cpp** conversation integration with the service
-URL, API key and model `gemma-4-E2B-it`. Enable Home Assistant control in the
+URL, API key and model `HA-Assist`. Configure its text/image targets as below. Enable Home Assistant control in the
 conversation agent options and expose the devices you want Assist to control.
+
+
+## Configure HA-Assist
+
+The new virtual model is enabled by default. **Existing HA agents must change
+model selection to `HA-Assist`**; physical Gemma/Qwen model IDs now use the ordinary
+inference path without HA optimizations. The default text target is Gemma; fresh
+installations with Gemma disabled must enable it or select an enabled Hailo LLM.
+The service never substitutes the VLM for a disabled text target.
+
+Merge into `/etc/hailo-10h-services.yaml`:
+
+```yaml
+settings:
+  ha_assist_enabled: true
+  ha_assist_text_model: gemma-4-E2B-it
+  ha_assist_vision_model: Qwen2-VL-2B-Instruct
+  ha_assist_fuzzy_enabled: true
+  ha_assist_fuzzy_threshold: 90.0
+  ha_assist_fuzzy_margin: 8.0
+models:
+  gemma:
+    enabled: true
+    max_input_tokens: 4096
+```
+
+Keep your existing model settings. If using Qwen3-VL, update the vision target to
+its exact enabled ID. If using a native Hailo text LLM, set the text target to
+`models.hailo_llm.model`. Enable those backends before routing to them; setting a
+target does not download/enable it. All keys have `HAILO_<SETTING>` ENV overrides.
+
+Update/reinstall the service dependencies to install HassIL, the pinned official
+HA grammar package and RapidFuzz, then restart. The installer preserves existing
+configuration files, so add these keys yourself. Check `/health.ha_assist` for
+`text_ready`/`vision_ready`. `/v1/models` includes `HA-Assist`; its availability
+is per target. See [request pipelines](pipelines.md) for deterministic handling,
+diagnostics and the guarantee of one generative target per request.
