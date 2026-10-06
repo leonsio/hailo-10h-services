@@ -1,90 +1,206 @@
-# Modellvergleich: Text, Reasoning und Home-Assistant-Intent / Model comparison: text, reasoning and Home Assistant intent
+# Modellvergleich für Raspberry Pi 5 + Hailo-10H / Model comparison for Raspberry Pi 5 + Hailo-10H
 
-> Stand / Snapshot: 6. Oktober 2026. Die Ergebnisse stammen aus Messungen auf demselben Hailo-10H-Services-System. Sie sind eine praxisnahe Momentaufnahme, **kein allgemeiner Hersteller-Benchmark**.
+> Stand / Snapshot: 6. Oktober 2026. Die Ergebnisse stammen aus Messungen mit Hailo-10H-Services auf demselben Raspberry-Pi-5/CM5-System mit Hailo-10H. Sie sind eine praxisnahe Momentaufnahme dieses Setups und **kein allgemeiner Hersteller-Benchmark**.
 
 [Deutsch](#deutsch) · [English](#english)
 
-GitHub-Markdown unterstützt keine portable clientseitige Tabellensortierung (JavaScript wird auf GitHub nicht als beliebiges Seitenskript ausgeführt). Deshalb enthält diese Seite mehrere **vorsortierte Ranglisten** und aufklappbare `<details>`-Abschnitte.
+GitHub-Markdown unterstützt keine portable clientseitige Tabellensortierung. Deshalb enthält diese Seite bereits vorsortierte Tabellen und kompakte Empfehlungen nach Einsatzprofil.
 
 ---
 
 # Deutsch
 
+## Ziel dieser Auswertung
+
+Diese Seite bewertet die getesteten Modelle für die **allgemeine Nutzung von Hailo-10H-Services auf einem Raspberry Pi 5 mit Hailo-10H**. Im Mittelpunkt stehen:
+
+- Antwortqualität und Korrektheit,
+- Reaktionszeit und Time-to-First-Token (TTFT),
+- nutzbare Kontext- und Input-Grenzen,
+- Sprachqualität in Deutsch und Englisch,
+- Reasoning und elementare Logik,
+- Halluzinationen und Umgang mit fehlenden Informationen,
+- strukturierte Ausgabe wie JSON,
+- Verhalten bei kurzen und längeren Antworten,
+- Eignung für lokalen Chat, Wissensfragen, RAG, Dokumentkontext, Automatisierung und multimodale Workloads.
+
+Anwendungsspezifische Home-Assistant-Intent-Tests werden hier bewusst **nicht** bewertet und fließen weder in Rankings noch Empfehlungen ein. Für den quantitativen Vergleich wird nur der allgemeine Textteil des Benchmarks verwendet.
+
 ## Kurzfazit
 
-Für den hier getesteten Einsatz ergibt sich ein klares Bild:
+Für einen allgemeinen lokalen KI-Dienst auf Raspberry Pi 5 + Hailo-10H ergibt sich aus den vorliegenden Messungen:
 
-1. **Gemma 4 E2B** liefert die höchste Text-Korrektheit und das beste Reasoning der getesteten Modelle, ist auf CPU/LiteRT-LM aber deutlich langsamer.
-2. **Qwen3-1.7B-Instruct** ist der aktuell beste native Hailo-LLM-Kandidat für schnelle allgemeine Textanfragen: 5/6 im kontrollierten Kurztext-Benchmark bei etwa 1,18 s mittlerer Gesamtdauer.
-3. **Qwen2.5-1.5B-Instruct** ist sehr schnell, aber sprachlich und semantisch deutlich schwächer; besonders komplexere Antworten, kreative Aufgaben und Reasoning sind unzuverlässig.
-4. **Qwen2-VL** ist extrem schnell, zeigt bei längeren Texten jedoch deutliche Decoder-/Sprachzerfallsartefakte. Als Textmodell sollte es derzeit nicht bevorzugt werden.
-5. **Qwen3-VL** formuliert besser als Qwen2-VL, ist aber langsamer und zeigt Wiederholungsschleifen, Halluzinationen und unzuverlässige strukturierte Ausgabe.
-6. **Llama3.2-1B-Instruct** ist schnell, aber in diesem Setup qualitativ schwach. Das sichtbare `<|eot_id|>` ist ein abfangbares Ausgabe-Artefakt und wird in der inhaltlichen Bewertung **nicht** als Modellfehler gewertet.
-7. **DeepSeek-R1-Distill-Qwen-1.5B** ist für diesen Low-Latency-Assistenten ungünstig: das Template erzwingt `<think>`, die Antworten sind oft unnötig lang, Deutsch ist deutlich schwächer als Englisch und mehrere Fakten-/Reasoning-Aufgaben scheitern.
+1. **Gemma 4 E2B** liefert die beste allgemeine Textqualität, die höchste Korrektheit im kontrollierten Kurztext-Test und das stärkste Reasoning. Der Preis dafür ist deutlich höhere CPU-Latenz und langsames Decoding.
+2. **Qwen3-1.7B-Instruct** bietet im getesteten Setup das beste Verhältnis aus Qualität und Geschwindigkeit unter den nativen Hailo-LLMs. Es ist die derzeit sinnvollste Standardwahl für schnelle allgemeine Textanfragen auf dem Hailo-10H.
+3. **Qwen2.5-1.5B-Instruct** ist noch etwas schneller, verliert aber sichtbar bei Sprachverständnis, Instruction Following und komplexeren Aufgaben. Es eignet sich eher für kurze, einfache Anfragen als für einen universellen Assistenten.
+4. **Llama3.2-1B-Instruct** ist schnell, qualitativ aber deutlich schwächer. Das sichtbare `<|eot_id|>` wird hier nicht als Modellfehler gewertet, weil es technisch abgefangen werden kann; auch nach dessen Entfernung bleiben mehrere Antworten falsch.
+5. **DeepSeek-R1-Distill-Qwen-1.5B** ist für einen interaktiven Low-Latency-Dienst in dieser Konfiguration wenig attraktiv: es denkt selbst bei trivialen Fragen sehr lange, produziert unnötig viel Text und zeigt besonders auf Deutsch deutliche Schwächen.
+6. **Qwen2-VL** ist bei Text extrem schnell, zeigt aber bei längeren Antworten deutliche Sprach-/Decoder-Artefakte. Als allgemeines Textmodell ist es deshalb nicht zu empfehlen.
+7. **Qwen3-VL** ist sprachlich stabiler als Qwen2-VL, aber langsamer und kann in Wiederholungsschleifen geraten. Seine eigentliche Stärke sollte in Bild-/Multimodal-Aufgaben bewertet werden; die vorliegenden Texttests reichen nicht aus, um seine Bildqualität zu beurteilen.
 
-Für Home Assistant ist die wichtigste Schlussfolgerung unabhängig vom Modell: **eindeutige Gerätebefehle und Statusfragen sollten deterministisch verarbeitet werden.** Ein LLM sollte erst bei Ambiguität, freier Sprache oder echtem Reasoning übernehmen. Rohes LLM-Tool-Calling bzw. rohe Slot-JSON-Ausgabe ist bei keinem der kleinen Modelle zuverlässig genug, um ohne Validierung Aktionen auszuführen.
+### Praktische Standardempfehlung
 
-## Testbasis und Fairness
+Für einen Raspberry Pi 5 mit Hailo-10H ist ein **mehrstufiger Dienst** sinnvoller als der Versuch, ein einziges kleines Modell für alles zu verwenden:
 
-Es gibt zwei unterschiedliche Datensätze:
+- **Qwen3-1.7B-Instruct auf Hailo** für schnelle allgemeine Textanfragen,
+- **Gemma 4 E2B auf CPU** für schwierigere Sprach- und Reasoning-Aufgaben oder wenn mehr Kontext benötigt wird,
+- **Qwen-VL auf Hailo** für Bilder und Video-Frames,
+- **deterministische Funktionen/Tools** für Mathematik, Datum, aktuelle Daten und andere Aufgaben, die exakt berechnet oder abgefragt werden können,
+- **RAG/Recherche** für Fakten, die nicht zuverlässig aus dem Modellwissen stammen sollten.
 
-- **Kontrollierter Benchmark**: `scripts/benchmark-qwen-text-intent.py`, 16 Szenarien, davon 6 kurze Textaufgaben und 10 HA-Intent-/Slot-Aufgaben, `temperature=0.1`, `max_tokens=32`. Dieser Datensatz ist für quantitative Vergleiche am aussagekräftigsten.
-- **Explorative WebGUI-Läufe**: freie Fragen zu Rechnen, Hauptstädten, Wetter, Geschichte, Zählen, JSON und Datums-Reasoning. Diese Läufe zeigen reales Verhalten, sind aber nicht vollständig isoliert: bei mehreren Modellen wächst die Chat-Historie und damit die Zahl der Input-Tokens. Spätere WebGUI-Laufzeiten dürfen daher nicht als reiner Modell-Speed-Benchmark interpretiert werden.
+Damit werden die Stärken des Raspberry Pi 5 und des Hailo-10H besser genutzt: Hailo übernimmt die latenzkritische Inferenz, während CPU und Tools nur dort eingesetzt werden, wo sie einen echten Qualitäts- oder Kontextgewinn bringen.
 
-Die strikte HA-Intent-Auswertung verlangt exakt:
+## Kontext- und Input-Grenzen: 2k auf Hailo vs. 4k bei Gemma
+
+Die Kontextgröße ist für die praktische Nutzung mindestens so wichtig wie die reine Inferenzgeschwindigkeit.
+
+### Native Hailo-Modelle: 2048 Token Kontext
+
+Die derzeit getesteten nativen Hailo-LLMs und Qwen-VLMs arbeiten in diesem Service mit einem **2048-Token-Kontext**. Bei den Hailo-Modellen teilen sich **Input und Output denselben kompilierten Kontext**.
+
+Das bedeutet praktisch:
 
 ```text
-INTENT|TARGET_TYPE|TARGET|VALUE
+2048 Gesamt-Kontext
+- reservierte Output-Tokens
+- Template-/Spezialtoken-Overhead
+= tatsächlich nutzbarer Input
 ```
 
-Das ist absichtlich streng. Deshalb wird unten zusätzlich zwischen **Schema-/Format-Compliance** und **semantischem Verständnis** unterschieden.
+Bei einem Benchmark mit `max_tokens=32` lag das effektive Input-Limit beispielsweise bei ungefähr **2015 Tokens**. Wird mehr Output reserviert, sinkt der maximal mögliche Input entsprechend. Bei `max_tokens=256` bleibt grob nur noch ein Bereich um **1,8k Input-Tokens** übrig.
 
-### Sonderbehandlung Llama
+Diese 2k-Grenze ist für folgende Aufgaben ausreichend:
 
-Llama3.2 gibt im aktuellen Service teilweise das Special Token `<|eot_id|>` sichtbar zurück. Das ist ein Service-/Stop-Token-Cleanup-Thema und kann deterministisch entfernt werden. Für die qualitative Bewertung wird dieses Token ignoriert. Dadurch steigt die inhaltliche Kurztext-Bewertung des kontrollierten Benchmarks von formal `0/6` auf **2/6 (33,3 %)**: `Paris` und `23` sind inhaltlich korrekt; `2`, `34`, `Montag` und `Entferntes Haus` bleiben inhaltlich bzw. instruktionsbezogen falsch.
+- kurze Chatfragen,
+- kompakte Systemprompts,
+- kleine RAG-Ausschnitte,
+- kurze Zusammenfassungen,
+- Klassifikation,
+- einfache lokale Assistenz,
+- einzelne Bildfragen bei VLM-Nutzung, sofern der restliche Prompt klein bleibt.
 
-## Kontrollierter Benchmark
+Sie wird aber schnell zum Engpass bei:
 
-| Modell | Backend | Text korrekt | Text Ø gesamt | Text Ø TTFT | Intent strikt | Intent Ø gesamt | Intent Ø TTFT |
-|---|---|---:|---:|---:|---:|---:|---:|
-| **Qwen2-VL-2B-Instruct** | Hailo VLM | 3/6 = 50,0 % | **637 ms** | **328 ms** | 0/10 | 3.009 ms | 949 ms |
-| **Qwen2.5-1.5B-Instruct** | Hailo LLM | 4/6 = 66,7 % | 934 ms | 381 ms | 0/10 | 3.523 ms | 1.109 ms |
-| **Llama3.2-1B-Instruct** | Hailo LLM | 2/6 = 33,3 %* | 959 ms | 686 ms | 0/10 | 3.987 ms | 1.021 ms |
-| **Qwen3-1.7B-Instruct** | Hailo LLM | **5/6 = 83,3 %** | 1.178 ms | 639 ms | 0/10 | 5.267 ms | 1.875 ms |
-| **Qwen3-VL-2B-Instruct** | Hailo VLM | 4/6 = 66,7 % | 1.354 ms | 642 ms | 0/10 | 4.596 ms | 1.890 ms |
-| **Gemma 4 E2B** | CPU / LiteRT-LM | **6/6 = 100 %** | 2.369 ms | 2.005 ms | **1/10 = 10 %** | 5.691 ms | 3.673 ms |
-| **DeepSeek-R1-Distill-Qwen-1.5B** | Hailo LLM | n/a** | 5.751 ms** | n/a | n/a** | 7.234 ms** | n/a |
+- längerer Chat-Historie,
+- großen Systemprompts,
+- mehreren Dokumentpassagen,
+- umfangreichem RAG-Kontext,
+- langen Codeausschnitten,
+- großen JSON-Schemata,
+- Agenten mit vielen Tool-Beschreibungen,
+- langen Antworten, weil diese denselben Kontext verbrauchen.
 
-\* Nach Entfernung von `<|eot_id|>` nur für die Inhaltsbewertung. Der ursprüngliche Skript-Score war 0/6, weil das Special Token Teil des Antwortstrings war.  
-\** Im bereitgestellten DeepSeek-Journal sind Request und Laufzeit vorhanden, aber nicht der Benchmark-Response-Body/TTFT in einer Form, aus der sich der Accuracy-Score zuverlässig rekonstruieren lässt. Die Mittelwerte basieren auf den sechs Text- bzw. zehn Intent-HTTP-Requests.
+Ein Hailo-Modell kann daher zwar in deutlich unter zwei Sekunden reagieren, aber nicht automatisch einen langen Gesprächs- oder Dokumentkontext verarbeiten.
 
-### Rangliste: Korrektheit bei kurzen Textaufgaben
+### Gemma 4 E2B: 4096 Token Input-Grenze
 
-| Rang | Modell | Accuracy |
-|---:|---|---:|
-| 1 | Gemma 4 E2B | **100 %** |
-| 2 | Qwen3-1.7B-Instruct | **83,3 %** |
-| 3 | Qwen2.5-1.5B-Instruct | 66,7 % |
-| 3 | Qwen3-VL-2B-Instruct | 66,7 % |
-| 5 | Qwen2-VL-2B-Instruct | 50,0 % |
-| 6 | Llama3.2-1B-Instruct | 33,3 %* |
-| — | DeepSeek-R1-Distill-Qwen-1.5B | nicht aus Journal rekonstruierbar |
+Gemma läuft in diesem Setup über LiteRT-LM auf der Raspberry-Pi-CPU mit einer bewusst gesetzten **maximalen Input-Grenze von 4096 Tokens**.
 
-### Rangliste: Latenz bei kurzen Textaufgaben
+Damit steht ungefähr der doppelte Prompt-Spielraum zur Verfügung wie bei den 2k-Hailo-Modellen. Praktisch ist das vor allem hilfreich für:
 
-| Rang | Modell | Ø gesamt |
-|---:|---|---:|
-| 1 | Qwen2-VL-2B-Instruct | **637 ms** |
-| 2 | Qwen2.5-1.5B-Instruct | 934 ms |
-| 3 | Llama3.2-1B-Instruct | 959 ms |
-| 4 | Qwen3-1.7B-Instruct | 1.178 ms |
-| 5 | Qwen3-VL-2B-Instruct | 1.354 ms |
-| 6 | Gemma 4 E2B | 2.369 ms |
-| 7 | DeepSeek-R1-Distill-Qwen-1.5B | 5.751 ms |
+- längere Gesprächshistorien,
+- größere RAG-Chunks oder mehrere Retrieval-Treffer,
+- komplexere Instruktionen,
+- längere Dokumentausschnitte,
+- Aufgaben, bei denen mehr Kontext für Reasoning benötigt wird.
+
+Die größere Grenze ist jedoch nicht kostenlos. Mehr Input erhöht Prefill-Zeit und Speicherbedarf. Frühere Versuche mit **8192 Input-Tokens** führten auf diesem Raspberry-Pi-Setup zu stark wachsendem RAM-Verbrauch und letztlich zu Instabilität/Absturz. Deshalb ist **4096** hier eine bewusste praktische Stabilitätsgrenze und nicht nur ein beliebiger Benchmarkwert.
+
+### Konsequenz für allgemeine Nutzung
+
+| Workload | 2k Hailo-Kontext | 4k Gemma-Kontext |
+|---|---|---|
+| kurze Frage/Antwort | **sehr gut** | gut, aber langsamer |
+| kurze Chat-Historie | **gut** | **sehr gut** |
+| längere Chat-Historie | eingeschränkt | **besser** |
+| kleines RAG | **gut** | **sehr gut** |
+| mehrere RAG-Passagen | schnell am Limit | **deutlich flexibler** |
+| lange Dokumente | Chunking zwingend | Chunking weiterhin nötig, aber weniger aggressiv |
+| große Tool-/Schema-Prompts | problematisch | besser, aber 4k bleibt klein gegenüber Cloud-LLMs |
+| lange Antwort + langer Input | stark eingeschränkt | flexibler |
+
+Für einen produktiven lokalen Dienst sollte deshalb **Retrieval und Prompt-Compaction modellabhängig** sein. Ein Request, der für Gemma mit 3.500 Tokens problemlos passt, kann nicht unverändert an Qwen3-1.7B auf Hailo geschickt werden.
+
+### Routing nach Kontextlänge
+
+Eine sinnvolle allgemeine Strategie ist:
+
+```text
+kurzer Prompt / kurze Historie
+        │
+        ▼
+Qwen3-1.7B auf Hailo
+        │
+        ├── schnell, ca. 2k Kontext
+        │
+        └── ideal für interaktive Standardanfragen
+
+längerer Prompt / mehr RAG-Kontext
+        │
+        ▼
+Gemma 4 E2B auf CPU
+        │
+        ├── langsamer
+        └── bis 4k Input im stabilen Setup
+```
+
+Für noch längere Inhalte müssen **beide** Pfade mit Chunking, Retrieval, Zusammenfassung oder hierarchischer Verarbeitung arbeiten. Auch 4k sind für vollständige Dokumente, große Codebasen oder lange Gesprächsarchive klein.
+
+## Testbasis und Vergleichbarkeit
+
+Es wurden zwei Arten von Daten verwendet:
+
+- **Kontrollierter Textbenchmark**: sechs kurze, eindeutig bewertbare Aufgaben aus `scripts/benchmark-qwen-text-intent.py`, mit `temperature=0.1` und `max_tokens=32`. Dieser Teil ist die quantitative Basis für Accuracy, mittlere Laufzeit und TTFT.
+- **Explorative WebGUI-Läufe**: Rechnen, Hauptstädte, Wetter, kreative Texte, Zählen, JSON sowie Datums-/Kalenderfragen in Deutsch und Englisch. Diese Läufe zeigen reales Verhalten, sind aber nicht immer vollständig isoliert. Teilweise wächst die Chat-Historie und damit die Zahl der Input-Tokens; spätere Laufzeiten dürfen deshalb nicht als reiner Modell-Speed-Benchmark interpretiert werden.
+
+### Sonderbehandlung Llama3.2
+
+Llama3.2 gibt im aktuellen Service teilweise `<|eot_id|>` sichtbar zurück. Das ist ein Stop-Token-/Cleanup-Thema und kann deterministisch entfernt werden. Für die **inhaltliche** Bewertung wird dieses Token ignoriert.
+
+Der ursprüngliche Skript-Score war dadurch formal `0/6`. Inhaltlich sind jedoch `Paris` und `23` korrekt. `2+2 → 2`, `17×6 → 34`, `nach Montag → Montag` und `house → Entferntes Haus` bleiben echte Fehler. Für diese Seite wird Llama daher mit **2/6 = 33,3 %** bewertet.
+
+## Kontrollierter allgemeiner Textbenchmark
+
+| Modell | Backend | Text korrekt | Ø Gesamtzeit | Ø TTFT | Kontext / Input | Charakter |
+|---|---|---:|---:|---:|---|---|
+| **Qwen2-VL-2B-Instruct** | Hailo VLM | 3/6 = 50,0 % | **637 ms** | **328 ms** | 2048 gesamt | extrem schnell, schwache Textrobustheit |
+| **Qwen2.5-1.5B-Instruct** | Hailo LLM | 4/6 = 66,7 % | 934 ms | 381 ms | 2048 gesamt | schnell, begrenzte Sprach-/Logikqualität |
+| **Llama3.2-1B-Instruct** | Hailo LLM | 2/6 = 33,3 %* | 959 ms | 686 ms | 2048 gesamt | schnell, aber viele Inhaltsfehler |
+| **Qwen3-1.7B-Instruct** | Hailo LLM | **5/6 = 83,3 %** | 1.178 ms | 639 ms | 2048 gesamt | bester Hailo-Textkompromiss |
+| **Qwen3-VL-2B-Instruct** | Hailo VLM | 4/6 = 66,7 % | 1.354 ms | 642 ms | 2048 gesamt | bessere Sprache als Qwen2-VL, langsamer |
+| **Gemma 4 E2B** | CPU / LiteRT-LM | **6/6 = 100 %** | 2.369 ms | 2.005 ms | **4096 Input** | beste Qualität, höherer Kontext, höhere CPU-Latenz |
+| **DeepSeek-R1-Distill-Qwen-1.5B** | Hailo LLM | n/a** | 5.751 ms** | n/a | 2048 gesamt | starke Thinking-Overhead |
+
+\* Inhaltliche Bewertung nach Entfernung des technisch abfangbaren `<|eot_id|>`.  
+\** Im bereitgestellten DeepSeek-Journal waren die sechs isolierten Textrequests und ihre Laufzeiten vorhanden, aber nicht alle Benchmark-Response-Bodies in einer Form, aus der sich ein fairer Accuracy-Score rekonstruieren ließ.
+
+## Rangliste nach allgemeiner Textqualität
+
+| Rang | Modell | Accuracy im kontrollierten Texttest | Einordnung |
+|---:|---|---:|---|
+| 1 | **Gemma 4 E2B** | **100 %** | höchste Zuverlässigkeit im Test |
+| 2 | **Qwen3-1.7B-Instruct** | **83,3 %** | beste native Hailo-Wahl |
+| 3 | Qwen2.5-1.5B-Instruct | 66,7 % | schnell, aber deutlich schwächer |
+| 3 | Qwen3-VL-2B-Instruct | 66,7 % | Text nur Nebenfunktion eines VLM |
+| 5 | Qwen2-VL-2B-Instruct | 50,0 % | für generellen Text zu instabil |
+| 6 | Llama3.2-1B-Instruct | 33,3 %* | niedrigste belastbare Textqualität |
+| — | DeepSeek-R1-Distill-Qwen-1.5B | n/a | qualitative Bewertung siehe unten |
+
+## Rangliste nach Reaktionsgeschwindigkeit
+
+| Rang | Modell | Ø Gesamtzeit | Ø TTFT | Bewertung |
+|---:|---|---:|---:|---|
+| 1 | **Qwen2-VL-2B-Instruct** | **637 ms** | **328 ms** | schnellste Ausgabe, aber Qualitätsproblem |
+| 2 | **Qwen2.5-1.5B-Instruct** | 934 ms | 381 ms | sehr guter Low-Latency-Pfad |
+| 3 | Llama3.2-1B-Instruct | 959 ms | 686 ms | schnell, aber geringe Korrektheit |
+| 4 | **Qwen3-1.7B-Instruct** | 1.178 ms | 639 ms | sehr guter Qualitäts-/Speed-Kompromiss |
+| 5 | Qwen3-VL-2B-Instruct | 1.354 ms | 642 ms | akzeptabel für multimodale Nutzung |
+| 6 | Gemma 4 E2B | 2.369 ms | 2.005 ms | merklich langsamer auf CPU |
+| 7 | DeepSeek-R1-Distill-Qwen-1.5B | 5.751 ms | n/a | Thinking-Overhead dominiert |
 
 ## Qualitative Scorecard
 
-Die folgenden 1–5-Werte sind **keine standardisierten Benchmarks**, sondern eine zusammenfassende Bewertung genau der hier vorliegenden Antworten. `5` bedeutet „innerhalb dieses Testsets am stärksten“.
+Die folgenden 1–5-Werte sind **keine standardisierten Hersteller-Benchmarks**, sondern eine Zusammenfassung der vorliegenden Antworten. `5` bedeutet „innerhalb dieses Testsets am stärksten“.
 
 | Modell | Korrektheit | Instruktionsfolge | Deutsch | Englisch | Reasoning | Halluzinationskontrolle | Strukturierte Ausgabe | Speed |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -96,388 +212,365 @@ Die folgenden 1–5-Werte sind **keine standardisierten Benchmarks**, sondern ei
 | **Llama3.2-1B-Instruct** | 2 | 1 | 2 | 2 | 1 | 1 | 3 | 4 |
 | **DeepSeek-R1-Distill-Qwen-1.5B** | 2 | 1 | 1 | 3 | 1 | 1 | 2 | 2 |
 
-## Antworten im Detail
+## Antworten und Verhalten im Detail
 
-### Mathematik und einfache Fakten
+### Mathematik und kurze Fakten
 
-- **Gemma** löst im kontrollierten Benchmark alle sechs Kurztextaufgaben korrekt, darunter `2+2`, `17×6`, den nächsten Wochentag, Zahlvergleich und Übersetzung.
-- **Qwen3-1.7B** ist der stärkste Hailo-LLM: korrekt bei `2+2`, Paris, `17×6`, Zahlvergleich und `house → Haus`; es antwortet jedoch auf „Welcher Wochentag kommt nach Montag?“ mit **Mittwoch**.
-- **Qwen2.5** löst `2+2`, Paris, `17×6` und `house → Haus`, scheitert aber an „nach Montag“ (`Dienstags.`) und dem einfachen Zahlvergleich (`17 23 17`).
-- **Qwen2-VL** ist sehr schnell, aber selbst einfache Aufgaben sind nicht robust (`17×6 → 176`, Wochentag → `2`, `house → Erlaßt`).
-- **Qwen3-VL** ist sprachlich stabiler, macht jedoch ebenfalls elementare Fehler (`17×6 → 126`, größerer Wert → `24`).
-- **Llama3.2**: nach Entfernung des sichtbaren `<|eot_id|>` sind `Paris` und `23` korrekt. `2+2 → 2`, `17×6 → 34`, „nach Montag“ → `Montag` bleiben echte Modellfehler.
-- **DeepSeek-R1-Distill** kann `2+2` korrekt lösen, generiert dafür aber unnötig lange Gedankenketten. In einer englischen Folge verwechselt es bei der Analyse sogar kurz die zweite Zahl mit `3`, obwohl die Aufgabe `2+2` lautet.
+- **Gemma** löst alle sechs kontrollierten Kurzaufgaben korrekt: `2+2`, Paris, `17×6`, nächster Wochentag, Zahlvergleich und Übersetzung.
+- **Qwen3-1.7B** löst fünf von sechs Aufgaben korrekt. Der Ausreißer ist elementar: auf „Welcher Wochentag kommt nach Montag?“ antwortet es mit **Mittwoch**.
+- **Qwen2.5** löst `2+2`, Paris, `17×6` und `house → Haus`, scheitert aber an „nach Montag“ (`Dienstags.`) und am Zahlvergleich (`17 23 17`).
+- **Qwen3-VL** beantwortet mehrere einfache Aufgaben richtig, macht aber ebenfalls elementare Fehler wie `17×6 → 126` und `größere Zahl → 24`.
+- **Qwen2-VL** ist extrem schnell, aber nicht robust: `17×6 → 176`, nächster Wochentag → `2`, `house → Erlaßt`.
+- **Llama3.2** bleibt auch nach Entfernung des sichtbaren Stop-Tokens bei mehreren sehr einfachen Aufgaben falsch.
+- **DeepSeek-R1-Distill** kann triviale Mathematik grundsätzlich lösen, produziert dafür aber unverhältnismäßig lange Denksequenzen.
 
-### Hauptstadt von Bolivien: kein guter binärer Test
+Für einen allgemeinen Dienst bedeutet das: **einfache Mathematik oder Kalenderlogik sollte nicht unnötig an ein LLM delegiert werden**, wenn ein deterministischer Rechner in Mikro- oder Millisekunden exakter arbeitet.
 
-Die Antworten `Sucre` und `La Paz` sollten nicht pauschal als Halluzination gewertet werden. **Sucre ist die verfassungsmäßige Hauptstadt**, während **La Paz Regierungssitz** ist. Für zukünftige automatische Benchmarks sollte die Frage präzisiert werden, zum Beispiel:
+### Faktenwissen: Beispiel Bolivien
 
-```text
-Wie heißt die verfassungsmäßige Hauptstadt Boliviens?
-```
+Die Frage nach der „Hauptstadt von Bolivien“ eignet sich nur bedingt für einen binären Benchmark: **Sucre** ist die verfassungsmäßige Hauptstadt, **La Paz** ist Regierungssitz. Beide Antworten zeigen relevantes Weltwissen. **Buenos Aires**, wie in einem DeepSeek-Lauf ausgegeben, ist dagegen eindeutig falsch.
 
-oder:
+Für Wissenssysteme gilt deshalb: mehrdeutige oder wichtige Fakten sollten präzisiert oder durch Retrieval/RAG abgesichert werden.
 
-```text
-In welcher Stadt sitzt die bolivianische Regierung?
-```
+### Umgang mit fehlenden aktuellen Daten
 
-**Buenos Aires** (DeepSeek) ist dagegen eindeutig falsch.
+Die Aufforderung „Schreibe genau drei Sätze über das Wetter heute“ wurde ohne Wetterdaten oder Wetter-Tool gestellt und ist deshalb ein guter Halluzinationstest.
 
-### Wetter: Test auf Halluzinationskontrolle
-
-Die Frage „Schreibe genau drei Sätze über das Wetter heute“ enthält im Test **keine Wetterdaten und kein Wetter-Tool**.
-
-- **Gemma** reagiert am sichersten: es erklärt, dass keine aktuellen Wetterdaten verfügbar sind, statt Wetter zu erfinden.
-- **Qwen2.5** erkennt ebenfalls grundsätzlich die fehlende Wetterfähigkeit, formuliert aber grammatikalisch schwach und folgt „genau drei Sätze“ nicht sauber.
-- **Qwen3-1.7B** erfindet `25–28 °C`, Sonne und Wind. Das ist flüssig formuliert, aber faktisch nicht gestützt.
+- **Gemma** reagiert am sichersten und erklärt, dass keine aktuellen Wetterdaten verfügbar sind.
+- **Qwen2.5** erkennt ebenfalls grundsätzlich das Informationsdefizit, formuliert aber sprachlich schwächer.
+- **Qwen3-1.7B** erfindet Sonne, `25–28 °C` und Wind.
 - **Qwen3-VL** erfindet bewölktes Wetter, Schneeflocken und `5–10 °C`.
-- **Llama3.2** erfindet warmes Wetter in **Wien** und übernimmt zusätzlich ein Datum aus dem Modell-/Promptkontext (`26 Jul 2024`) als wäre es aktuell.
-- **Qwen2-VL** zerfällt bei dieser längeren deutschen Ausgabe in gemischte deutsche, englische und chinesische Fragmente.
-- **DeepSeek** wurde in den vorliegenden freien Antworten für dieses Wetter-Szenario nicht ausreichend isoliert dokumentiert.
+- **Llama3.2** erfindet Wetter in **Wien** und übernimmt zusätzlich ein altes Datum aus dem Promptkontext als wäre es aktuell.
+- **Qwen2-VL** zerfällt bei dieser längeren deutschen Ausgabe in deutsche, englische und chinesische Fragmente.
 
-Für produktive aktuelle Daten gilt: **Tool/RAG/Datenquelle oder explizites Abstention-Verhalten**, nie reines Modellwissen.
+**Empfehlung:** aktuelle Daten immer über eine echte Datenquelle, API, RAG oder Tool-Funktion einspeisen. Kein getestetes kleines Modell sollte als Quelle für „heute“, Preise, Wetter oder andere dynamische Fakten betrachtet werden.
 
-### Kreative Sprache
+### Kreative Texte und längere Antworten
 
-- **Gemma** erzeugt die kohärenteste Geschichte. Sie bleibt sprachlich stabil und inhaltlich nachvollziehbar.
-- **Qwen3-1.7B** erzeugt eine kurze, einfache Geschichte. Grammatik (`Sie fressen`) und Humor sind schwach, aber die Ausgabe bleibt kohärent.
-- **Qwen2.5** verweigert die harmlose Aufgabe mit einer sachlich unsinnigen Begründung („Katze ... keine Person“). Das zeigt schwaches Instruktions- und Bedeutungsverständnis.
-- **Qwen3-VL** gerät in eine starke Wiederholungsschleife („auf dem Kätzchen ...“) bis zum Output-Limit; ein einzelner Lauf dauerte rund **55 s**.
-- **Qwen2-VL** produziert beschädigte/multilinguale Tokenfragmente statt einer Geschichte.
-- **Llama3.2** liefert zwar eine erkennbare Katzengeschichte, die Sprache ist jedoch unnatürlich und semantisch brüchig.
-- **DeepSeek** zeigt bei einfachen Aufgaben bereits starke Tendenz zum Überdenken; für kurze kreative Antworten ist dieses Verhalten in der vorliegenden Konfiguration ungünstig.
+- **Gemma** erzeugt die kohärenteste und sprachlich stabilste Katzengeschichte.
+- **Qwen3-1.7B** bleibt verständlich, die Geschichte ist aber sprachlich einfach und grammatikalisch nicht immer sauber.
+- **Qwen2.5** verweigert die harmlose Geschichte mit einer unsinnigen Begründung, dass eine Katze keine Person sei.
+- **Qwen3-VL** kann in Wiederholungsschleifen geraten; ein Lauf wiederholte „auf dem Kätzchen ...“ bis zum 256-Token-Limit und dauerte rund **55 Sekunden**.
+- **Qwen2-VL** erzeugte beschädigte/multilinguale Tokenfragmente statt einer kohärenten Geschichte.
+- **Llama3.2** erzeugt erkennbaren Text, aber mit unnatürlicher und semantisch brüchiger Sprache.
+- **DeepSeek-R1-Distill** neigt selbst bei trivialen Aufgaben zu langem Thinking und ist deshalb für kurze interaktive Antworten ineffizient.
 
-### Zählen 1–20
+Niedrige TTFT allein reicht deshalb nicht: Für Chat, Content-Generierung und parallele Requests ist auch die **gesamte Generationsdauer** entscheidend.
 
-Dieses Szenario zeigt besonders gut den Unterschied zwischen Sprachfluss und elementarer Verlässlichkeit:
+### Strukturierte Ausgabe und JSON
 
-- Gemma, Qwen2-VL, Qwen3-VL, Qwen2.5 und Qwen3-1.7B zählen korrekt.
-- Llama3.2 erzeugt eine bizarre Potenzfolge (`0, 100, 1000, 10, ...`) statt 1–20.
-- DeepSeek liefert in einem freien englischen Lauf nach `Count from 1 to 20.` nur die Thinking-/End-Markierung und **keine Nutzantwort**.
+- **Gemma** erzeugt das verlangte JSON korrekt, umgibt es allerdings teilweise mit Markdown-Codefences.
+- **Qwen3-1.7B** erzeugt in den freien Tests sauberes kompaktes JSON.
+- **Qwen2.5** erzeugt das korrekte Objekt, ergänzt aber teilweise unerwünschte Erklärung.
+- **Qwen3-VL** ist deutlich unzuverlässiger: in einem Lauf erzeugt es zwei konkurrierende JSON-Objekte; in einem anderen verändert es den Schlüssel `alter` zu `altern`.
+- **Qwen2-VL** erzeugt in diesem einzelnen Test korrektes JSON, obwohl seine allgemeine Sprachqualität schwach ist.
+- **Llama3.2** kann ebenfalls korrektes JSON erzeugen, aber die geringe allgemeine Korrektheit bleibt ein Risiko.
 
-### JSON / strukturierte Ausgabe
+**Empfehlung:** strukturierte Ausgaben immer gegen ein Schema validieren.
 
-- **Qwen3-1.7B** liefert im freien Test die sauberste Ausgabe: `{"name": "Max", "alter": 30}`.
-- **Gemma** liefert inhaltlich korrektes JSON, aber in einem Markdown-Codeblock. Für eine API, die rohes JSON verlangt, ist das eine reparierbare Formatabweichung.
-- **Qwen2-VL** liefert ebenfalls korrektes JSON im Codeblock.
-- **Qwen2.5** liefert korrektes JSON, ergänzt aber entgegen der Anweisung noch einen erklärenden Hinweis.
-- **Llama3.2** liefert nach Entfernen von `<|eot_id|>` ein inhaltlich korrektes JSON-Objekt im Codeblock.
-- **Qwen3-VL** ist für exakte Schemas problematisch: einmal erzeugt es **zwei konkurrierende JSON-Objekte**, verändert Groß-/Kleinschreibung (`ALTER`) und in einem zweiten Versuch sogar den Schlüssel zu `altern`.
-- Für **DeepSeek** liegt in den bereitgestellten freien Läufen kein direkt vergleichbarer JSON-Test vor.
+### Datums- und Kalender-Reasoning
 
-**Produktionsfolgerung:** Modelloutput sollte nicht direkt als Aktionsobjekt ausgeführt werden. Erst strikt parsen, Schema validieren und nur erwartete Enums/Entities/Werte zulassen.
+Die Frage „Heute ist 1. März 2028. Welcher Wochentag und welches Datum waren vorgestern?“ trennt oberflächliche Sprachfähigkeit von echtem Reasoning.
 
-## Reasoning: 1. März 2028
+- **Gemma** antwortet auf Deutsch falsch mit `30. Februar 2028`, löst die praktisch identische englische Frage dagegen korrekt als **Montag, 28. Februar 2028**.
+- **Qwen3-VL** erfindet den `31. Februar 2028`.
+- **Qwen3-1.7B**, **Qwen2.5**, **Qwen2-VL**, **Llama3.2** und **DeepSeek** zeigen ebenfalls deutliche Fehler oder inkonsistente Zwischenschritte.
 
-Die korrekte Antwort auf:
-
-```text
-Today is March 1, 2028. What day of the week and date was the day before yesterday?
-```
-
-ist:
-
-```text
-Monday, February 28, 2028
-```
-
-Die Aufgabe ist besonders aussagekräftig, weil Schaltjahr, Monatsgrenze und Wochentag zusammenkommen.
-
-- **Gemma Englisch** ist der einzige vorliegende freie Lauf mit vollständig korrekter Herleitung und Endantwort.
-- **Gemma Deutsch** erfindet dagegen den ungültigen **30. Februar 2028**. Das zeigt eine deutliche sprachabhängige Reasoning-Inkonsistenz.
-- **Qwen3-1.7B Deutsch** antwortet `Dienstag, 30. Februar 2028`. Nach frischem englischem Chat wird die Antwort ausführlicher, bleibt aber einen Tag daneben (`Sunday, February 29, 2028`) und setzt zudem den Wochentag von March 1 falsch an.
-- **Qwen3-VL Deutsch** erfindet den **31. Februar 2028**.
-- **Qwen2-VL Deutsch** zerfällt zu `VortrefflicheUCCESS`; Englisch liefert ein falsches Jahr/Datum.
-- **Qwen2.5** scheitert in Deutsch und Englisch und erzeugt falsche Monatsübergänge.
-- **Llama3.2** springt auf 2024 und erzeugt ungültige Datumsfolgen.
-- **DeepSeek** setzt `yesterday` fälschlich auf 27. Februar und springt anschließend auf den 15. Februar; Endantwort und Herleitung sind falsch.
-
-Damit ist Datums-/Kalenderlogik ein starkes Argument für einen **deterministischen Date/Time-Resolver** statt LLM-Reasoning.
+Das ist ein wichtiges Ergebnis für allgemeine Nutzung: **kleine lokale LLMs sind keine zuverlässigen Rechen-, Kalender- oder Regel-Engines**. Eine einfache Systemfunktion ist schneller, exakter und spart Accelerator-Zeit.
 
 ## Sprachverständnis und Fremdsprachen
 
+Die Tests enthalten vor allem Deutsch und Englisch. Aussagen zu weiteren Sprachen wären ohne eigene isolierte Tests nicht belastbar.
+
 ### Deutsch
 
-**Gemma** besitzt das beste allgemeine deutsche Sprachverständnis im Test, ist aber beim Kalender-Reasoning auf Deutsch überraschend schwach.  
-**Qwen3-1.7B** formuliert deutlich natürlicher als die kleineren Hailo-LLMs und VLMs.  
-**Qwen2.5** versteht einfache deutsche Fakten und Befehle, zeigt aber grammatische Fehler, unnötige Ablehnungen und semantische Aussetzer.  
-**Llama3.2** kann einfache deutsche Fakten beantworten, ignoriert aber häufig die gewünschte Form und halluziniert Kontext.  
-**DeepSeek-R1-Distill** zeigt die stärkste Sprachasymmetrie: die deutsche Frankreich-Frage degeneriert in weitgehend sinnlosen Text, während dieselbe Frage auf Englisch korrekt beantwortet wird.  
-**Qwen2-VL** zeigt bei längerer deutscher Generation deutliche multilinguale Decoder-Artefakte.
+- **Gemma 4 E2B**: insgesamt stärkste deutschsprachige Qualität, kohärent und meist natürlich; auch Gemma kann bei Reasoning gravierend falsch liegen.
+- **Qwen3-1.7B**: brauchbares Deutsch und der beste native Hailo-Kompromiss. Grammatik und semantische Präzision liegen aber klar unter Gemma.
+- **Qwen2.5-1.5B**: verständlich, aber häufiger unnatürliche Formulierungen und Fehlinterpretationen.
+- **Llama3.2-1B**: versteht einfache deutsche Fragen teilweise, produziert aber ungewöhnliche Grammatik und falsche Antworten.
+- **DeepSeek-R1-Distill**: deutlich schwächeres Deutsch; Antworten driften teilweise in gemischte Sprache und unnötige Gedankenketten.
+- **Qwen2-VL**: bei längeren deutschen Antworten treten schwere Token-/Sprachzerfallsartefakte auf.
+- **Qwen3-VL**: deutlich stabileres Deutsch als Qwen2-VL, jedoch weiterhin Halluzinationen und Wiederholungen.
 
 ### Englisch
 
-- **Gemma** profitiert bei der schwierigsten Reasoning-Aufgabe deutlich von Englisch und liefert als einziges Modell die korrekte Kalenderantwort.
-- **DeepSeek** ist auf Englisch wesentlich verständlicher als auf Deutsch, bleibt aber faktisch unzuverlässig (`Bolivia → Buenos Aires`) und überdenkt einfache Aufgaben.
-- **Qwen3-1.7B** formuliert nach einem frischen englischen Chat kohärent, löst die Kalenderaufgabe jedoch weiterhin falsch.
-- **Llama3.2** bleibt auch auf Englisch schwach; ein Sprachwechsel behebt die Datumsfehler nicht.
-- **Qwen2.5** produziert auf Englisch lange, aber falsche Datumslogik.
-- **Qwen2-VL** bleibt auch auf Englisch bei komplexerem Reasoning instabil.
+- **Gemma** ist im vorliegenden Material auf Englisch besonders stark. Auffällig ist, dass die englische Kalenderfrage korrekt gelöst wird, während die deutsche Variante scheitert.
+- **DeepSeek-R1-Distill** wirkt auf Englisch deutlich kohärenter als auf Deutsch, halluziniert aber trotzdem Fakten (`Buenos Aires` als Hauptstadt Boliviens) und kann falsche Zwischenschritte aufbauen.
+- **Qwen3-1.7B**, **Qwen2.5** und **Llama3.2** wurden im freien Teil weniger umfassend englisch getestet; daraus lässt sich noch keine belastbare englische Rangfolge ableiten.
 
-### Andere Sprachen / multilinguale Artefakte
+### Andere Sprachen
 
-Es gab keinen kontrollierten Spanisch-/Französisch-/Russisch-Benchmark. Deshalb sollte aus diesen Daten **keine allgemeine Multilingual-Rangliste** abgeleitet werden. Sichtbare chinesische oder anderssprachige Fragmente bei Qwen2-VL sind in diesem Test kein Beleg für gutes Fremdsprachenverständnis, sondern eher ein Decoder-/Generationsartefakt.
+Bei **Qwen2-VL** erscheinen chinesische Zeichen und englische Fragmente innerhalb einer deutschen Antwort. Das ist **kein Beleg für gutes Chinesisch**, sondern hier eher ein Hinweis auf Decoder-/Tokenizer-/Generationsinstabilität. Für echte Mehrsprachigkeitsbewertungen sind separate Benchmarks je Sprache erforderlich.
 
-## Home-Assistant-Intent: striktes Format vs. echtes Verständnis
+## Technische Betrachtung auf Raspberry Pi 5 + Hailo-10H
 
-Der rohe Accuracy-Wert ist hart: Gemma 1/10, alle vollständig ausgewerteten Hailo-Modelle 0/10. Trotzdem sind die Fehlerarten sehr unterschiedlich.
+### Qwen3-1.7B als nativer Standard-LLM
 
-### Gemma
+Qwen3-1.7B ist der überzeugendste Allrounder der getesteten nativen Hailo-Textmodelle:
 
-Gemma versteht mehrere Befehle semantisch richtig, scheitert aber häufig am exakt verlangten Vier-Felder-Format:
+- ca. **0,64 s TTFT** im kontrollierten Kurztext-Test,
+- ca. **1,18 s** mittlere Gesamtdauer,
+- 5/6 korrekte Kurzantworten,
+- deutlich bessere allgemeine Qualität als Qwen2.5, Llama3.2 und die VLMs als Textmodelle,
+- aber nur **2048 Token Gesamtkontext**.
 
-- `LIGHT_BRIGHTNESS|Wohnzimmer|70`: Intent, Ziel und Wert stimmen, `TARGET_TYPE` fehlt.
-- `CLIMATE_TEMPERATURE|Schlafzimmer|19,5`: semantisch stark, Schema unvollständig.
-- `VACUUM_START|name|Deebot mini|-`: vollständig korrekt.
-- `STATE_READ_TEMPERATURE|Wohnzimmer|- -`: Intent/Ziel plausibel, Schema fehlerhaft.
-- Cover-/Switch-Beispiele zeigen aber auch echte Intent-Fehler.
+Das macht es besonders attraktiv für lokale interaktive UIs, Voice-Frontends, kompakte Q&A-Dienste und kurze API-Anfragen.
 
-Das macht Gemma als **semantischen Fallback mit nachgelagerter deterministischer Validierung** deutlich interessanter als der strikte 10-%-Score allein vermuten lässt.
+### Qwen2.5-1.5B als Fast Path
 
-### Qwen3-1.7B
+Qwen2.5 ist mit ca. **0,38 s TTFT** schneller als Qwen3-1.7B. Für sehr einfache, kurze und tolerante Workloads kann das attraktiv sein. Der Qualitätsverlust ist aber bereits bei elementaren Aufgaben sichtbar. Auch hier gilt die 2k-Kontextgrenze.
 
-Qwen3-1.7B erkennt in mehreren Antworten den richtigen Intent-Namen, verschiebt ihn aber in die falsche Spalte oder gibt Literal-Platzhalter aus:
+### Gemma als Quality- und Long-Context-Pfad
 
-```text
-INTENT|LIGHT_BRIGHTNESS|Wohnzimmer|70%
-INTENT|LIGHT_ON|Küche|-.
-```
+Gemma zeigt, dass ein CPU-Modell auf dem Raspberry Pi 5 sinnvoll sein kann, wenn Qualität und Kontext wichtiger sind als Latenz:
 
-Das spricht für **teilweises Aufgabenverständnis**, aber schwaches Schema-Lernen bei diesem Prompt. Für direkte Tool-Ausführung reicht das nicht.
+- kontrollierte Kurztexte: **6/6 korrekt**,
+- TTFT ungefähr **2,0 s**,
+- **4096 Input-Tokens** im stabilen Setup,
+- längere Antworten werden durch ungefähr **5–6 Token/s Decode** schnell teuer,
+- eine 68-Token-Geschichte dauerte rund **13,5 s**,
+- 71 Output-Tokens beim Zählen von 1 bis 20 benötigten rund **13,6 s**.
 
-### Qwen2.5
+Für einen lokalen interaktiven Dienst ist Gemma daher eher ein **Quality-/Context-Backend** als ein universeller Low-Latency-Backend.
 
-Qwen2.5 kollabiert bei sehr unterschiedlichen Aufgaben wiederholt auf `STATE_READ_TEMPERATURE`, übersetzt Targets (`Wohnzimmer → living_room`, `Küche → kitchen`) und erfindet Werte. Das ist nicht nur Formatversagen, sondern ein klarer semantischer Routingfehler.
+### VLMs als Textmodelle
 
-### Llama3.2
+Qwen2-VL kann `2+2` in unter einer halben Sekunde beantworten. Technisch ist das beeindruckend, aber die längeren Antworten zeigen, dass hohe Geschwindigkeit keine gute allgemeine Sprachqualität garantiert.
 
-Llama ignoriert die Klassifikationsform häufig vollständig und antwortet in freier Prosa („Ich kann nicht direkt auf deine Geräte ...“). Das Special Token ist hier nicht das Problem; auch nach dessen Entfernung bleibt die Ausgabe für Intent-/Slot-Extraktion unbrauchbar.
+**Qwen-VL sollte primär nach Bildqualität ausgewählt werden.** Die vorliegenden Daten bewerten nur die Textseite. Ein separater Bildbenchmark mit identischen Frames ist notwendig, bevor zwischen Qwen2-VL und Qwen3-VL für Vision-Anwendungen entschieden wird.
 
-### Qwen2-VL / Qwen3-VL
+## Empfehlungen nach Einsatzprofil
 
-Beide VLMs erreichen 0/10. Qwen3-VL ist sprachlich sauberer, halluziniert aber Felder, dupliziert Strukturen und verändert Namen. Qwen2-VL produziert zusätzlich beschädigte Token-/HTML-artige Fragmente. Für direkte Geräteaktionen sind beide ungeeignet.
+| Nutzung | Empfehlung | Warum |
+|---|---|---|
+| **Allgemeiner lokaler Chat** | **Qwen3-1.7B** | bestes Qualitäts-/Latenz-Verhältnis auf Hailo |
+| **Maximale lokale Textqualität** | **Gemma 4 E2B** | stärkste Korrektheit, Sprache und 4k Input |
+| **Ultra-Low-Latency für einfache Texte** | **Qwen2.5-1.5B** | sehr niedrige TTFT, Qualitätsverlust akzeptieren |
+| **Längere Prompts / mehr Chat-Historie** | **Gemma 4 E2B** | 4k statt 2k Input-Spielraum |
+| **Kleines RAG** | **Qwen3-1.7B** | schnell, wenn Retrieval stark komprimiert ist |
+| **Größeres lokales RAG** | **Gemma 4 E2B** | doppelte Input-Grenze; trotzdem Chunking nötig |
+| **Längere Erklärungen / kreative Texte** | **Gemma 4 E2B** | deutlich kohärenter als die kleinen Hailo-Modelle |
+| **Einfaches lokales Q&A mit hoher Request-Rate** | **Qwen3-1.7B** | gute Balance aus Durchsatz und Qualität |
+| **JSON / maschinenlesbare Ausgabe** | **Gemma oder Qwen3-1.7B + Schema-Validator** | beste beobachtete Strukturtreue |
+| **Deutschsprachiger Assistent** | **Gemma**, alternativ **Qwen3-1.7B** | beste beobachtete Sprachqualität |
+| **Englischsprachiger Assistent** | **Gemma** | stärkste freie englische Antworten im Test |
+| **Reasoning / Kalender / Mathematik** | **Tool/Funktion zuerst**, Gemma für Erklärung | kleine LLMs machen selbst bei einfachen Regeln Fehler |
+| **Aktuelle Fakten / Wetter / Preise** | **externe Datenquelle/RAG/Tool** | mehrere Modelle halluzinierten nicht vorhandene Daten |
+| **Bild-/Multimodal-Anfragen** | **Qwen-VL**, Auswahl nach separatem Bildbenchmark | Texttest sagt wenig über Vision-Qualität aus |
+| **Sehr lange Dokumente** | **Chunking/Retrieval vor jedem Modell** | weder 2k noch 4k reichen für lange Dokumente |
+| **Deep-Reasoning mit DeepSeek 1.5B** | derzeit nicht empfohlen | Thinking-Overhead hoch, Qualität inkonsistent |
 
-### DeepSeek
-
-Der Journal-Log zeigt für die Intent-Gruppe sehr konstante Laufzeiten um 7,2 s bei `max_tokens=32`. Das Template startet jede Antwort mit `<think>`, wodurch ein großer Teil des knappen Output-Budgets für Reasoning statt für das geforderte kompakte Schema verbraucht wird. Da die eigentlichen Benchmark-Response-Bodies im bereitgestellten Journal nicht vollständig vorliegen, wird kein Accuracy-Wert erfunden.
-
-## Technische Beobachtungen
-
-<details>
-<summary><strong>1. TTFT ist nicht gleich Antwortzeit</strong></summary>
-
-Qwen2-VL, Qwen2.5 und Qwen3-1.7B beginnen sehr schnell zu generieren. Bei längeren Antworten dominiert aber der Decode-Anteil. Qwen3-VL startet eine Katzengeschichte nach rund 0,64 s, läuft wegen einer Wiederholungsschleife aber insgesamt etwa 55 s.
-
-Für Assist-Sprachinteraktion sind daher mindestens drei Werte nötig: **TTFT, Decode-Durchsatz und tatsächliche End-to-End-Zeit**.
-
-</details>
-
-<details>
-<summary><strong>2. WebGUI-Historie verfälscht spätere Latenzvergleiche</strong></summary>
-
-In mehreren freien Läufen steigen die Input-Tokens mit jeder Frage stark an. Qwen3-1.7B wächst beispielsweise von sehr kleinem Anfangskontext auf mehrere hundert Input-Tokens. Nach „New chat“ fallen sie wieder deutlich.
-
-Deshalb dienen die WebGUI-Läufe primär der **Qualitätsanalyse**. Für Speed-Rankings wird der isolierte Benchmark bevorzugt.
-
-</details>
-
-<details>
-<summary><strong>3. Stop-/Special-Token müssen im Service bereinigt werden</strong></summary>
-
-Llama3.2 gibt `<|eot_id|>` sichtbar zurück. DeepSeek zeigt `<｜end▁of▁sentence｜>` und Thinking-Marker. Solche bekannten Modell-Special-Tokens sollten backend-spezifisch entfernt bzw. als Stop-Sequenzen behandelt werden.
-
-Das ändert jedoch nur die Darstellung: falsche Inhalte wie `2+2 → 2` oder `17×6 → 34` bleiben falsch.
-
-</details>
-
-<details>
-<summary><strong>4. DeepSeek-Template erzwingt Reasoning</strong></summary>
-
-Der gerenderte Prompt endet mit:
+## Empfohlene Service-Architektur für allgemeine Nutzung
 
 ```text
-<｜Assistant｜><think>
+                         Client / Anwendung
+                                │
+                                ▼
+                         Hailo-10H-Services
+                                │
+              ┌─────────────────┼──────────────────┐
+              │                 │                  │
+              ▼                 ▼                  ▼
+      Qwen3-1.7B Hailo      Gemma CPU          Tools / RAG
+       schneller Pfad       Quality/4k         exakte Daten
+       ~2k Kontext          Kontextpfad              │
+              │                 │                    │
+              └─────────────────┴────────────────────┘
+                                │
+                                ▼
+                         fertige Antwort
+
+        Bild / Frame ─────────► Qwen-VL auf Hailo
 ```
 
-Damit wird selbst für `2+2` ein Reasoning-Modus angestoßen. In einem Assistenten, der oft nur eine kurze Antwort oder einen Intent braucht, ist das kontraproduktiv: hohe Latenz, höheres Output-Budget und schlechtere Instruktionsfolge.
+Routing sollte dabei nicht nur nach Aufgabentyp, sondern auch nach **Promptgröße** erfolgen. Ein 3.000-Token-RAG-Prompt kann zu Gemma passen, ist für einen 2k-Hailo-LLM aber bereits zu groß.
 
-</details>
+## Gesamturteil
 
-<details>
-<summary><strong>5. Qwen2-VL: möglicher Decoder-/Tokenizer-/Runtime-Effekt</strong></summary>
+Der Hailo-10H macht aus dem Raspberry Pi 5 einen überraschend reaktionsschnellen lokalen Inferenzserver. Die wichtigsten Grenzen sind derzeit jedoch nicht nur die Rechenleistung, sondern auch **Modellqualität und Kontextgröße**.
 
-Die längeren Qwen2-VL-Ausgaben enthalten ungewöhnliche Sprachmischungen, beschädigte Unicode-Fragmente und fremde Tokenstücke. Das kann reine Modellschwäche sein, ist aber auffällig genug, um zusätzlich **HEF-Version, Tokenizer, Prompt-Template und HailoRT-Decoder-Kompatibilität** zu prüfen, bevor daraus eine generelle Aussage über das Basismodell abgeleitet wird.
+Die nativen Hailo-Modelle liefern sehr niedrige Latenz, sind mit rund 2k Kontext aber auf kompakte Aufgaben angewiesen. Gemma ist deutlich langsamer, liefert dafür bessere Sprache, bessere Korrektheit und mit 4k ungefähr den doppelten Input-Spielraum. Für lange Dokumente oder große Chat-Historien benötigen trotzdem beide Ansätze Retrieval, Zusammenfassung oder Chunking.
 
-</details>
+Für das getestete System ist derzeit:
 
-<details>
-<summary><strong>6. Kleine Modelle sollten keine berechenbaren Aufgaben „reasonen“</strong></summary>
+- **Qwen3-1.7B-Instruct** der beste allgemeine Hailo-LLM,
+- **Gemma 4 E2B** das beste lokale Quality-/4k-Context-Modell,
+- **Qwen2.5-1.5B** eine interessante Fast-Path-Option,
+- **Qwen-VL** für Vision statt als primäres Textmodell sinnvoll,
+- **Llama3.2-1B und DeepSeek-R1-Distill-Qwen-1.5B** in der getesteten Konfiguration nicht erste Wahl.
 
-Datum/Wochentag, einfache Mathematik, Vergleiche, Prozentwerte und bekannte HA-Zustände sind deterministisch lösbar. Die Tests zeigen, dass selbst gute Sprachmodelle dort überraschend halluzinieren können.
-
-Ein deterministischer Resolver ist gleichzeitig **schneller, billiger und korrekter**.
-
-</details>
-
-## Empfehlung für Hailo-10H-Services
-
-### Text-Routing
-
-```text
-Benutzer / Home Assistant
-          |
-          v
-  deterministischer Router
-     / MiniLM retrieval
-      /           \
- eindeutig       unklar / frei
-    |                |
-    v                v
- direkt          Gemma 4 E2B
-```
-
-Optional kann **Qwen3-1.7B-Instruct** als schneller allgemeiner Hailo-Textmodus angeboten werden, wenn geringe Latenz wichtiger ist als maximale Zuverlässigkeit. Für sicherheits- oder aktionsrelevante HA-Aufgaben sollte es aber nicht ungeprüft das finale Tool-Objekt erzeugen.
-
-### Empfohlene Rollen
-
-| Rolle | Empfehlung |
-|---|---|
-| Deterministische HA-Aktionen/Status | Parser + Entity-/Tool-Resolver + Validierung |
-| Allgemeine Antwort mit höchster Qualität | **Gemma 4 E2B** |
-| Schneller nativer Hailo-Textmodus | **Qwen3-1.7B-Instruct** |
-| Sehr einfache/experimentelle Low-Latency-Texte | Qwen2.5-1.5B, nur mit klaren Grenzen |
-| Bildanalyse | VLM separat nach **Bildbenchmark** auswählen |
-| Kalender/Mathematik | deterministischer Code, nicht LLM |
-| Aktuelles Wetter/Live-Daten | Tool/Datenquelle; sonst abstain |
-| Rohes Tool-/JSON-Objekt | niemals ungeprüft ausführen |
-
-### Derzeit nicht als Standard-Textmodell empfohlen
-
-- Qwen2-VL: Decoder-/Sprachstabilität
-- Qwen3-VL: Wiederholung, Halluzination, strukturelle Instabilität
-- Llama3.2-1B: geringe Korrektheit/Instruktionsfolge in diesem Setup
-- DeepSeek-R1-Distill-Qwen-1.5B: erzwungenes Reasoning, hohe Latenz, starke Deutsch/Englisch-Asymmetrie
-
-## Nächste sinnvolle Benchmarks
-
-1. Jeden kontrollierten Test mindestens 5–10 Mal ausführen und Median/P95 erfassen.
-2. Frische Konversation pro WebGUI-Qualitätstest erzwingen.
-3. Deutsch und Englisch als identische Testpaare führen.
-4. Ergänzen: Russisch/Französisch/Spanisch, falls diese Sprachen produktiv relevant sind.
-5. Aktuelle Daten getrennt testen: „ohne Tool muss abstain“ vs. „mit Tool muss korrekt zitieren“.
-6. JSON-Schema-Constrained-Decoding testen, falls HailoRT/Backend das unterstützt.
-7. Separaten **VLM-Bildbenchmark** für den eigentlichen Bild-/Frigate-Anwendungsfall durchführen.
-8. HA-Benchmark zusätzlich mit semantischem Score auswerten: `intent korrekt`, `target korrekt`, `value korrekt`, `schema korrekt` getrennt statt nur Gesamt-PASS/FAIL.
+Der größte praktische Gewinn entsteht durch **Routing nach Qualität, Latenz und Kontextbedarf** statt durch ein einziges universelles Modell.
 
 ---
 
 # English
 
+## Purpose
+
+This page evaluates the tested models for **general Hailo-10H-Services use on a Raspberry Pi 5 with a Hailo-10H accelerator**. It focuses on correctness, latency, context limits, German/English language quality, reasoning, hallucinations, structured output, longer generations, RAG and multimodal use.
+
+Application-specific Home Assistant intent tests are intentionally excluded from all rankings and recommendations. Only the general text subset is used quantitatively.
+
 ## Executive summary
 
-The results show a clear separation between raw speed and trustworthy behavior:
+1. **Gemma 4 E2B** provides the strongest overall text quality and reasoning, but is substantially slower on the Raspberry Pi CPU.
+2. **Qwen3-1.7B-Instruct** provides the best quality/speed balance among the native Hailo LLMs and is the strongest default for fast general text inference.
+3. **Qwen2.5-1.5B-Instruct** is faster but clearly weaker on language understanding and more complex prompts.
+4. **Llama3.2-1B-Instruct** is fast but weak in this setup. Visible `<|eot_id|>` tokens are treated as removable service artifacts; several answers remain genuinely wrong after cleanup.
+5. **DeepSeek-R1-Distill-Qwen-1.5B** has too much thinking overhead and inconsistent quality for this low-latency use case.
+6. **Qwen2-VL** is extremely fast for text but unstable on longer generations.
+7. **Qwen3-VL** is more linguistically stable but slower and vulnerable to repetition loops; its real value should be judged in a separate vision benchmark.
 
-1. **Gemma 4 E2B** is the most accurate text model in this sample and shows the best overall reasoning, but CPU/LiteRT-LM inference is substantially slower.
-2. **Qwen3-1.7B-Instruct** is the strongest native Hailo LLM for fast general text: 5/6 on the controlled short-text benchmark at about 1.18 s average end-to-end latency.
-3. **Qwen2.5-1.5B-Instruct** is fast but materially weaker on language quality, instruction following and reasoning.
-4. **Qwen2-VL** is extremely fast but becomes unstable on longer text, including mixed-language/token corruption.
-5. **Qwen3-VL** is linguistically cleaner than Qwen2-VL but slower and prone to repetition loops, hallucination and unreliable structured output.
-6. **Llama3.2-1B-Instruct** is fast but weak in this runtime configuration. The visible `<|eot_id|>` marker is treated as a removable service artifact, not as an answer-quality failure.
-7. **DeepSeek-R1-Distill-Qwen-1.5B** is a poor fit for this low-latency assistant configuration: the template forces `<think>`, simple requests become verbose, German performance is much worse than English, and factual/reasoning failures remain common.
+## Context and input limits: 2k Hailo vs. 4k Gemma
 
-For Home Assistant the architecture conclusion is more important than the winner: **deterministic device actions and state queries should stay deterministic**. LLM inference should be reserved for ambiguity, natural-language explanation and real reasoning. No tested small model is reliable enough to execute raw generated tool/slot output without validation.
+### Hailo models
 
-## Controlled benchmark
+The tested native Hailo LLMs and Qwen VLMs use a **2048-token compiled context**. Input and output share this budget.
 
-| Model | Backend | Text accuracy | Text avg total | Text avg TTFT | Strict intent | Intent avg total | Intent avg TTFT |
-|---|---|---:|---:|---:|---:|---:|---:|
-| **Qwen2-VL-2B-Instruct** | Hailo VLM | 50.0% | **637 ms** | **328 ms** | 0/10 | 3,009 ms | 949 ms |
-| **Qwen2.5-1.5B-Instruct** | Hailo LLM | 66.7% | 934 ms | 381 ms | 0/10 | 3,523 ms | 1,109 ms |
-| **Llama3.2-1B-Instruct** | Hailo LLM | 33.3%* | 959 ms | 686 ms | 0/10 | 3,987 ms | 1,021 ms |
-| **Qwen3-1.7B-Instruct** | Hailo LLM | **83.3%** | 1,178 ms | 639 ms | 0/10 | 5,267 ms | 1,875 ms |
-| **Qwen3-VL-2B-Instruct** | Hailo VLM | 66.7% | 1,354 ms | 642 ms | 0/10 | 4,596 ms | 1,890 ms |
-| **Gemma 4 E2B** | CPU / LiteRT-LM | **100%** | 2,369 ms | 2,005 ms | **1/10** | 5,691 ms | 3,673 ms |
-| **DeepSeek-R1-Distill-Qwen-1.5B** | Hailo LLM | n/a** | 5,751 ms** | n/a | n/a** | 7,234 ms** | n/a |
+With `max_tokens=32`, the effective accepted input in the benchmark was roughly **2015 tokens** after output reservation and template overhead. Reserving more output directly reduces the available input budget.
 
-\* Content-adjusted after stripping `<|eot_id|>`. The raw script reported 0/6.  
-\** The supplied server journal contains request timings but not enough response-body/TTFT data to reconstruct a trustworthy accuracy score.
+This is well suited to short prompts, compact chat, small RAG snippets and interactive Q&A. It becomes restrictive for long chat history, large schemas, multiple retrieved passages, code and document-heavy prompts.
 
-## Key quality findings
+### Gemma
 
-### Correctness
+Gemma runs through LiteRT-LM on the Raspberry Pi CPU with a deliberately configured **4096-token input ceiling** in this setup.
 
-Gemma is the only model with 6/6 on the controlled short-text set. Qwen3-1.7B is the strongest accelerator-native text model at 5/6. Qwen2.5 and Qwen3-VL reach 4/6, Qwen2-VL 3/6, and content-normalized Llama3.2 2/6.
+That provides roughly twice the prompt space of the Hailo path and is useful for longer chat history, larger RAG contexts and more complex instructions. It is not free: larger input increases prefill latency and memory consumption.
 
-### Hallucination control
+Tests with **8192 input tokens** caused substantially higher RAM use and eventual instability/crashes on this Raspberry Pi setup, which is why **4096** is the practical stable limit used here.
 
-The unsupported “weather today” prompt is a useful test. Gemma refuses to invent live weather; Qwen2.5 also recognizes the limitation, although awkwardly. Qwen3-1.7B, Qwen3-VL and Llama invent temperatures, conditions, dates or locations. This is a major distinction for production assistants.
+### Practical impact
+
+| Workload | 2k Hailo | 4k Gemma |
+|---|---|---|
+| short Q&A | **excellent** | good but slower |
+| short chat history | **good** | **very good** |
+| long chat history | limited | **better** |
+| small RAG | **good** | **very good** |
+| multiple RAG passages | quickly constrained | **more flexible** |
+| long documents | chunking required | chunking still required |
+| large schemas/tool prompts | difficult | better, still limited vs cloud models |
+| long input + long output | strongly constrained | more flexible |
+
+Routing should therefore consider **prompt size as well as task type**. A 3,000-token request can fit the Gemma path but cannot be sent unchanged to a 2k Hailo model.
+
+## Controlled general text benchmark
+
+| Model | Backend | Correct | Avg total | Avg TTFT | Context/input | Character |
+|---|---|---:|---:|---:|---|---|
+| **Qwen2-VL-2B-Instruct** | Hailo VLM | 3/6 = 50.0% | **637 ms** | **328 ms** | 2048 total | fastest, weak text robustness |
+| **Qwen2.5-1.5B-Instruct** | Hailo LLM | 4/6 = 66.7% | 934 ms | 381 ms | 2048 total | low latency, lower quality |
+| **Llama3.2-1B-Instruct** | Hailo LLM | 2/6 = 33.3%* | 959 ms | 686 ms | 2048 total | fast but inaccurate |
+| **Qwen3-1.7B-Instruct** | Hailo LLM | **5/6 = 83.3%** | 1,178 ms | 639 ms | 2048 total | best Hailo text balance |
+| **Qwen3-VL-2B-Instruct** | Hailo VLM | 4/6 = 66.7% | 1,354 ms | 642 ms | 2048 total | better language, multimodal role |
+| **Gemma 4 E2B** | CPU / LiteRT-LM | **6/6 = 100%** | 2,369 ms | 2,005 ms | **4096 input** | best quality and larger context |
+| **DeepSeek-R1-Distill-Qwen-1.5B** | Hailo LLM | n/a** | 5,751 ms** | n/a | 2048 total | heavy thinking overhead |
+
+\* Content score after ignoring removable `<|eot_id|>`.  
+\** Timings are available, but the supplied DeepSeek logs did not expose all response bodies in a form suitable for a fair reconstructed accuracy score.
+
+## Quality and speed ranking
+
+| Quality rank | Model | Accuracy |
+|---:|---|---:|
+| 1 | **Gemma 4 E2B** | **100%** |
+| 2 | **Qwen3-1.7B-Instruct** | **83.3%** |
+| 3 | Qwen2.5-1.5B-Instruct | 66.7% |
+| 3 | Qwen3-VL-2B-Instruct | 66.7% |
+| 5 | Qwen2-VL-2B-Instruct | 50.0% |
+| 6 | Llama3.2-1B-Instruct | 33.3%* |
+
+| Speed rank | Model | Avg total | Avg TTFT |
+|---:|---|---:|---:|
+| 1 | **Qwen2-VL-2B-Instruct** | **637 ms** | **328 ms** |
+| 2 | **Qwen2.5-1.5B-Instruct** | 934 ms | 381 ms |
+| 3 | Llama3.2-1B-Instruct | 959 ms | 686 ms |
+| 4 | **Qwen3-1.7B-Instruct** | 1,178 ms | 639 ms |
+| 5 | Qwen3-VL-2B-Instruct | 1,354 ms | 642 ms |
+| 6 | Gemma 4 E2B | 2,369 ms | 2,005 ms |
+| 7 | DeepSeek-R1-Distill-Qwen-1.5B | 5,751 ms | n/a |
+
+## Qualitative observations
+
+### Correctness and reasoning
+
+Gemma is the only model to complete all six controlled short tasks correctly. Qwen3-1.7B misses one simple weekday question but is clearly the strongest Hailo text model. Qwen2.5, the VLMs and Llama all show elementary errors.
+
+Calendar reasoning is weak across the small models. Gemma itself fails the German March 1, 2028 question with an impossible February date, then correctly solves the equivalent English version. Fluent language therefore does not imply reliable symbolic reasoning.
+
+### Hallucinations and live data
+
+When asked about today's weather without any weather source, Gemma correctly states that it lacks live data. Several other models invent temperatures, conditions, wind or even a location.
+
+A generally useful local service should use **tools, APIs or RAG for live and important facts** instead of relying on model memory.
+
+### Longer outputs
+
+Longer generations expose weaknesses that short latency benchmarks hide. Qwen3-VL entered a repetition loop and took roughly **55 seconds** to fill a 256-token output despite a first token after about 0.64 seconds. Qwen2-VL degraded into corrupted/multilingual fragments. Gemma was much more coherent but slower at roughly 5–6 decoded tokens per second.
 
 ### Structured output
 
-Qwen3-1.7B produced the cleanest free-form JSON sample. Gemma, Qwen2-VL and Llama produced semantically correct JSON with repairable wrappers. Qwen2.5 added unwanted prose. Qwen3-VL duplicated JSON blocks and mutated keys (`alter` → `ALTER` / `altern`), which is unsafe for direct schema execution.
+Gemma and Qwen3-1.7B showed the strongest structured-output behavior in the supplied examples. Qwen3-VL sometimes emitted duplicate objects or mutated keys. Programmatic consumers should always validate JSON or other structured responses against a schema.
 
-### Reasoning
+## Language behavior
 
-The March 1, 2028 calendar task is the strongest discriminator. The correct answer is **Monday, February 28, 2028**. Only the English Gemma run reaches the correct result. German Gemma, both VLMs, Qwen2.5, Qwen3-1.7B, Llama and DeepSeek all fail in different ways, often inventing impossible dates.
+### German
 
-### Language understanding
+Gemma provides the best overall German quality. Qwen3-1.7B is the strongest native Hailo alternative. Qwen2.5 is understandable but less natural and less precise. Llama3.2 and DeepSeek are substantially weaker. Qwen2-VL has severe longer-output degradation, while Qwen3-VL is more stable but still hallucination-prone.
 
-German and English performance is not symmetric:
+### English
 
-- Gemma is strong in both languages, but the hard calendar task succeeds in English and fails in German.
-- DeepSeek shows the largest gap: the German France query degenerates into nonsensical text while the English equivalent is answered correctly.
-- Qwen3-1.7B produces relatively natural German, but better English phrasing does not fix its date reasoning.
-- Qwen2.5 understands basic German but has grammar/refusal problems and weak reasoning.
-- Qwen2-VL shows multilingual token corruption on longer German generations.
-- Llama can answer simple German facts but remains highly context- and prompt-sensitive.
+Gemma is particularly strong in the supplied English examples. DeepSeek is noticeably more coherent in English than German, but still hallucinates facts such as `Buenos Aires` as Bolivia's capital. The other Hailo text models need a larger isolated English benchmark before a strong language-specific ranking can be made.
 
-No controlled Spanish/French/Russian benchmark was supplied, so no broader multilingual ranking should be inferred from this dataset.
+## Recommendations by workload
 
-## Home Assistant interpretation
+| Workload | Recommendation | Reason |
+|---|---|---|
+| **general local chat** | **Qwen3-1.7B** | best Hailo quality/latency balance |
+| **maximum local text quality** | **Gemma 4 E2B** | strongest correctness and language quality |
+| **ultra-low-latency simple text** | **Qwen2.5-1.5B** | very low TTFT |
+| **larger prompts/chat history** | **Gemma 4 E2B** | 4k instead of 2k input space |
+| **small RAG** | **Qwen3-1.7B** | fast if retrieval is compact |
+| **larger local RAG** | **Gemma 4 E2B** | twice the input budget |
+| **longer explanations/creative text** | **Gemma 4 E2B** | more coherent generations |
+| **high-rate short Q&A** | **Qwen3-1.7B** | strong speed/quality compromise |
+| **JSON/structured output** | **Gemma or Qwen3-1.7B + validator** | strongest observed structure handling |
+| **German assistant** | **Gemma**, then **Qwen3-1.7B** | best observed German quality |
+| **English assistant** | **Gemma** | strongest supplied English outputs |
+| **math/calendar/rules** | **deterministic tool first** | faster and more reliable than small LLMs |
+| **live facts/weather/prices** | **API/RAG/tool** | prevents unsupported hallucinations |
+| **vision/multimodal** | **Qwen-VL** | select with a separate image benchmark |
+| **very long documents** | **chunking/retrieval for every model** | neither 2k nor 4k is a long-context solution |
+| **DeepSeek 1.5B reasoning** | currently not recommended | high thinking overhead, inconsistent quality |
 
-A strict 0/10 intent score does not always mean zero semantic understanding.
+## Recommended general architecture
 
-**Gemma** often identifies the correct action and slots but omits `TARGET_TYPE` or breaks the requested four-field schema. This makes it a plausible semantic fallback behind deterministic validation.
+```text
+                         Client / application
+                                  │
+                                  ▼
+                           Hailo-10H-Services
+                                  │
+               ┌──────────────────┼──────────────────┐
+               │                  │                  │
+               ▼                  ▼                  ▼
+       Qwen3-1.7B Hailo       Gemma CPU          Tools / RAG
+        fast ~2k path        quality / 4k        exact/live data
+               │                  │                  │
+               └──────────────────┴──────────────────┘
+                                  │
+                                  ▼
+                              response
 
-**Qwen3-1.7B** often contains the intended intent token but places it in the wrong column or prints literal schema labels. This is partial understanding, not safe schema compliance.
+          image / frame ───────► Qwen-VL on Hailo
+```
 
-**Qwen2.5** repeatedly collapses unrelated actions into `STATE_READ_TEMPERATURE`; that is a semantic routing failure rather than a formatting issue.
+The largest practical gain comes from routing by **quality, latency and context requirement** rather than forcing one model to handle every request.
 
-**Llama3.2** commonly ignores the classification task and answers in prose. Stripping `<|eot_id|>` does not repair that.
+## Overall conclusion
 
-The VLMs remain unsuitable for direct HA action generation. DeepSeek's forced thinking mode wastes a small output budget before it can emit the compact schema.
+Hailo-10H turns the Raspberry Pi 5 into a surprisingly responsive local inference server. The main limitations are not only raw compute, but also **model quality and context size**.
 
-## Technical conclusions
+Native Hailo models provide excellent latency but currently operate with roughly 2k context and therefore need compact prompts. Gemma is significantly slower, but provides stronger language quality and a 4k input ceiling. Both still require retrieval, summarization or chunking for long documents and long-lived conversations.
 
-- Measure **TTFT, decode speed and full completion latency** separately.
-- Use isolated sessions for latency comparisons; WebGUI history growth materially changes later prompts.
-- Strip backend-specific stop tokens (`<|eot_id|>`, DeepSeek end/thinking markers) in the service.
-- Do not use a reasoning template that forces `<think>` for trivial classification requests.
-- Investigate Qwen2-VL HEF/tokenizer/template/runtime compatibility because its long-form token corruption is unusual.
-- Move arithmetic, calendar logic, comparisons, percentages and deterministic HA state/action resolution out of the LLM.
-- Validate every generated action against an explicit schema, known entities and allowed values.
-
-## Recommended production roles
-
-| Role | Recommendation |
-|---|---|
-| Deterministic HA actions/state | Parser + entity/tool resolver + validator |
-| Highest-quality general text | **Gemma 4 E2B** |
-| Fast native Hailo text | **Qwen3-1.7B-Instruct** |
-| Experimental ultra-low-latency text | Qwen2.5-1.5B with narrow scope |
-| Image analysis | Select VLM using a separate image benchmark |
-| Math/calendar | Deterministic code |
-| Live weather/current data | Tool/data source or abstain |
-| Raw tool/JSON execution | Never execute without validation |
-
-## Recommended next tests
-
-1. Repeat each controlled scenario 5–10 times and report median/P95.
-2. Force a fresh conversation for every WebGUI quality case.
-3. Mirror every reasoning task in German and English.
-4. Add controlled Russian/French/Spanish tests if those languages matter.
-5. Separate unsupported-current-data abstention from tool-assisted live-data tests.
-6. Evaluate constrained JSON/schema decoding if supported by the backend.
-7. Run a dedicated image/VLM benchmark for camera/Frigate workloads.
-8. Split HA scoring into intent, target, value and schema correctness instead of a single PASS/FAIL.
+For the tested system, **Qwen3-1.7B-Instruct is the best general Hailo LLM**, while **Gemma 4 E2B is the strongest local quality/context backend**.
