@@ -1,6 +1,6 @@
 """Resident object-detection runtime for Hailo-10H.
 
-The selected HEF is configured once and kept resident.  HTTP and ZMQ clients share
+The selected HEF is configured once and kept resident. HTTP and ZMQ clients share
 this runtime; no per-request VDevice or model configuration is performed.
 """
 
@@ -17,6 +17,7 @@ from PIL import Image, UnidentifiedImageError
 
 from .media import decode_base64
 from .models import ModelManager, prepare_model_version
+from .runtime import BusyError
 
 _LOG = logging.getLogger(__name__)
 
@@ -62,7 +63,41 @@ def letterbox(frame: np.ndarray, width: int, height: int) -> np.ndarray:
     return np.ascontiguousarray(output)
 
 
-def _class_aware_nms(boxes: np.ndarray, scores: np.ndarray, classes: np.ndarray, iou: float) -> np.ndarray:
+def unletterbox_detections(
+    detections: np.ndarray,
+    source_width: int,
+    source_height: int,
+    model_width: int,
+    model_height: int,
+) -> np.ndarray:
+    """Map normalized boxes from the letterboxed model plane back to the source image."""
+    if detections.size == 0:
+        return detections
+    result = np.array(detections, dtype=np.float32, copy=True)
+    scale = min(model_width / source_width, model_height / source_height)
+    resized_width = max(1, int(round(source_width * scale)))
+    resized_height = max(1, int(round(source_height * scale)))
+    pad_x = (model_width - resized_width) // 2
+    pad_y = (model_height - resized_height) // 2
+
+    active = result[:, 1] > 0
+    if not active.any():
+        return result
+    rows = result[active]
+    rows[:, [3, 5]] = (
+        rows[:, [3, 5]] * model_width - pad_x
+    ) / resized_width
+    rows[:, [2, 4]] = (
+        rows[:, [2, 4]] * model_height - pad_y
+    ) / resized_height
+    rows[:, 2:6] = np.clip(rows[:, 2:6], 0.0, 1.0)
+    result[active] = rows
+    return result
+
+
+def _class_aware_nms(
+    boxes: np.ndarray, scores: np.ndarray, classes: np.ndarray, iou: float
+) -> np.ndarray:
     if not len(boxes):
         return np.empty((0,), dtype=np.int64)
     keep: list[int] = []
@@ -80,11 +115,19 @@ def _class_aware_nms(boxes: np.ndarray, scores: np.ndarray, classes: np.ndarray,
             xx2 = np.minimum(boxes[current, 2], boxes[rest, 2])
             yy2 = np.minimum(boxes[current, 3], boxes[rest, 3])
             inter = np.maximum(0.0, xx2 - xx1) * np.maximum(0.0, yy2 - yy1)
-            area_current = max(0.0, (boxes[current, 2] - boxes[current, 0]) * (boxes[current, 3] - boxes[current, 1]))
-            areas = np.maximum(0.0, boxes[rest, 2] - boxes[rest, 0]) * np.maximum(0.0, boxes[rest, 3] - boxes[rest, 1])
+            area_current = max(
+                0.0,
+                (boxes[current, 2] - boxes[current, 0])
+                * (boxes[current, 3] - boxes[current, 1]),
+            )
+            areas = np.maximum(0.0, boxes[rest, 2] - boxes[rest, 0]) * np.maximum(
+                0.0, boxes[rest, 3] - boxes[rest, 1]
+            )
             overlap = inter / (area_current + areas - inter + 1e-6)
             order = rest[overlap <= iou]
-    return np.asarray(sorted(keep, key=lambda idx: scores[idx], reverse=True), dtype=np.int64)
+    return np.asarray(
+        sorted(keep, key=lambda idx: scores[idx], reverse=True), dtype=np.int64
+    )
 
 
 def _frigate_array(rows: list[list[float]], maximum: int) -> np.ndarray:
@@ -110,15 +153,26 @@ def decode_hailo_nms(output, threshold: float, maximum: int = 20) -> np.ndarray:
                 continue
             score = float(detection[4])
             if score >= threshold:
-                rows.append([
-                    float(class_id), score, float(detection[0]), float(detection[1]),
-                    float(detection[2]), float(detection[3]),
-                ])
+                rows.append(
+                    [
+                        float(class_id),
+                        score,
+                        float(detection[0]),
+                        float(detection[1]),
+                        float(detection[2]),
+                        float(detection[3]),
+                    ]
+                )
     return _frigate_array(rows, maximum)
 
 
-def decode_yolo26(outputs: dict[str, np.ndarray], threshold: float, maximum: int = 20,
-                  iou_threshold: float = 0.45, input_size: int = 640) -> np.ndarray:
+def decode_yolo26(
+    outputs: dict[str, np.ndarray],
+    threshold: float,
+    maximum: int = 20,
+    iou_threshold: float = 0.45,
+    input_size: int = 640,
+) -> np.ndarray:
     """Decode Hailo Model-Zoo YOLO26 anchor-free tensors and apply class-aware NMS."""
     bbox_tensors: dict[int, np.ndarray] = {}
     class_tensors: dict[int, np.ndarray] = {}
@@ -156,7 +210,9 @@ def decode_yolo26(outputs: dict[str, np.ndarray], threshold: float, maximum: int
         classes = probabilities.argmax(axis=-1)
         mask = scores >= threshold
         if mask.any():
-            boxes_all.append(np.stack((x1[mask], y1[mask], x2[mask], y2[mask]), axis=-1))
+            boxes_all.append(
+                np.stack((x1[mask], y1[mask], x2[mask], y2[mask]), axis=-1)
+            )
             scores_all.append(scores[mask])
             classes_all.append(classes[mask])
 
@@ -167,8 +223,14 @@ def decode_yolo26(outputs: dict[str, np.ndarray], threshold: float, maximum: int
     classes = np.concatenate(classes_all).astype(np.int32, copy=False)
     keep = _class_aware_nms(boxes, scores, classes, iou_threshold)[:maximum]
     rows = [
-        [float(classes[index]), float(scores[index]), float(boxes[index, 1]),
-         float(boxes[index, 0]), float(boxes[index, 3]), float(boxes[index, 2])]
+        [
+            float(classes[index]),
+            float(scores[index]),
+            float(boxes[index, 1]),
+            float(boxes[index, 0]),
+            float(boxes[index, 3]),
+            float(boxes[index, 2]),
+        ]
         for index in keep
     ]
     return _frigate_array(rows, maximum)
@@ -206,8 +268,8 @@ class HailoVisionBackend:
         self.infer_model = self.device.create_infer_model(self.path)
         self.infer_model.set_batch_size(1)
         infos = self.hef.get_output_vstream_infos()
-        # Raw multi-output models need deterministic host float tensors.  Hailo NMS
-        # output is left in its native NMS representation.
+        # Raw multi-output models need deterministic host float tensors. Hailo NMS
+        # output is left in its native representation.
         if len(infos) > 1:
             for info in infos:
                 self.infer_model.output(info.name).set_format_type(FormatType.FLOAT32)
@@ -219,8 +281,12 @@ class HailoVisionBackend:
         self.configured_model = self.config_context.__enter__()
         self.configured_model.set_scheduler_priority(self.settings.vision_scheduler_priority)
         self.input_shape = tuple(self.hef.get_input_vstream_infos()[0].shape)
-        _LOG.info("Resident vision model ready model=%s input_shape=%s postprocess=%s",
-                  self.settings.vision_model_id, self.input_shape, self.entry.get("postprocess"))
+        _LOG.info(
+            "Resident vision model ready model=%s input_shape=%s postprocess=%s",
+            self.settings.vision_model_id,
+            self.input_shape,
+            self.entry.get("postprocess"),
+        )
 
     def _bindings(self, frame: np.ndarray):
         buffers = {
@@ -237,7 +303,9 @@ class HailoVisionBackend:
         height, width = self.input_shape[:2]
         frame = letterbox(frame, width, height)
         bindings = self._bindings(frame)
-        self.configured_model.wait_for_async_ready(timeout_ms=int(self.settings.request_timeout * 1000))
+        self.configured_model.wait_for_async_ready(
+            timeout_ms=int(self.settings.request_timeout * 1000)
+        )
         completion_error: list[BaseException] = []
 
         def completed(info):
@@ -252,10 +320,18 @@ class HailoVisionBackend:
         if len(names) == 1:
             output = bindings.output(names[0]).get_buffer()
         else:
-            output = {name: np.expand_dims(bindings.output(name).get_buffer(), 0) for name in names}
+            output = {
+                name: np.expand_dims(bindings.output(name).get_buffer(), 0)
+                for name in names
+            }
         if self.entry.get("postprocess") == "yolo26_anchor_free" or isinstance(output, dict):
-            return decode_yolo26(output, confidence, maximum, self.settings.vision_iou_threshold,
-                                 max(height, width))
+            return decode_yolo26(
+                output,
+                confidence,
+                maximum,
+                self.settings.vision_iou_threshold,
+                max(height, width),
+            )
         return decode_hailo_nms(output, confidence, maximum)
 
     def close(self):
@@ -275,7 +351,9 @@ class VisionRuntime:
     def __init__(self, settings, backend=None):
         self.settings = settings
         self.backend = backend if backend is not None else HailoVisionBackend(settings)
-        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hailo-vision-owner")
+        self.executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="hailo-vision-owner"
+        )
         self.ready = False
         self.pending = 0
 
@@ -285,23 +363,33 @@ class VisionRuntime:
         await asyncio.get_running_loop().run_in_executor(self.executor, self.backend.start)
         self.ready = True
 
-    async def detect_array(self, frame: np.ndarray, confidence: float | None = None,
-                           maximum: int | None = None) -> np.ndarray:
+    async def detect_array(
+        self,
+        frame: np.ndarray,
+        confidence: float | None = None,
+        maximum: int | None = None,
+    ) -> np.ndarray:
         if not self.ready:
             raise RuntimeError("Vision model is disabled or not ready")
         if self.pending >= self.settings.vision_queue_size:
-            raise RuntimeError("Vision inference queue is full")
+            raise BusyError("Vision inference queue is full")
         confidence = self.settings.vision_confidence if confidence is None else confidence
         maximum = self.settings.vision_max_detections if maximum is None else maximum
         self.pending += 1
         future = asyncio.get_running_loop().run_in_executor(
             self.executor, self.backend.detect, frame, confidence, maximum
         )
-        future.add_done_callback(lambda _: setattr(self, "pending", max(0, self.pending - 1)))
+        future.add_done_callback(
+            lambda _: setattr(self, "pending", max(0, self.pending - 1))
+        )
         return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 
-    async def detect_base64(self, value: str, confidence: float | None = None,
-                            maximum: int | None = None):
+    async def detect_base64(
+        self,
+        value: str,
+        confidence: float | None = None,
+        maximum: int | None = None,
+    ):
         try:
             data = decode_base64(value, self.settings.max_body)
             with Image.open(io.BytesIO(data)) as image:
@@ -310,7 +398,17 @@ class VisionRuntime:
         except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
             raise ValueError("Invalid or oversized image") from exc
         result = await self.detect_array(frame, confidence, maximum)
-        return frame.shape[1], frame.shape[0], result
+        source_height, source_width = frame.shape[:2]
+        input_shape = getattr(self.backend, "input_shape", None)
+        if input_shape and len(input_shape) >= 2:
+            result = unletterbox_detections(
+                result,
+                source_width,
+                source_height,
+                int(input_shape[1]),
+                int(input_shape[0]),
+            )
+        return source_width, source_height, result
 
     def accepts_model(self, name: str) -> bool:
         configured = self.settings.vision_model
@@ -333,14 +431,22 @@ class VisionRuntime:
             "model": self.settings.vision_model_id if self.settings.vision_enabled else None,
             "model_path": getattr(self.backend, "path", None),
             "pending": self.pending,
-            "zmq_enabled": bool(self.settings.vision_enabled and self.settings.vision_zmq_enabled),
-            "zmq_endpoint": self.settings.vision_zmq_endpoint if self.settings.vision_zmq_enabled else None,
+            "zmq_enabled": bool(
+                self.settings.vision_enabled and self.settings.vision_zmq_enabled
+            ),
+            "zmq_endpoint": (
+                self.settings.vision_zmq_endpoint
+                if self.settings.vision_zmq_enabled
+                else None
+            ),
         }
 
     async def close(self):
         self.ready = False
         try:
             if self.settings.vision_enabled:
-                await asyncio.get_running_loop().run_in_executor(self.executor, self.backend.close)
+                await asyncio.get_running_loop().run_in_executor(
+                    self.executor, self.backend.close
+                )
         finally:
             self.executor.shutdown(wait=True, cancel_futures=True)
