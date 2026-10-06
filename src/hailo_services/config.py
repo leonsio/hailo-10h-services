@@ -8,6 +8,7 @@ VLM_MODEL = "Qwen2-VL-2B-Instruct"
 STT_MODEL = "whisper-base"
 LLM_MODEL = "gemma-4-E2B-it"
 HA_ASSIST_MODEL = "HA-Assist"
+VISION_MODEL = "yolov11m"
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,7 @@ class Settings:
     model_release: str = "auto"
     vlm_release: str = "auto"
     hailo_llm_release: str = "auto"
+    vision_release: str = "auto"
     vlm_max_input_tokens: int = 2048
     hailo_llm_max_input_tokens: int = 2048
     vlm_enabled: bool = True
@@ -24,6 +26,15 @@ class Settings:
     minilm_enabled: bool = True
     hailo_llm_enabled: bool = False
     hailo_llm_model: str = "Qwen2.5-1.5B-Instruct"
+    vision_enabled: bool = False
+    vision_model: str = VISION_MODEL
+    vision_zmq_enabled: bool = True
+    vision_zmq_endpoint: str = "tcp://127.0.0.1:5555"
+    vision_confidence: float = 0.4
+    vision_iou_threshold: float = 0.45
+    vision_max_detections: int = 20
+    vision_queue_size: int = 16
+    vision_scheduler_priority: int = 1
     litert_enabled: bool = False
     host: str = "0.0.0.0"
     port: int = 8090
@@ -69,6 +80,21 @@ class Settings:
         for name in ("vlm_max_input_tokens", "hailo_llm_max_input_tokens"):
             if not 1 <= getattr(self, name) <= 2048:
                 raise ValueError(f"{name} must be between 1 and the compiled HEF limit of 2048")
+        if not self.vision_model.strip():
+            raise ValueError("Vision model must not be empty")
+        if not 0 <= self.vision_confidence <= 1 or not 0 < self.vision_iou_threshold <= 1:
+            raise ValueError("Vision confidence/IoU thresholds must be between 0 and 1")
+        if not 1 <= self.vision_max_detections <= 100:
+            raise ValueError("vision_max_detections must be between 1 and 100")
+        if self.vision_queue_size < 1:
+            raise ValueError("vision_queue_size must be positive")
+        if not 0 <= self.vision_scheduler_priority <= 255:
+            raise ValueError("vision_scheduler_priority must be between 0 and 255")
+        if self.vision_zmq_enabled and not (
+            self.vision_zmq_endpoint.startswith("tcp://")
+            or self.vision_zmq_endpoint.startswith("ipc://")
+        ):
+            raise ValueError("vision_zmq_endpoint must use tcp:// or ipc://")
 
     @property
     def vlm_model(self):
@@ -81,6 +107,11 @@ class Settings:
     @property
     def hailo_llm_model_id(self):
         name = Path(self.hailo_llm_model).name
+        return name[:-4] if name.endswith(".hef") else name
+
+    @property
+    def vision_model_id(self):
+        name = Path(self.vision_model).name
         return name[:-4] if name.endswith(".hef") else name
 
     @classmethod
@@ -107,6 +138,7 @@ class Settings:
                 "whisper": ("whisper_enabled", "whisper_hef"),
                 "minilm": ("minilm_enabled", None),
                 "hailo_llm": ("hailo_llm_enabled", "hailo_llm_model"),
+                "vision": ("vision_enabled", "vision_model"),
                 "gemma": ("litert_enabled", None),
             }
             if not isinstance(selections, dict) or set(selections) - set(roles):
@@ -121,7 +153,11 @@ class Settings:
                         raise ValueError(f"models.{role} does not allow max_input_tokens")
                     values[limit_key] = selection["max_input_tokens"]
                 if "release" in selection:
-                    release_key = {"vlm": "vlm_release", "hailo_llm": "hailo_llm_release"}.get(role)
+                    release_key = {
+                        "vlm": "vlm_release",
+                        "hailo_llm": "hailo_llm_release",
+                        "vision": "vision_release",
+                    }.get(role)
                     if release_key is None:
                         raise ValueError(f"models.{role} does not allow release")
                     values[release_key] = selection["release"]
@@ -134,7 +170,8 @@ class Settings:
                     values[model_key] = selection["model"]
                 if "path" in selection:
                     path_key = {"gemma": "litert_model_path", "minilm": "minilm_hef_path",
-                                "vlm": "vlm_hef", "whisper": "whisper_hef"}.get(role)
+                                "vlm": "vlm_hef", "whisper": "whisper_hef",
+                                "vision": "vision_model"}.get(role)
                     if path_key is None:
                         raise ValueError(f"models.{role} does not allow a path override")
                     values[path_key] = selection["path"]
