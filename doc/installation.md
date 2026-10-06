@@ -476,3 +476,12 @@ Use the same YAML keys in `deploy/hailo-10h-services.yaml`. Keep voice files
 readable by the service account. Piper runs on CPU with CUDA disabled and uses
 no Hailo device/model resources. Voice licences vary; inspect the chosen voice's
 model card. See the [speech API](api.md#post-v1audiospeech) for request formats.
+
+### Piper in Home Assistant via Wyoming
+
+Once `/health` reports `piper.ready: true`, Piper is available over both HTTP and
+the existing Wyoming listener (default TCP port 10300). Update/restart the service,
+then reload its **Wyoming Protocol** integration in Home Assistant. Select
+**hailo-piper** as the text-to-speech provider in the Assist voice assistant and
+choose the installed voice. There is no separate TTS port or API key for Wyoming.
+See [Wyoming STT and TTS](api.md#home-assistant-wyoming-stt-and-tts).

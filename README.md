@@ -21,7 +21,7 @@ they can coexist with compatible Hailo applications without per-request model re
 | Vision-language | Qwen2-VL-2B-Instruct, Qwen3-VL-2B-Instruct | `/v1/chat/completions`, MCP, WebSocket, MQTT |
 | Native Hailo LLM | Qwen, Llama, DeepSeek and other HEF LLMs from the model catalog | `/v1/chat/completions`, WebSocket, MQTT |
 | CPU LLM | Gemma 4 E2B through LiteRT-LM | `/v1/chat/completions`, WebSocket, MQTT |
-| Text-to-speech | Piper voices (CPU, configurable language) | `/v1/audio/speech` |
+| Text-to-speech | Piper voices (CPU, configurable language) | `/v1/audio/speech`, Wyoming |
 | Speech-to-text | Whisper Tiny / Base / Small | `/v1/audio/transcriptions`, Wyoming, MCP |
 | Object detection | YOLOv8, YOLO11, YOLO26 | `/v1/vision/detect`, Frigate ZMQ |
 | HA routing / retrieval | [`HA-Assist`](#home-assistant-virtual-model), HassIL, MiniLM | OpenAI-compatible chat model |
@@ -238,7 +238,7 @@ and VLM requests are bounded by their compiled 2048-token contexts. A request ma
 | WebSocket | `ws://HOST:8090/ws` | `chat` | `transcribe` | — |
 | MCP | `http://HOST:8090/mcp/` | `analyze_image`, `chat_text` | `transcribe_audio` | — |
 | MQTT | `hailo10h/request/...` | `chat` | `transcribe` | — |
-| Wyoming | `HOST:10300` | — | Home Assistant Assist STT | — |
+| Wyoming | `HOST:10300` | — | Home Assistant Assist STT (Whisper) + TTS (Piper CPU) | — |
 
 See [API and integrations](doc/api.md) for complete schemas, authentication,
 Frigate configuration, tool calling, metrics and Home Assistant details.

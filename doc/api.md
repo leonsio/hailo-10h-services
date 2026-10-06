@@ -18,7 +18,7 @@ MQTT and Frigate interfaces.
 | WebSocket | `ws://HOST:8090/ws` | `chat` | `transcribe` | — |
 | MCP | `http://HOST:8090/mcp/` | `analyze_image`, `chat_text` | `transcribe_audio` | — |
 | MQTT | `hailo10h/request/...` | `chat` | `transcribe` | — |
-| Wyoming | `HOST:10300` | — | Home Assistant Assist STT | — |
+| Wyoming | `HOST:10300` | — | Home Assistant Assist STT (Whisper) + TTS (Piper CPU) | — |
 
 The chat endpoint implements the subset of the OpenAI Chat Completions API required by
 the supported clients. `/v1/vision/detect` is a service-specific OpenAI-style `/v1`
@@ -517,11 +517,41 @@ OpenAI-compatible server mode and select `HA-Assist`. A request body parameter
 limit. Do not choose a llama.cpp-specific server mode solely for this service because
 that may add parameters not part of this gateway's supported request schema.
 
-## Home Assistant Wyoming STT
+## Home Assistant Wyoming STT and TTS
 
 Add the **Wyoming Protocol** integration in Home Assistant and point it to port 10300.
 The service advertises the configured Whisper model and supported language metadata.
 Home Assistant supplies speech-end/VAD; the service buffers audio until `audio-stop`.
+
+When Piper is enabled and ready, the same listener also advertises an installed
+`hailo-piper` TTS program with the configured default voice and additional locally
+installed voices/languages. No second Wyoming port is needed. Disabled or failed
+Piper backends are not advertised as available TTS services.
+
+After updating and restarting the service, reload the existing **Wyoming Protocol**
+integration in Home Assistant so it discovers the new TTS capability. In your
+Assist voice assistant settings, select **hailo-piper** for text-to-speech and the
+desired installed voice. Whisper remains the speech-to-text provider.
+
+| Wyoming request | Result |
+|---|---|
+| `describe` | `info` containing Whisper ASR and ready Piper TTS voices. |
+| `transcribe` + audio events | Whisper `transcript`. |
+| `synthesize` with `text` and optional `voice.name` or `voice.language` | `audio-start`, PCM `audio-chunk` events, then `audio-stop`. |
+
+Piper audio uses the voice's native sample rate, mono signed PCM16 little-endian.
+The server first generates a bounded WAV through the same independent CPU queue
+as `/v1/audio/speech`, then sends PCM in bounded chunks. This is buffered synthesis,
+not incremental text synthesis: `supports_synthesize_streaming` is false.
+SSML, speaker overrides and `synthesize-start/chunk/stop` are not supported.
+Unknown voices/languages and synthesis failures return a Wyoming `error` event
+with code `synthesis_failed`. `piper_max_input_chars`, `max_audio_seconds`,
+`queue_size` and `request_timeout` also apply to Wyoming TTS. A missing voice uses
+the configured default; language-only selection chooses a matching installed
+voice, preferring the default. Explicit voice name takes precedence over language.
+
+Wyoming uses no HTTP API key; use the service's trusted LAN listener for Home
+Assistant. Setting `wyoming_port: 0` disables both ASR and TTS on this transport.
 
 ## MCP
 
@@ -718,8 +748,8 @@ configured input/audio limits; 503 means disabled/unavailable/full queue;
 
 `GET /health` includes a `piper` block with enabled/ready, CPU device, default
 voice/language, pending count and startup error. Piper startup failure does not
-stop other backends. `GET /v1/models` includes `piper` when ready. The existing
-Wyoming endpoint remains speech-to-text only; this change adds HTTP TTS.
+stop other backends. `GET /v1/models` includes `piper` when ready. The Wyoming endpoint also exposes Piper TTS for Home Assistant; see
+[Wyoming STT and TTS](#home-assistant-wyoming-stt-and-tts).
 
 The Playground TTS panel uses `/v1/audio/speech` with WAV output. It lists locally
 installed voices, allows speed adjustment, retains generated audio and displays

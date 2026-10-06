@@ -19,6 +19,8 @@ from .metrics import count_output, record
 from .minilm import MiniLM
 from .models import ModelManager, prepare_model_version
 from .schemas import ChatRequest
+from .speech_hailo_whisper import create_model as create_whisper_model
+from .speech_hailo_whisper import transcribe as transcribe_whisper
 from .tool_calling import (
     has_tool_context,
 )
@@ -127,10 +129,8 @@ class HailoBackend:
                 _LOG.info("Loading resident Hailo LLM %s", self.paths["llm"])
                 self.llm = LLM(self.device, self.paths["llm"])
             if self.settings.whisper_enabled:
-                from hailo_platform.genai import Speech2Text
-
                 _LOG.info("Loading resident Whisper %s", self.paths["whisper"])
-                self.whisper = Speech2Text(self.device, self.paths["whisper"])
+                self.whisper = create_whisper_model(self.device, self.paths["whisper"])
             if self.settings.minilm_enabled:
                 self.minilm = MiniLM(self.device, self.artifact_paths["minilm_hef"], manager)
                 self.artifact_paths.update(self.minilm.artifacts)
@@ -316,17 +316,7 @@ class HailoBackend:
         Raises:
             BusyError: Whisper is disabled.
         """
-        from hailo_platform.genai import Speech2TextTask
-
-        if self.whisper is None:
-            raise BusyError("Whisper is disabled")
-        segments = self.whisper.generate_all_segments(
-            audio_data=audio,
-            task=Speech2TextTask.TRANSCRIBE,
-            language=language,
-            timeout_ms=int(self.settings.request_timeout * 1000),
-        )
-        return "".join(segment.text for segment in segments).strip()
+        return transcribe_whisper(self.whisper, audio, language, self.settings.request_timeout)
 
     def select_tools(self, request):
         """Prepare HA context, deterministic routes and selected tool schemas.

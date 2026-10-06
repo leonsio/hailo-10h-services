@@ -114,12 +114,16 @@ All paths below are relative to `src/hailo_services/`.
 | `__main__.py` | Logging, settings and single-worker uvicorn startup via `main`. |
 | `app.py` | FastAPI/MCP composition, ASGI access/body limits, lifecycle, UI assets, exception mapping, HTTP chat/SSE, transcription, detection and WebSocket routes. |
 | `config.py` | Frozen `Settings`; YAML/environment loading, model identifiers and configuration validation. |
-| `schemas.py` | Pydantic `ChatRequest`, `TranscribeRequest`, `VisionDetectRequest` and field validators. |
+| `schemas.py` | Pydantic `ChatRequest`, `TranscribeRequest`, `SpeechRequest`, `VisionDetectRequest` and field validators. |
 | `interfaces.py` | Structural `ChatBackend` contract; shared `ChatResult` and `ChatEmitter` types. |
 | `errors.py` | Backend-independent queue/unavailability and native LiteRT inference errors. |
 | `runtime.py` | Async backend lifecycle, routing, independent queues, cancellation-safe execution, streaming and readiness/model metadata. Re-exports backend/error classes for existing imports. |
-| `backend_hailo.py` | Resident SHARED VDevice, native LLM/VLM/Whisper/MiniLM lifecycle, Hailo chat/transcription and relevant context retrieval. |
+| `backend_hailo.py` | Resident SHARED VDevice and native model ownership; delegates Whisper creation/transcription to `speech_hailo_whisper.py`, and chat to the chat adapters. |
 | `backend_litert.py` | Resident CPU Gemma/LiteRT engine, conversation/tool adaptation, exact input budgeting, synchronous/streamed generation and native failure translation. |
+| `speech_common.py` | Backend-independent language matching shared by speech adapters and Wyoming voice selection. |
+| `speech_piper.py` | CPU Piper adapter, installed voice discovery, model/language selection, bounded audio generation and WAV/PCM encoding. |
+| `speech_hailo_whisper.py` | Native Whisper model creation on the existing SHARED device and transcription of normalized audio. |
+| `speech_runtime.py` | Independent bounded TTS owner queue, readiness, client deadlines and CPU model lifecycle; shared by HTTP and Wyoming. |
 | `chat_common.py` | Shared Hailo tool contract/history adaptation, strict Jinja template rendering, `BudgetedPrompt`, tokenizer budgeting and validated output parsing. |
 | `chat_hailo_llm.py` | Text-only native LLM adapter; image rejection, exact measured string and XML-wrapped tool output handling. |
 | `chat_hailo_vlm.py` | VLM-facing exports of common logic preserving visual placeholders. |
@@ -251,3 +255,17 @@ existing contracts.
 Native model tests use fake SDK bindings rather than hardware. The ZeroMQ IPC
 integration test is skipped only when the execution environment rejects socket
 binding with `EPERM`; other binding errors still fail the test.
+
+### Speech adapter boundaries
+
+Speech adapters follow the same model/backend naming scheme as chat adapters:
+`speech_piper.py` and `speech_hailo_whisper.py`. Shared language selection belongs
+in `speech_common.py`; asynchronous scheduling belongs in `speech_runtime.py`,
+not the Piper-specific adapter. HTTP `/v1/audio/speech` and Wyoming `synthesize`
+use the same TTS runtime, so they share queue capacity and the resident CPU voice.
+
+Whisper creation/inference are delegated to its dedicated speech adapter. Its
+native model is still owned and released by `backend_hailo.py` on the existing
+Hailo owner thread and SHARED VDevice; the extraction creates no additional device
+or independent Whisper scheduler. Wyoming translates transport events and never
+loads model-specific runtimes itself. No compatibility modules are introduced.

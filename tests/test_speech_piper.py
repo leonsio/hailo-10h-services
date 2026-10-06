@@ -14,7 +14,8 @@ from hailo_services.app import create_app
 from hailo_services.config import Settings
 from hailo_services.errors import BusyError
 from hailo_services.schemas import SpeechRequest
-from hailo_services.speech_piper import PiperBackend, SpeechRuntime
+from hailo_services.speech_piper import PiperBackend
+from hailo_services.speech_runtime import SpeechRuntime
 
 
 class SpeechBackend:
@@ -160,6 +161,7 @@ def test_piper_voice_language_speed_and_pcm(monkeypatch, tmp_path):
         SpeechRequest(input="Hello", voice="en_US-lessac-medium", language="en-US", speed=2)
     )
     assert len(calls) == 2
+    assert backend.default_language == "de_DE"  # Discovery must survive a resident voice switch.
     with pytest.raises(ValueError):
         backend._path("../escape")
     with pytest.raises(ValueError, match="not installed"):

@@ -41,7 +41,8 @@ from .models import ModelManager
 from .protocols import LANGUAGES, MQTTBridge, WyomingServer, dispatch
 from .runtime import Runtime
 from .schemas import ChatRequest, SpeechRequest, TranscribeRequest, VisionDetectRequest
-from .speech_piper import SpeechRuntime, installed_voices
+from .speech_piper import installed_voices
+from .speech_runtime import SpeechRuntime
 from .tool_calling import has_tool_context
 from .vision import COCO80, VisionRuntime
 from .vision_zmq import FrigateZmqServer
@@ -357,7 +358,7 @@ def create_app(
     speech = SpeechRuntime(settings, speech_backend)
     vision = VisionRuntime(settings, vision_backend)
     frigate_zmq = FrigateZmqServer(vision, settings)
-    wyoming = WyomingServer(runtime, settings)
+    wyoming = WyomingServer(runtime, settings, speech)
     mqtt = MQTTBridge(runtime, settings)
     mcp = MCPServer("Hailo-10H", version="0.1.0")
 

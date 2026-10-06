@@ -1,13 +1,16 @@
 """Wyoming speech and MQTT/WebSocket operation dispatch."""
 
 import asyncio
+import io
 import json
 import logging
 import re
 import ssl
 import time
 import uuid
+import wave
 from contextlib import suppress
+from pathlib import Path
 
 import aiomqtt
 import numpy as np
@@ -15,11 +18,14 @@ from wyoming.asr import Transcribe, Transcript
 from wyoming.audio import AudioChunk, AudioStart, AudioStop
 from wyoming.error import Error
 from wyoming.event import Event, async_write_event
-from wyoming.info import AsrModel, AsrProgram, Attribution, Describe, Info
+from wyoming.info import AsrModel, AsrProgram, Attribution, Describe, Info, TtsProgram, TtsVoice
+from wyoming.tts import Synthesize
 
 from .config import Settings
 from .media import audio_file, audio_metadata, decode_base64, normalize_audio
-from .schemas import ChatRequest, TranscribeRequest
+from .schemas import ChatRequest, SpeechRequest, TranscribeRequest
+from .speech_common import language_matches
+from .speech_piper import installed_voices
 
 _LOG = logging.getLogger(__name__)
 LANGUAGES = ["de", "en", "fr", "es", "it", "nl", "pt", "pl", "ru", "uk", "tr", "zh", "ja", "ko"]
@@ -43,14 +49,36 @@ def _debug(settings, message, *args):
         _LOG.debug(message, *args)
 
 
-def wyoming_info(settings=None):
-    """Build Wyoming discovery metadata for the enabled Whisper model.
+def _tts_voices(settings, speech):
+    """Describe installed voices only when CPU speech synthesis is ready.
+
+    Args:
+        settings (Settings): Configured default voice and provisioned voice directory.
+        speech (SpeechRuntime | None): Independent CPU TTS runtime.
+
+    Returns:
+        list[dict[str, str]]: Default-first voice IDs and declared languages.
+    """
+    if not settings.piper_enabled or speech is None or not speech.ready:
+        return []
+    default = {
+        "id": Path(settings.piper_voice).stem,
+        "language": getattr(speech.backend, "default_language", None) or settings.piper_language,
+    }
+    return [default] + [
+        voice for voice in installed_voices(settings) if voice["id"] != default["id"]
+    ]
+
+
+def wyoming_info(settings=None, speech=None):
+    """Build Wyoming discovery metadata for Whisper and ready Piper voices.
 
     Args:
         settings (Settings): Validated service settings controlling enabled models and limits.
+        speech (SpeechRuntime | None): CPU TTS readiness and voice metadata.
 
     Returns:
-        Info: ASR programs and supported languages.
+        Info: ASR and TTS programs with installed models/voices and languages.
 
     Notes:
         No application-specific exceptions are raised for valid inputs.
@@ -59,7 +87,7 @@ def wyoming_info(settings=None):
     attribution = Attribution(
         name="Hailo / OpenAI", url="https://github.com/hailo-ai/hailo_model_zoo_genai"
     )
-    return Info(
+    info = Info(
         asr=[
             AsrProgram(
                 name="hailo-whisper",
@@ -82,6 +110,32 @@ def wyoming_info(settings=None):
         if settings.whisper_enabled
         else []
     )
+
+    voices = _tts_voices(settings, speech)
+    if voices:
+        piper_attribution = Attribution(name="Piper", url="https://github.com/OHF-Voice/piper1-gpl")
+        info.tts = [
+            TtsProgram(
+                name="hailo-piper",
+                attribution=piper_attribution,
+                installed=True,
+                description="Piper text-to-speech on CPU",
+                version="0.1.0",
+                supports_synthesize_streaming=False,
+                voices=[
+                    TtsVoice(
+                        name=voice["id"],
+                        attribution=piper_attribution,
+                        installed=True,
+                        description=voice["id"],
+                        version=None,
+                        languages=[voice["language"]],
+                    )
+                    for voice in voices
+                ],
+            )
+        ]
+    return info
 
 
 async def read_bounded_event(reader, timeout):
@@ -129,14 +183,15 @@ async def read_bounded_event(reader, timeout):
 
 
 class WyomingServer:
-    """Serve bounded Wyoming discovery and PCM speech-transcription sessions."""
+    """Serve Wyoming discovery, Whisper transcription and Piper speech output."""
 
-    def __init__(self, runtime, settings):
+    def __init__(self, runtime, settings, speech=None):
         """Initialize WyomingServer configuration and owned dependencies.
 
         Args:
             runtime (Runtime): Owner-thread scheduler serving chat and speech requests.
             settings (Settings): Validated service settings controlling enabled models and limits.
+            speech (SpeechRuntime | None): Shared CPU TTS runtime used by HTTP and Wyoming.
 
         Returns:
             None: Creates the object without running inference.
@@ -145,6 +200,7 @@ class WyomingServer:
             No application-specific exceptions are raised for valid inputs.
         """
         self.runtime, self.settings = runtime, settings
+        self.speech = speech
         self.server = None
         self.connections = set()
 
@@ -180,8 +236,89 @@ class WyomingServer:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
+    async def synthesize(self, event, writer):
+        """Translate a Wyoming synthesis request into bounded CPU audio output.
+
+        Args:
+            event (Event): Text and optional voice/language selection.
+            writer (asyncio.StreamWriter): Connection receiving PCM audio events.
+
+        Returns:
+            None: Sends audio-start, bounded audio-chunk events and audio-stop.
+
+        Raises:
+            ValueError: Voice, language, speaker or text format is unsupported.
+            BusyError: CPU speech synthesis is not available or its queue is full.
+        """
+        if self.speech is None:
+            raise ValueError("Piper TTS is not configured")
+        request = Synthesize.from_event(event)
+        if request.text_format not in {None, "text"}:
+            raise ValueError("Piper supports plain text only, not SSML")
+        voices = _tts_voices(self.settings, self.speech)
+        selected = None
+        if request.voice is not None:
+            if request.voice.speaker is not None:
+                raise ValueError("Piper speaker selection is not supported")
+            if request.voice.name:
+                selected = next(
+                    (voice for voice in voices if voice["id"] == request.voice.name), None
+                )
+                if selected is None:
+                    raise ValueError("Unknown Piper voice")
+            elif request.voice.language:
+                selected = next(
+                    (
+                        voice
+                        for voice in voices
+                        if language_matches(request.voice.language, voice["language"])
+                    ),
+                    None,
+                )
+                if selected is None:
+                    raise ValueError("No installed Piper voice matches the requested language")
+        voice_id = selected["id"] if selected else None
+        # The configured default may be an absolute ONNX path outside voice_dir.
+        if voice_id == Path(self.settings.piper_voice).stem:
+            voice_id = None
+        body = SpeechRequest(input=request.text, voice=voice_id, response_format="wav")
+        started = time.perf_counter()
+        _debug(
+            self.settings,
+            "protocol=wyoming event=synthesize_start voice=%s text_chars=%d",
+            selected["id"] if selected else Path(self.settings.piper_voice).stem,
+            len(body.input),
+        )
+        data, _, _ = await self.speech.synthesize(body)
+        with wave.open(io.BytesIO(data), "rb") as audio:
+            rate, width, channels = audio.getframerate(), audio.getsampwidth(), audio.getnchannels()
+            await asyncio.wait_for(
+                async_write_event(
+                    AudioStart(rate=rate, width=width, channels=channels).event(), writer
+                ),
+                self.settings.request_timeout,
+            )
+            while chunk := audio.readframes(4096):
+                await asyncio.wait_for(
+                    async_write_event(
+                        AudioChunk(rate=rate, width=width, channels=channels, audio=chunk).event(),
+                        writer,
+                    ),
+                    self.settings.request_timeout,
+                )
+            await asyncio.wait_for(
+                async_write_event(AudioStop().event(), writer), self.settings.request_timeout
+            )
+        _debug(
+            self.settings,
+            "protocol=wyoming event=synthesize_complete processing_ms=%.1f sample_rate_hz=%d bytes=%d",
+            (time.perf_counter() - started) * 1000,
+            rate,
+            len(data),
+        )
+
     async def handle(self, reader, writer):
-        """Process one Wyoming connection and transcribe completed PCM recordings.
+        """Process discovery, speech output and completed PCM recordings on one connection.
 
         Args:
             reader (asyncio.StreamReader): Connected stream providing protocol input.
@@ -199,6 +336,7 @@ class WyomingServer:
         request_id = uuid.uuid4().hex[:12]
         language = self.settings.language
         audio, fmt = bytearray(), None
+        operation = "transcription"
         try:
             if len(self.connections) > 32:
                 raise ValueError("Too many Wyoming connections")
@@ -213,8 +351,18 @@ class WyomingServer:
                         request_id,
                         peer[0],
                     )
-                    await async_write_event(wyoming_info(self.settings).event(), writer)
+                    await async_write_event(
+                        wyoming_info(self.settings, self.speech).event(), writer
+                    )
+                elif Synthesize.is_type(event.type):
+                    operation = "synthesis"
+                    await self.synthesize(event, writer)
+                    audio, fmt = bytearray(), None
+                elif event.type.startswith("synthesize-"):
+                    operation = "synthesis"
+                    raise ValueError("Streaming text synthesis is not supported; use synthesize")
                 elif Transcribe.is_type(event.type):
+                    operation = "transcription"
                     request = Transcribe.from_event(event)
                     if request.name not in {
                         None,
@@ -305,7 +453,7 @@ class WyomingServer:
             _LOG.warning("Wyoming request failed: %s", exc)
             with suppress(ConnectionError):
                 await async_write_event(
-                    Error(text=str(exc), code="transcription_failed").event(), writer
+                    Error(text=str(exc), code=f"{operation}_failed").event(), writer
                 )
         finally:
             writer.close()
