@@ -1,3 +1,5 @@
+"""Command-line entry point starting one uvicorn service worker."""
+
 import logging
 
 import uvicorn
@@ -7,6 +9,14 @@ from .config import Settings
 
 
 def main():
+    """Start the command-line entry point for this module.
+
+    Returns:
+        None: Runs the configured command until completion.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )

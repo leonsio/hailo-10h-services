@@ -14,6 +14,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libsndfile1
       - run: pip install -e '.[test]'
       - run: ruff check .
+      - run: ruff format --check src tests
       - run: pytest -q
       - uses: actions/setup-node@v4
         with:

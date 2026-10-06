@@ -81,7 +81,9 @@ def test_semantic_nearest_tool_without_clear_margin_does_not_route_general_quest
     query = "was ist die Hauptstadt von Bolivien"
     encoder = ToolScoreEncoder(query, {"GetLiveContext": 0.561, "HassLightSet": 0.522})
     req = request(query, [LIVE, LIGHT])
-    result = routing.assess_ha_relevance(req.messages, req.tools, encoder=encoder, embedding_cache={})
+    result = routing.assess_ha_relevance(
+        req.messages, req.tools, encoder=encoder, embedding_cache={}
+    )
     assert result["relevant"] is False
     assert result["reason"] == "semantic_ambiguous"
     assert result["semantic_tool_name"] == "homeassistant__GetLiveContext"
@@ -92,7 +94,9 @@ def test_distinct_semantic_tool_match_is_still_allowed():
     query = "prüfe bitte was dort gerade los ist"
     encoder = ToolScoreEncoder(query, {"GetLiveContext": 0.71, "HassLightSet": 0.49})
     req = request(query, [LIVE, LIGHT])
-    result = routing.assess_ha_relevance(req.messages, req.tools, encoder=encoder, embedding_cache={})
+    result = routing.assess_ha_relevance(
+        req.messages, req.tools, encoder=encoder, embedding_cache={}
+    )
     assert result["relevant"] is True
     assert result["reason"] == "semantic_tool"
     assert result["semantic_tool_margin"] >= result["semantic_margin_threshold"]

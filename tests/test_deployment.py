@@ -1,4 +1,5 @@
 """Exercise host installer orchestration without creating containers/devices."""
+
 import os
 import subprocess
 from pathlib import Path
@@ -25,7 +26,7 @@ def host_command(tmp_path, *, version="5.4.0", check=False):
         "ip": "exit 0",
         "dpkg-deb": (
             'case "$3" in Architecture) echo arm64;; Package) echo hailort;; '
-            f'Version) echo {version};; esac'
+            f"Version) echo {version};; esac"
         ),
         "pvesm": f'if [ "$1" = path ]; then echo "{template}"; fi',
         "pct": f'echo "$*" >> "{log}"\nif [ "$1" = exec ]; then cat >/dev/null; fi',
@@ -34,13 +35,29 @@ def host_command(tmp_path, *, version="5.4.0", check=False):
         path = commands / name
         path.write_text("#!/bin/bash\n" + body + "\n")
         path.chmod(0o755)
-    args = ["bash", str(ROOT / "scripts/install-proxmox-lxc.sh"),
-            "--ctid", "999999", "--template", "local:vztmpl/debian-13-standard_arm64.tar.zst",
-            "--deb", str(deb), "--wheel", str(wheel), "--device", "/dev/null"]
+    args = [
+        "bash",
+        str(ROOT / "scripts/install-proxmox-lxc.sh"),
+        "--ctid",
+        "999999",
+        "--template",
+        "local:vztmpl/debian-13-standard_arm64.tar.zst",
+        "--deb",
+        str(deb),
+        "--wheel",
+        str(wheel),
+        "--device",
+        "/dev/null",
+    ]
     if check:
         args.append("--check")
-    result = subprocess.run(args, env={**os.environ, "PATH": f"{commands}:{os.environ['PATH']}"},
-                            text=True, capture_output=True, timeout=10)
+    result = subprocess.run(
+        args,
+        env={**os.environ, "PATH": f"{commands}:{os.environ['PATH']}"},
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
     return result, log
 
 

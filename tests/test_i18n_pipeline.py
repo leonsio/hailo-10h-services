@@ -331,7 +331,7 @@ def test_sse_wait_precedes_inference_completion_and_tools_remain_buffered():
     ],
 )
 def test_unknown_area_preserves_original_name(text, area):
-    from hailo_services.ha_state_routing_fixes import _location_phrase
+    from hailo_services.ha_state_routing import _location_phrase
 
     assert _location_phrase(text) == area
 

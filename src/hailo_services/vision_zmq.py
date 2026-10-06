@@ -15,11 +15,31 @@ class FrigateZmqServer:
     """Serve the protocol implemented by Frigate's ``type: zmq`` detector."""
 
     def __init__(self, vision, settings):
+        """Initialize FrigateZmqServer configuration and owned dependencies.
+
+        Args:
+            vision (VisionRuntime): Resident detector scheduler used by the bridge.
+            settings (Settings): Validated service settings controlling enabled models and limits.
+
+        Returns:
+            None: Creates the object without running inference.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         self.vision = vision
         self.settings = settings
         self.context = self.socket = self.task = None
 
     async def start(self):
+        """Initialize resident resources or start the configured transport listener.
+
+        Returns:
+            None: Marks the service ready after successful initialization.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         if not (self.settings.vision_enabled and self.settings.vision_zmq_enabled):
             return
         import zmq
@@ -33,11 +53,30 @@ class FrigateZmqServer:
         _LOG.info("Frigate ZMQ detector listening on %s", self.settings.vision_zmq_endpoint)
 
     async def _reply_json(self, payload):
-        await self.socket.send_multipart([
-            json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        ])
+        """Send a JSON-only reply while preserving ZeroMQ REP state.
+
+        Args:
+            payload (Any): Decoded protocol data or structured diagnostic payload.
+
+        Returns:
+            None: Sends one multipart JSON frame.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
+        await self.socket.send_multipart(
+            [json.dumps(payload, separators=(",", ":")).encode("utf-8")]
+        )
 
     async def _run(self):
+        """Serve detector model probes and tensor inference on the ZeroMQ REP socket.
+
+        Returns:
+            None: Processes requests until the server task is cancelled.
+
+        Raises:
+            ValueError: Invalid or oversized detector tensor.
+        """
         while True:
             try:
                 frames = await self.socket.recv_multipart()
@@ -54,20 +93,24 @@ class FrigateZmqServer:
                 if header.get("model_request"):
                     model_name = str(header.get("model_name", ""))
                     available = self.vision.ready and self.vision.accepts_model(model_name)
-                    await self._reply_json({
-                        "model_available": available,
-                        "model_loaded": available,
-                        "model_name": self.settings.vision_model_id,
-                    })
+                    await self._reply_json(
+                        {
+                            "model_available": available,
+                            "model_loaded": available,
+                            "model_name": self.settings.vision_model_id,
+                        }
+                    )
                     continue
                 if header.get("model_data"):
                     # Model lifecycle is deliberately server-owned. Accepting arbitrary
                     # HEFs over an unauthenticated detector socket would also be unsafe.
-                    await self._reply_json({
-                        "model_saved": False,
-                        "model_loaded": False,
-                        "error": "Model uploads are disabled; configure models.vision.model on the server",
-                    })
+                    await self._reply_json(
+                        {
+                            "model_saved": False,
+                            "model_loaded": False,
+                            "error": "Model uploads are disabled; configure models.vision.model on the server",
+                        }
+                    )
                     continue
                 if len(frames) != 2:
                     raise ValueError("Inference requires header and tensor frames")
@@ -87,10 +130,12 @@ class FrigateZmqServer:
                 detections = await self.vision.detect_array(tensor, maximum=20)
                 detections = np.ascontiguousarray(detections, dtype=np.float32).reshape((20, 6))
                 response = {"shape": [20, 6], "dtype": "float32"}
-                await self.socket.send_multipart([
-                    json.dumps(response, separators=(",", ":")).encode("utf-8"),
-                    detections.tobytes(order="C"),
-                ])
+                await self.socket.send_multipart(
+                    [
+                        json.dumps(response, separators=(",", ":")).encode("utf-8"),
+                        detections.tobytes(order="C"),
+                    ]
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -99,16 +144,27 @@ class FrigateZmqServer:
                 _LOG.exception("ZMQ detector request failed")
                 zeros = np.zeros((20, 6), dtype=np.float32)
                 try:
-                    await self.socket.send_multipart([
-                        json.dumps({
-                            "shape": [20, 6], "dtype": "float32", "error": str(exc)
-                        }, separators=(",", ":")).encode("utf-8"),
-                        zeros.tobytes(order="C"),
-                    ])
+                    await self.socket.send_multipart(
+                        [
+                            json.dumps(
+                                {"shape": [20, 6], "dtype": "float32", "error": str(exc)},
+                                separators=(",", ":"),
+                            ).encode("utf-8"),
+                            zeros.tobytes(order="C"),
+                        ]
+                    )
                 except Exception:
                     _LOG.exception("ZMQ error response failed")
 
     async def close(self):
+        """Release resources owned by this service or native context.
+
+        Returns:
+            None: Closes native resources, connections or owner executors.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         if self.task is not None:
             self.task.cancel()
             try:

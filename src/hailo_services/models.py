@@ -13,19 +13,54 @@ _LOG = logging.getLogger(__name__)
 
 
 def ensure_minilm_hef(path, url):
-    """Reuse or atomically download the MiniLM HEF into the shared Hailo store."""
+    """Reuse or atomically download the MiniLM HEF into the shared Hailo store.
+
+    Args:
+        path (str | Path): Filesystem destination or diagnostic schema path.
+        url (str): Artifact download URL.
+
+    Returns:
+        Path: Complete local MiniLM HEF path.
+
+    Raises:
+        OSError: The HEF cannot be downloaded or written.
+        RuntimeError: The downloaded artifact is incomplete or oversized.
+    """
     return ensure_model_file(path, url, 1024 * 1024, 100 * 1024 * 1024)
 
 
 def ensure_model_file(path, url, minimum, maximum, expected_size=None):
-    """Download a bounded model asset atomically and reuse a complete local copy."""
+    """Download a bounded model asset atomically and reuse a complete local copy.
+
+    Args:
+        path (str | Path): Filesystem destination or diagnostic schema path.
+        url (str): Artifact download URL.
+        minimum (int): Minimum accepted model artifact size in bytes.
+        maximum (int): Maximum detection rows or accepted artifact bytes.
+        expected_size (int | None): Exact catalogue file size in bytes when known.
+
+    Returns:
+        Path: Complete cached or downloaded artifact path.
+
+    Raises:
+        OSError: The artifact cannot be downloaded or written.
+        RuntimeError: Download size is invalid, incomplete or exceeds the bound.
+    """
     destination = Path(path).expanduser()
-    if (destination.is_file() and minimum <= destination.stat().st_size <= maximum
-            and (expected_size is None or destination.stat().st_size == expected_size)):
+    if (
+        destination.is_file()
+        and minimum <= destination.stat().st_size <= maximum
+        and (expected_size is None or destination.stat().st_size == expected_size)
+    ):
         _LOG.info("Reusing model asset at %s", destination)
         return destination
 
-    _LOG.info("Downloading model asset url=%s destination=%s expected_bytes=%s", url, destination, expected_size)
+    _LOG.info(
+        "Downloading model asset url=%s destination=%s expected_bytes=%s",
+        url,
+        destination,
+        expected_size,
+    )
     destination.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(
         prefix=f".{destination.name}.", suffix=".download", dir=destination.parent
@@ -45,8 +80,11 @@ def ensure_model_file(path, url, minimum, maximum, expected_size=None):
                     output.write(chunk)
                 output.flush()
                 os.fsync(output.fileno())
-        if (size < minimum or (expected is not None and size != expected)
-                or (expected_size is not None and size != expected_size)):
+        if (
+            size < minimum
+            or (expected is not None and size != expected)
+            or (expected_size is not None and size != expected_size)
+        ):
             raise RuntimeError(
                 f"Incomplete MiniLM HEF/model download ({size} bytes; expected {expected or minimum})"
             )
@@ -59,6 +97,17 @@ def ensure_model_file(path, url, minimum, maximum, expected_size=None):
 
 
 def release_tuple(version):
+    """Parse a semantic HailoRT release string.
+
+    Args:
+        version (str): Hailo release in major.minor.patch form.
+
+    Returns:
+        tuple[int, int, int]: Major, minor and patch version numbers.
+
+    Raises:
+        ValueError: The version is not a major.minor.patch release string.
+    """
     match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", version)
     if not match:
         raise ValueError(f"Invalid Hailo version: {version}")
@@ -66,6 +115,19 @@ def release_tuple(version):
 
 
 def select_release(runtime_version, available, override=None):
+    """Select the newest compatible model release or validate an override.
+
+    Args:
+        runtime_version (str | None): Detected HailoRT release; None defers detection.
+        available (Iterable[str]): Known model release identifiers.
+        override (str | None): Explicit release selection, or None for compatible automatic selection.
+
+    Returns:
+        str: Compatible model-zoo release identifier.
+
+    Raises:
+        ValueError: Model release is newer than HailoRT.
+    """
     if override:
         if override not in available:
             raise ValueError(
@@ -86,6 +148,14 @@ def select_release(runtime_version, available, override=None):
 
 
 def prepare_model_version():
+    """Detect HailoRT version before selecting compatible model artifacts.
+
+    Returns:
+        str: Validated runtime release string.
+
+    Raises:
+        RuntimeError: Cannot detect HailoRT version; set hailort_version.
+    """
     import hailo_platform
 
     version = os.getenv("hailort_version") or getattr(hailo_platform, "__version__", None)
@@ -96,9 +166,28 @@ def prepare_model_version():
 
 
 class ModelManager:
+    """Resolve catalogue metadata, compatible releases and complete local artifacts."""
+
     def __init__(self, settings, runtime_version=None):
+        """Initialize ModelManager configuration and owned dependencies.
+
+        Args:
+            settings (Settings): Validated service settings controlling enabled models and limits.
+            runtime_version (str | None): Detected HailoRT release; None defers detection.
+
+        Returns:
+            None: Creates the object without running inference.
+
+        Raises:
+            OSError: The configured catalogue cannot be read.
+            ValueError: The catalogue schema is unsupported.
+        """
         self.settings = settings
-        path = Path(settings.model_catalog) if settings.model_catalog else Path(__file__).with_name("model_catalog.yaml")
+        path = (
+            Path(settings.model_catalog)
+            if settings.model_catalog
+            else Path(__file__).with_name("model_catalog.yaml")
+        )
         with path.open(encoding="utf-8") as stream:
             self.catalog = yaml.safe_load(stream)
         if not isinstance(self.catalog, dict) or self.catalog.get("schema_version") != 1:
@@ -107,6 +196,18 @@ class ModelManager:
         self.runtime_version = runtime_version
 
     def entry(self, model, kind=None):
+        """Find a model catalogue entry and validate its expected role.
+
+        Args:
+            model (str): Public model identifier or configured HEF path.
+            kind (str): Model role, measurement category or environment query kind.
+
+        Returns:
+            dict[str, Any]: Model metadata including kind, artifact and releases.
+
+        Raises:
+            ValueError: The model is absent from the catalogue or has a different role.
+        """
         if model not in self.entries:
             raise ValueError(f"Unknown catalogue model: {model}")
         entry = self.entries[model]
@@ -115,6 +216,18 @@ class ModelManager:
         return entry
 
     def url(self, model):
+        """Resolve the artifact URL matching configured role and runtime release.
+
+        Args:
+            model (str): Public model identifier or configured HEF path.
+
+        Returns:
+            str: Compatible download URL.
+
+        Raises:
+            ValueError: The model or runtime/release combination is unsupported.
+            RuntimeError: HailoRT version cannot be detected.
+        """
         entry = self.entry(model)
         if "url" in entry:
             return entry["url"]
@@ -129,8 +242,9 @@ class ModelManager:
             override = os.getenv("model_zoo_version")
         # Use a documented release for the same HailoRT minor; never silently
         # substitute a newer/older HEF ABI for unknown runtime versions.
-        available = [r for r in entry["releases"]
-                     if release_tuple(r)[:2] == release_tuple(version)[:2]]
+        available = [
+            r for r in entry["releases"] if release_tuple(r)[:2] == release_tuple(version)[:2]
+        ]
         if not available:
             raise ValueError(f"No known model release for HailoRT {version}")
         if not override and entry.get("preferred_release"):
@@ -140,6 +254,22 @@ class ModelManager:
         return entry["releases"][selected]
 
     def resolve(self, model, kind=None, path=None):
+        """Reuse a configured file or download a compatible named model artifact.
+
+        Args:
+            model (str): Public model identifier or configured HEF path.
+            kind (str): Model role, measurement category or environment query kind.
+            path (str | Path): Filesystem destination or diagnostic schema path.
+
+        Returns:
+            Path: Existing complete model artifact path.
+
+        Raises:
+            ValueError: The catalogue model, role or compatible release is invalid.
+            FileNotFoundError: An explicitly configured model file is missing or empty.
+            OSError: Artifact download or filesystem access fails.
+            RuntimeError: The downloaded artifact fails size validation.
+        """
         candidate = Path(model).expanduser()
         if candidate.suffix == ".hef" or candidate.is_absolute():
             if not candidate.is_file() or candidate.stat().st_size == 0:
@@ -154,5 +284,11 @@ class ModelManager:
             # a user's existing HEF or accidentally reuses a larger release.
             release = next(r for r, link in entry["releases"].items() if link == url)
             destination = Path(self.settings.model_store) / release / entry["filename"]
-        expected_size = entry.get("sizes", {}).get(next((release for release, link in entry.get("releases", {}).items() if link == url), ""))
-        return ensure_model_file(destination, url, entry["minimum_bytes"], entry["maximum_bytes"], expected_size)
+        expected_size = entry.get("sizes", {}).get(
+            next(
+                (release for release, link in entry.get("releases", {}).items() if link == url), ""
+            )
+        )
+        return ensure_model_file(
+            destination, url, entry["minimum_bytes"], entry["maximum_bytes"], expected_size
+        )

@@ -107,7 +107,8 @@ LIVE = {
 def request(text, tools, messages=None):
     return ChatRequest(
         model=LLM_MODEL,
-        messages=messages or [
+        messages=messages
+        or [
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": text},
         ],
@@ -233,14 +234,16 @@ def test_active_tool_history_is_compacted_with_dependencies():
         {
             "role": "assistant",
             "content": None,
-            "tool_calls": [{
-                "id": call_id,
-                "type": "function",
-                "function": {
-                    "name": "homeassistant__GetLiveContext",
-                    "arguments": json.dumps({"area": "Küche", "domain": ["light"]}),
-                },
-            }],
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": "homeassistant__GetLiveContext",
+                        "arguments": json.dumps({"area": "Küche", "domain": ["light"]}),
+                    },
+                }
+            ],
         },
         {"role": "tool", "tool_call_id": call_id, "content": '{"success":true}'},
     ]

@@ -1,8 +1,8 @@
 import pytest
 
+from hailo_services.chat_hailo_vlm import render_prompt
 from hailo_services.config import Settings
 from hailo_services.models import ModelManager
-from hailo_services.vlm_chat import render_prompt
 
 
 class QwenTemplateModel:
@@ -39,11 +39,17 @@ def test_qwen3_budget_template_accepts_assistant_chat_history_without_tool_calls
     prompt = [
         {"role": "user", "content": [{"type": "text", "text": "wieviele sind 2+2"}]},
         {"role": "assistant", "content": [{"type": "text", "text": "2 + 2 sind 4."}]},
-        {"role": "user", "content": [{"type": "text", "text": "was ist die Hauptstadt von Frankreich?"}]},
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "was ist die Hauptstadt von Frankreich?"}],
+        },
     ]
 
-    options = (ModelManager(Settings()).entry(catalogue_model)["prompt_template"]
-               if catalogue_model else None)
+    options = (
+        ModelManager(Settings()).entry(catalogue_model)["prompt_template"]
+        if catalogue_model
+        else None
+    )
     rendered = render_prompt(QwenTemplateModel(), prompt, template_options=options)
 
     assert "2 + 2 sind 4." in rendered
@@ -54,13 +60,15 @@ def test_qwen3_budget_template_accepts_assistant_chat_history_without_tool_calls
 
 
 def test_qwen_budget_template_defines_optional_add_vision_id_for_images():
-    prompt = [{
-        "role": "user",
-        "content": [
-            {"type": "image"},
-            {"type": "text", "text": "Was ist auf dem Bild?"},
-        ],
-    }]
+    prompt = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": "Was ist auf dem Bild?"},
+            ],
+        }
+    ]
 
     rendered = render_prompt(QwenTemplateModel(), prompt)
 

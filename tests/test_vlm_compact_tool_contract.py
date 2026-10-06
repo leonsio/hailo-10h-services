@@ -2,8 +2,8 @@ import json
 
 import pytest
 
+from hailo_services.chat_hailo_vlm import model_prompt, tool_response
 from hailo_services.schemas import ChatRequest
-from hailo_services.vlm_chat import model_prompt, tool_response
 
 
 def tool(name="get_time"):

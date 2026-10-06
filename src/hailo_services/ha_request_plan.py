@@ -12,12 +12,34 @@ from .tool_retrieval import latest_user_text
 
 
 def _fold(text):
+    """Fold orthographic variants for catalogue-only slot matching.
+
+    Args:
+        text (str): Text to parse, normalize, match or render.
+
+    Returns:
+        str: Case-folded text without accents and transliteration variants.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     text = text.casefold().replace("ae", "a").replace("oe", "o").replace("ue", "u")
     return "".join(c for c in unicodedata.normalize("NFD", text) if not unicodedata.combining(c))
 
 
 @lru_cache(maxsize=64)
 def _catalogue(systems):
+    """Cache name, domain and area tuples parsed from system context.
+
+    Args:
+        systems (tuple[str, ...]): Static system texts used as an immutable cache key.
+
+    Returns:
+        tuple[tuple[str, str, str], ...]: Immutable catalogue entries suitable for bounded caching.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     from .ha_state_routing import _entries
 
     return tuple(
@@ -27,6 +49,17 @@ def _catalogue(systems):
 
 
 def catalogue(messages):
+    """Parse the request catalogue with a bounded cache for small contexts.
+
+    Args:
+        messages (list[dict[str, Any]]): Ordered OpenAI or native conversation messages.
+
+    Returns:
+        list[dict[str, str]]: Static catalogue entities with name, domain and area.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     systems = tuple(
         m["content"]
         for m in messages
@@ -41,7 +74,18 @@ def catalogue(messages):
 
 
 def canonical_request(request, settings):
-    """Resolve catalogue spellings once; never correct verbs or negations."""
+    """Resolve catalogue spellings once; never correct verbs or negations.
+
+    Args:
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+        settings (Settings): Validated service settings controlling enabled models and limits.
+
+    Returns:
+        ChatRequest: Request carrying canonical slots, catalogue and a target-resolution plan.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     user_indices = [i for i, m in enumerate(request.messages) if m.get("role") == "user"]
     if not user_indices:
         return request
@@ -191,6 +235,17 @@ def canonical_request(request, settings):
 
 
 def target_clarification(request):
+    """Request clarification for an unsafe or unknown explicit area target.
+
+    Args:
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+
+    Returns:
+        str | None: Localized clarification, or None when routing can continue.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     plan = getattr(request, "_ha_plan", {})
     if plan.get("target_resolution") == "llm":
         return None
@@ -207,6 +262,17 @@ def target_clarification(request):
 
 
 def tool_failure(request):
+    """Translate unsuccessful HA tool results into a deterministic response.
+
+    Args:
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+
+    Returns:
+        str | None: Localized failure response, or None for successful/unsupported results.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     if request.messages[-1].get("role") != "tool":
         return None
     results = []
@@ -231,7 +297,19 @@ def tool_failure(request):
 
 
 def validate_action(request, name, args):
-    """Semantic checks supplement JSON Schema; never guess replacement targets."""
+    """Semantic checks supplement JSON Schema; never guess replacement targets.
+
+    Args:
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+        name (str): Function, attribute, device or model identifier.
+        args (dict[str, Any]): Function arguments for semantic target/value validation.
+
+    Returns:
+        bool: Whether generated targets and values agree with the request plan.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     if not getattr(request, "_ha_assist", False) or name == "homeassistant__GetLiveContext":
         return True
     entities = getattr(request, "_ha_catalogue", None) or catalogue(request.messages)

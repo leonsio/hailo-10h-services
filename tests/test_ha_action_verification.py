@@ -14,7 +14,9 @@ LIVE_TOOL = {
             "properties": {
                 "name": {"type": "string"},
                 "area": {"type": "string"},
-                "domain": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
+                "domain": {
+                    "anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]
+                },
             },
             "additionalProperties": False,
         },
@@ -50,23 +52,30 @@ def action_done(call_id):
     return {
         "role": "tool",
         "tool_call_id": call_id,
-        "content": json.dumps({
-            "speech": {},
-            "response_type": "action_done",
-            "data": {"success": [{"name": "Küche", "type": "area", "id": "kuche"}], "failed": []},
-        }),
+        "content": json.dumps(
+            {
+                "speech": {},
+                "response_type": "action_done",
+                "data": {
+                    "success": [{"name": "Küche", "type": "area", "id": "kuche"}],
+                    "failed": [],
+                },
+            }
+        ),
     }
 
 
 def live_result(call_id, states):
     lines = ["Live Context: An overview of the areas and the devices in this smart home:"]
     for name, state in states:
-        lines.extend([
-            f"- names: {name}",
-            "  domain: light",
-            f"  state: '{state}'",
-            "  areas: Küche",
-        ])
+        lines.extend(
+            [
+                f"- names: {name}",
+                "  domain: light",
+                f"  state: '{state}'",
+                "  areas: Küche",
+            ]
+        )
     return {
         "role": "tool",
         "tool_call_id": call_id,
@@ -115,15 +124,20 @@ def test_verified_action_finishes_without_gemma():
         "homeassistant__GetLiveContext",
         {"area": "Küche", "domain": ["light"]},
     )
-    messages.extend([
-        {"role": "assistant", "content": None, "tool_calls": [verify]},
-        live_result("call_verify", [
-            ("Backofen Licht", "off"),
-            ("Licht - Links", "off"),
-            ("Licht - Rechts", "off"),
-            ("Oberlicht", "off"),
-        ]),
-    ])
+    messages.extend(
+        [
+            {"role": "assistant", "content": None, "tool_calls": [verify]},
+            live_result(
+                "call_verify",
+                [
+                    ("Backofen Licht", "off"),
+                    ("Licht - Links", "off"),
+                    ("Licht - Rechts", "off"),
+                    ("Oberlicht", "off"),
+                ],
+            ),
+        ]
+    )
     decision = action_verification_response(request(messages))
     assert decision["kind"] == "verified"
     assert decision["response"] == "Erledigt."
@@ -136,15 +150,20 @@ def test_mismatching_light_is_retried_once_with_area_disambiguation():
         "homeassistant__GetLiveContext",
         {"area": "Küche", "domain": ["light"]},
     )
-    messages.extend([
-        {"role": "assistant", "content": None, "tool_calls": [verify]},
-        live_result("call_verify", [
-            ("Backofen Licht", "off"),
-            ("Licht - Links", "off"),
-            ("Licht - Rechts", "on"),
-            ("Oberlicht", "off"),
-        ]),
-    ])
+    messages.extend(
+        [
+            {"role": "assistant", "content": None, "tool_calls": [verify]},
+            live_result(
+                "call_verify",
+                [
+                    ("Backofen Licht", "off"),
+                    ("Licht - Links", "off"),
+                    ("Licht - Rechts", "on"),
+                    ("Oberlicht", "off"),
+                ],
+            ),
+        ]
+    )
     decision = action_verification_response(request(messages))
     assert decision["kind"] == "retry"
     calls = decision["response"]["tool_calls"]
@@ -174,14 +193,16 @@ def test_second_failed_verification_stops_retry_loop():
         "homeassistant__GetLiveContext",
         {"area": "Küche", "domain": ["light"]},
     )
-    messages.extend([
-        {"role": "assistant", "content": None, "tool_calls": [verify1]},
-        live_result("call_verify1", [("Licht - Rechts", "on")]),
-        {"role": "assistant", "content": None, "tool_calls": [retry]},
-        action_done("call_retry"),
-        {"role": "assistant", "content": None, "tool_calls": [verify2]},
-        live_result("call_verify2", [("Licht - Rechts", "on")]),
-    ])
+    messages.extend(
+        [
+            {"role": "assistant", "content": None, "tool_calls": [verify1]},
+            live_result("call_verify1", [("Licht - Rechts", "on")]),
+            {"role": "assistant", "content": None, "tool_calls": [retry]},
+            action_done("call_retry"),
+            {"role": "assistant", "content": None, "tool_calls": [verify2]},
+            live_result("call_verify2", [("Licht - Rechts", "on")]),
+        ]
+    )
     decision = action_verification_response(request(messages))
     assert decision["kind"] == "failed_verification"
     assert "Licht - Rechts" in decision["response"]

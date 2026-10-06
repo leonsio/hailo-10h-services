@@ -94,7 +94,8 @@ LIVE = {
 def request(text, messages=None):
     return ChatRequest(
         model=LLM_MODEL,
-        messages=messages or [
+        messages=messages
+        or [
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": text},
         ],
@@ -104,27 +105,32 @@ def request(text, messages=None):
 
 def live_followup(text, arguments, payload):
     call_id = "call_live"
-    return request(text, messages=[
-        {"role": "system", "content": SYSTEM},
-        {"role": "user", "content": text},
-        {
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [{
-                "id": call_id,
-                "type": "function",
-                "function": {
-                    "name": "homeassistant__GetLiveContext",
-                    "arguments": json.dumps(arguments, ensure_ascii=False),
-                },
-            }],
-        },
-        {
-            "role": "tool",
-            "tool_call_id": call_id,
-            "content": json.dumps(payload, ensure_ascii=False),
-        },
-    ])
+    return request(
+        text,
+        messages=[
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": text},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": "homeassistant__GetLiveContext",
+                            "arguments": json.dumps(arguments, ensure_ascii=False),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": json.dumps(payload, ensure_ascii=False),
+            },
+        ],
+    )
 
 
 def arguments_for(text):

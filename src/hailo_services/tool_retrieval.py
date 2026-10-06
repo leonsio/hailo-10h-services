@@ -16,11 +16,22 @@ from collections import Counter
 from .i18n import lexicon, normalize_matching
 
 _WORD_RE = re.compile(r"[\w.-]+", re.UNICODE)
-_STOP_WORDS = lexicon('tool_retrieval._STOP_WORDS')
-_SYNONYMS = lexicon('tool_retrieval._SYNONYMS')
+_STOP_WORDS = lexicon("tool_retrieval._STOP_WORDS")
+_SYNONYMS = lexicon("tool_retrieval._SYNONYMS")
 
 
 def _text(value) -> str:
+    """Flatten schema and catalogue values into retrieval text.
+
+    Args:
+        value (Any): Input value inspected or normalized by this helper.
+
+    Returns:
+        str: Text representation of supported nested values.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     if isinstance(value, str):
         return value
     if isinstance(value, (int, float, bool)):
@@ -33,6 +44,17 @@ def _text(value) -> str:
 
 
 def _tokens(value) -> set[str]:
+    """Normalize and split text into retrieval or weather-matching terms.
+
+    Args:
+        value (Any): Input value inspected or normalized by this helper.
+
+    Returns:
+        set[str]: Significant normalized terms.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     raw = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", _text(value)).casefold().replace("ß", "ss")
     raw = normalize_matching(raw.replace("_", " ").replace(".", " ").replace("-", " "))
     normalized = unicodedata.normalize("NFKD", raw)
@@ -46,14 +68,24 @@ def _tokens(value) -> set[str]:
             result.add(word)
         for ending in ("ern", "en", "er", "es", "e", "n", "s"):
             if len(word) - len(ending) >= 4 and word.endswith(ending):
-                result.add(word[:-len(ending)])
+                result.add(word[: -len(ending)])
                 break
         result.update(_SYNONYMS.get(word, ()))
     return result
 
 
 def latest_user_text(messages) -> str:
-    """Read only text from the latest user message (ignore image payloads)."""
+    """Read only text from the latest user message (ignore image payloads).
+
+    Args:
+        messages (list[dict[str, Any]]): Ordered OpenAI or native conversation messages.
+
+    Returns:
+        str: Result as described by the operation.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     for message in reversed(messages):
         if message.get("role") != "user":
             continue
@@ -62,7 +94,8 @@ def latest_user_text(messages) -> str:
             return content
         if isinstance(content, list):
             return " ".join(
-                part.get("text", "") for part in content
+                part.get("text", "")
+                for part in content
                 if isinstance(part, dict) and part.get("type") == "text"
             )
         return ""
@@ -70,6 +103,18 @@ def latest_user_text(messages) -> str:
 
 
 def _score(query: set[str], candidate) -> int:
+    """Score normalized token overlap and useful catalogue substrings.
+
+    Args:
+        query (set[str]): Normalized significant user terms.
+        candidate (Any): Catalogue candidate whose lexical relevance is scored.
+
+    Returns:
+        int: Non-negative lexical relevance score.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     if not query:
         return 0
     words = _tokens(candidate)
@@ -86,6 +131,16 @@ def _tool_score(query: set[str], tool) -> int:
     Home Assistant tool descriptions can be verbose and mention unrelated
     actions as examples. Weighting the function name keeps e.g. HassTurnOff
     ahead of GetLiveContext for an explicit "schalte ... aus" request.
+
+    Args:
+        query (set[str]): Normalized significant user terms.
+        tool (dict[str, Any]): Client-provided function schema.
+
+    Returns:
+        int: Weighted lexical score emphasizing explicit function/action matches.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
     """
     function = tool.get("function", {}) if isinstance(tool, dict) else {}
     name_score = _score(query, function.get("name", ""))
@@ -106,16 +161,43 @@ _ROUTING_KEYWORDS = {
 
 
 def _corpus_scores(query, tools):
+    """Score tools with field weights and inverse corpus frequency.
+
+    Args:
+        query (set[str]): Normalized significant user terms.
+        tools (list[dict[str, Any]] | None): Client-provided OpenAI function schemas.
+
+    Returns:
+        list[float]: Relevance scores in the original tool order.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     fields = []
     for tool in tools:
         fn = tool.get("function", {})
-        fields.append((_tokens(fn.get("name", "")),
-                       _tokens(fn.get("description", "")),
-                       _tokens(_ROUTING_KEYWORDS.get(fn.get("name", "").rsplit("__", 1)[-1], "")),
-                       _tokens(fn.get("parameters", {}))))
+        fields.append(
+            (
+                _tokens(fn.get("name", "")),
+                _tokens(fn.get("description", "")),
+                _tokens(_ROUTING_KEYWORDS.get(fn.get("name", "").rsplit("__", 1)[-1], "")),
+                _tokens(fn.get("parameters", {})),
+            )
+        )
     frequency = Counter(word for parts in fields for word in set().union(*parts))
 
     def score(parts):
+        """Compute weighted rare-term overlap for one tool.
+
+        Args:
+            parts (Any): Schema fields or normalized text parts to score.
+
+        Returns:
+            float: Corpus-weighted relevance score.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         result = 0.0
         for words, weight in zip(parts, (12, 4, 8, 1)):
             for word in query & words:
@@ -136,6 +218,22 @@ def _prune_enums(
     trace=None,
     path: str = "$",
 ):
+    """Restrict matching schema enums and update removal diagnostics in place.
+
+    Args:
+        node (Any): Nested schema node to inspect or modify.
+        query (set[str]): Normalized significant user terms.
+        stats (dict): Mutable retrieval/removal counters.
+        limit (int): Upper bound for bytes, input tokens or retained enum values.
+        trace (dict | list | None): Optional mutable diagnostic collector.
+        path (str): Filesystem destination or diagnostic schema path.
+
+    Returns:
+        None: Mutates schema enum values, counters and optional trace.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     if isinstance(node, dict):
         enum = node.get("enum")
         if isinstance(enum, list) and len(enum) > 1:
@@ -149,27 +247,38 @@ def _prune_enums(
                 node["enum"] = [item[2] for item in selected]
                 stats["enum_values_removed"] += len(enum) - len(node["enum"])
                 if trace is not None:
-                    trace.append({
-                        "path": path,
-                        "before": enum,
-                        "after": node["enum"],
-                        "scores": [
-                            {"value": item[2], "lexical_score": item[0]}
-                            for item in sorted(ranked, key=lambda item: (-item[0], item[1]))
-                        ],
-                    })
+                    trace.append(
+                        {
+                            "path": path,
+                            "before": enum,
+                            "after": node["enum"],
+                            "scores": [
+                                {"value": item[2], "lexical_score": item[0]}
+                                for item in sorted(ranked, key=lambda item: (-item[0], item[1]))
+                            ],
+                        }
+                    )
         for key, value in list(node.items()):
-            _prune_enums(
-                value, query, stats, limit, trace=trace, path=f"{path}.{key}"
-            )
+            _prune_enums(value, query, stats, limit, trace=trace, path=f"{path}.{key}")
     elif isinstance(node, list):
         for index, value in enumerate(node):
-            _prune_enums(
-                value, query, stats, limit, trace=trace, path=f"{path}[{index}]"
-            )
+            _prune_enums(value, query, stats, limit, trace=trace, path=f"{path}[{index}]")
 
 
 def _embedding(encoder, text: str, cache=None):
+    """Reuse bounded cached embeddings for short static retrieval text.
+
+    Args:
+        encoder (MiniLM | None): Optional resident semantic encoder; None uses lexical matching.
+        text (str): Text to parse, normalize, match or render.
+        cache (dict[str, np.ndarray] | None): Optional bounded embedding cache.
+
+    Returns:
+        np.ndarray: Encoder vector, cached when eligible.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     if len(text) > 8192:
         return encoder.embed(text)
     if cache is not None and text in cache:
@@ -184,7 +293,17 @@ def _embedding(encoder, text: str, cache=None):
 
 
 def _static_context_parts(content: str):
-    """Split Home Assistant's generated Static Context into prefix, entries and suffix."""
+    """Split Home Assistant's generated Static Context into prefix, entries and suffix.
+
+    Args:
+        content (str): File contents or generated static-context text.
+
+    Returns:
+        tuple[str, list[str], str] | None: System prefix, entity blocks and control-rule suffix, or None.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     marker = "Static Context:"
     start = content.find(marker)
     if start < 0:
@@ -221,20 +340,36 @@ def compact_static_context(
 
     The full inbound request remains available to MiniLM. Only the copy that is
     forwarded to Gemma is compacted.
+
+    Args:
+        messages (list[dict[str, Any]]): Ordered OpenAI or native conversation messages.
+        encoder (MiniLM | None): Optional resident semantic encoder; None uses lexical matching.
+        max_entities (int): Maximum static entities retained in the compact context.
+        semantic_candidates (int): Maximum candidates retained for semantic retrieval.
+        embedding_cache (dict[str, np.ndarray] | None): Bounded cache for static retrieval embeddings.
+        trace (dict | list | None): Optional mutable diagnostic collector.
+
+    Returns:
+        tuple[list[dict], dict]: Compact messages and entity/character removal statistics.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
     """
     query_text = latest_user_text(messages).strip()
     query = _tokens(query_text)
     updated = copy.deepcopy(messages)
     if trace is not None:
         trace.clear()
-        trace.update({
-            "stage": "entity_retrieval",
-            "query_text": query_text,
-            "query_tokens": sorted(query),
-            "max_entities": max_entities,
-            "semantic_candidates": semantic_candidates,
-            "system_prompts": [],
-        })
+        trace.update(
+            {
+                "stage": "entity_retrieval",
+                "query_text": query_text,
+                "query_tokens": sorted(query),
+                "max_entities": max_entities,
+                "semantic_candidates": semantic_candidates,
+                "system_prompts": [],
+            }
+        )
     totals = {
         "entities_before": 0,
         "entities_after": 0,
@@ -276,9 +411,9 @@ def compact_static_context(
         if lexical_hits:
             lexical_hits.sort(key=lambda item: (-item[0], item[1]))
             best = lexical_hits[0][0]
-            candidates = [
-                item for item in lexical_hits if item[0] >= max(1, best - 4)
-            ][:semantic_candidates]
+            candidates = [item for item in lexical_hits if item[0] >= max(1, best - 4)][
+                :semantic_candidates
+            ]
             if prompt_trace is not None:
                 prompt_trace["lexical_hits"] = [
                     {
@@ -297,15 +432,17 @@ def compact_static_context(
             query_vector = _embedding(encoder, query_text, embedding_cache)
             ranked = []
             for lexical_score, index, entry in candidates:
-                similarity = float(np.dot(
-                    query_vector, _embedding(encoder, entry, embedding_cache)
-                ))
-                ranked.append((
-                    similarity + min(lexical_score, 12) * 0.03,
-                    lexical_score,
-                    index,
-                    entry,
-                ))
+                similarity = float(
+                    np.dot(query_vector, _embedding(encoder, entry, embedding_cache))
+                )
+                ranked.append(
+                    (
+                        similarity + min(lexical_score, 12) * 0.03,
+                        lexical_score,
+                        index,
+                        entry,
+                    )
+                )
             ranked.sort(key=lambda item: (-item[0], -item[1], item[2]))
             selected = [item[3] for item in ranked[:max_entities]]
             if prompt_trace is not None:
@@ -331,8 +468,7 @@ def compact_static_context(
             prompt_trace["selected_entities"] = list(selected)
         compact_catalogue = "\n".join(selected)
         replacement = (
-            "Static Context: Relevant entities for the current user request:\n"
-            + compact_catalogue
+            "Static Context: Relevant entities for the current user request:\n" + compact_catalogue
         )
         old_content = message["content"]
         message["content"] = prefix + replacement + suffix
@@ -359,6 +495,22 @@ def retrieve_tools(
     Lexical matches are used as a high-confidence prefilter. MiniLM ranks only
     those candidates when possible; when lexical matching finds nothing, MiniLM
     provides a small semantic fallback instead of forwarding the whole tool set.
+
+    Args:
+        messages (list[dict[str, Any]]): Ordered OpenAI or native conversation messages.
+        tools (list[dict[str, Any]] | None): Client-provided OpenAI function schemas.
+        max_tools (int): Maximum retrieved tool schemas.
+        enum_limit (int): Maximum retained values for a matching schema enum.
+        encoder (MiniLM | None): Optional resident semantic encoder; None uses lexical matching.
+        embedding_cache (dict[str, np.ndarray] | None): Bounded cache for static retrieval embeddings.
+        trace (dict | list | None): Optional mutable diagnostic collector.
+        semantic_candidates (int): Maximum candidates retained for semantic retrieval.
+
+    Returns:
+        tuple[list[dict], dict]: Selected copied schemas and tool/enum removal statistics.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
     """
     if not tools:
         return tools, {"tools_before": 0, "tools_after": 0, "enum_values_removed": 0}
@@ -367,23 +519,28 @@ def retrieve_tools(
     query = _tokens(query_text)
     if trace is not None:
         trace.clear()
-        trace.update({
-            "stage": "tool_retrieval",
-            "query_text": query_text,
-            "query_tokens": sorted(query),
-            "max_tools": max_tools,
-            "enum_limit": enum_limit,
-            "all_tools": [],
-            "candidates": [],
-            "semantic_ranking": [],
-            "selected_tool_names": [],
-            "selected_tools": [],
-            "enum_pruning": [],
-        })
+        trace.update(
+            {
+                "stage": "tool_retrieval",
+                "query_text": query_text,
+                "query_tokens": sorted(query),
+                "max_tools": max_tools,
+                "enum_limit": enum_limit,
+                "all_tools": [],
+                "candidates": [],
+                "semantic_ranking": [],
+                "selected_tool_names": [],
+                "selected_tools": [],
+                "enum_pruning": [],
+            }
+        )
     scores = _corpus_scores(query, tools)
     ranked = [(scores[index], tool["function"]["name"], tool) for index, tool in enumerate(tools)]
-    kept_names = {call.get("function", {}).get("name") for message in messages
-                  for call in message.get("tool_calls") or []}
+    kept_names = {
+        call.get("function", {}).get("name")
+        for message in messages
+        for call in message.get("tool_calls") or []
+    }
     if trace is not None:
         trace["all_tools"] = [
             {
@@ -419,20 +576,22 @@ def retrieve_tools(
         semantic = []
         for lexical_score, index, tool in candidates:
             fn = tool.get("function", {})
-            description = " ".join((
-                fn.get("name", ""),
-                fn.get("description", ""),
-                _text(fn.get("parameters", {}))[:1400],
-            ))
-            similarity = float(np.dot(
-                vector, _embedding(encoder, description, embedding_cache)
-            ))
-            semantic.append((
-                similarity + min(lexical_score, 12) * 0.03,
-                lexical_score,
-                index,
-                tool,
-            ))
+            description = " ".join(
+                (
+                    fn.get("name", ""),
+                    fn.get("description", ""),
+                    _text(fn.get("parameters", {}))[:1400],
+                )
+            )
+            similarity = float(np.dot(vector, _embedding(encoder, description, embedding_cache)))
+            semantic.append(
+                (
+                    similarity + min(lexical_score, 12) * 0.03,
+                    lexical_score,
+                    index,
+                    tool,
+                )
+            )
         semantic.sort(key=lambda item: (-item[0], -item[1], item[2]))
         chosen = [item[3] for item in semantic[:max_tools]]
         if trace is not None:
@@ -476,9 +635,7 @@ def retrieve_tools(
             path=f"$.tools.{function.get('name', '<unnamed>')}.parameters",
         )
     if trace is not None:
-        trace["selected_tool_names"] = [
-            tool.get("function", {}).get("name") for tool in compact
-        ]
+        trace["selected_tool_names"] = [tool.get("function", {}).get("name") for tool in compact]
         trace["selected_tools"] = copy.deepcopy(compact)
         trace["stats"] = dict(stats)
     return compact, stats

@@ -1,3 +1,5 @@
+"""HTTP/MCP application composition, authentication, UI assets and response envelopes."""
+
 import asyncio
 import hmac
 import json
@@ -24,13 +26,14 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .config import HA_ASSIST_MODEL, LLM_MODEL, STT_MODEL, Settings
+from .errors import BusyError, LiteRTInferenceError
 from .i18n import SUPPORTED_LANGUAGES, catalogue, wait_sentence
 from .input_budget import InputBudgetError
 from .media import audio_file, audio_metadata, decode_base64
 from .metrics import response_metrics, timestamp
 from .models import ModelManager
 from .protocols import LANGUAGES, MQTTBridge, WyomingServer, dispatch
-from .runtime import BusyError, LiteRTInferenceError, Runtime
+from .runtime import Runtime
 from .schemas import ChatRequest, TranscribeRequest, VisionDetectRequest
 from .tool_calling import has_tool_context
 from .vision import COCO80, VisionRuntime
@@ -47,19 +50,60 @@ _WEB_FILES = {
 
 
 def _debug(settings, message, *args):
+    """Emit a formatted diagnostic when debug logging is enabled.
+
+    Args:
+        settings (Settings): Validated service settings controlling enabled models and limits.
+        message (str | dict[str, Any]): Formatted diagnostic text or ASGI message.
+        *args (Any): Positional arguments forwarded to the native operation.
+
+    Returns:
+        None: Writes a debug record when enabled.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     if settings.debug_log:
         _LOG.debug(message, *args)
 
 
 class AccessAndSizeLimit:
+    """Enforce ASGI authentication, request size limits and request diagnostics."""
+
     def __init__(self, app, settings):
+        """Initialize AccessAndSizeLimit configuration and owned dependencies.
+
+        Args:
+            app (ASGIApp): Application whose lifecycle or ASGI events are wrapped.
+            settings (Settings): Validated service settings controlling enabled models and limits.
+
+        Returns:
+            None: Creates the object without running inference.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         self.app, self.settings = app, settings
         self.mcp_no_auth_networks = tuple(
             ip_network(network.strip())
-            for network in settings.mcp_no_auth_networks.split(",") if network.strip()
+            for network in settings.mcp_no_auth_networks.split(",")
+            if network.strip()
         )
 
     async def __call__(self, scope, receive, send):
+        """Enforce access/body policy before dispatching an ASGI request.
+
+        Args:
+            scope (dict[str, Any]): ASGI connection scope including peer, path and request state.
+            receive (Callable): ASGI receive callback yielding incoming events.
+            send (Callable): ASGI send callback forwarding response events.
+
+        Returns:
+            None: Sends the application response or rejects invalid/unauthorized input.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         if scope["type"] not in {"http", "websocket"}:
             return await self.app(scope, receive, send)
         request_id = uuid.uuid4().hex[:12]
@@ -72,18 +116,39 @@ class AccessAndSizeLimit:
         peer = scope.get("client") or ("unknown", 0)
         is_websocket = scope["type"] == "websocket"
         protocol = (
-            "websocket" if is_websocket else
-            "mcp" if path == "/mcp" or path.startswith("/mcp/") else "http"
+            "websocket"
+            if is_websocket
+            else "mcp"
+            if path == "/mcp" or path.startswith("/mcp/")
+            else "http"
         )
         transport = "websocket" if is_websocket else "http"
-        _debug(self.settings,
-               "protocol=%s transport=%s event=request_start request_id=%s method=%s path=%s peer=%s content_type=%s content_length=%s",
-               protocol, transport, request_id,
-               method, path, peer[0], headers.get(b"content-type", b"-").decode("latin1"),
-               headers.get(b"content-length", b"-").decode("latin1"))
+        _debug(
+            self.settings,
+            "protocol=%s transport=%s event=request_start request_id=%s method=%s path=%s peer=%s content_type=%s content_length=%s",
+            protocol,
+            transport,
+            request_id,
+            method,
+            path,
+            peer[0],
+            headers.get(b"content-type", b"-").decode("latin1"),
+            headers.get(b"content-length", b"-").decode("latin1"),
+        )
         response_status = "accepted"
 
         async def debug_send(message):
+            """Record response status before forwarding an ASGI message.
+
+            Args:
+                message (str | dict[str, Any]): Formatted diagnostic text or ASGI message.
+
+            Returns:
+                None: Forwards the message to the original send callback.
+
+            Notes:
+                No application-specific exceptions are raised for valid inputs.
+            """
             nonlocal response_status
             if message["type"] == "http.response.start":
                 response_status = message["status"]
@@ -92,6 +157,18 @@ class AccessAndSizeLimit:
             await send(message)
 
         async def call_app(current_scope, current_receive):
+            """Run the wrapped application and log request duration and outcome.
+
+            Args:
+                current_scope (dict[str, Any]): Scope passed to the wrapped ASGI application.
+                current_receive (Callable): Bounded ASGI receive callback.
+
+            Returns:
+                None: Completes the wrapped ASGI request.
+
+            Notes:
+                No application-specific exceptions are raised for valid inputs.
+            """
             nonlocal response_status
             try:
                 await self.app(current_scope, current_receive, debug_send)
@@ -100,16 +177,26 @@ class AccessAndSizeLimit:
                     response_status = "failed" if is_websocket else 500
                 raise
             finally:
-                _debug(self.settings,
-                       "protocol=%s transport=%s event=request_end request_id=%s method=%s path=%s status=%s duration_ms=%.1f",
-                       protocol, transport, request_id, method, path, response_status,
-                       (time.perf_counter() - started) * 1000)
+                _debug(
+                    self.settings,
+                    "protocol=%s transport=%s event=request_end request_id=%s method=%s path=%s status=%s duration_ms=%.1f",
+                    protocol,
+                    transport,
+                    request_id,
+                    method,
+                    path,
+                    response_status,
+                    (time.perf_counter() - started) * 1000,
+                )
+
         expected = f"Bearer {self.settings.api_key}".encode()
         public = scope["path"] == "/health" or (
             scope["type"] == "http"
             and scope.get("method") in {"GET", "HEAD"}
-            and (scope["path"] in {*_WEB_FILES, "/ui/config"}
-                 or scope["path"] in {f"/ui/locales/{lang}.json" for lang in SUPPORTED_LANGUAGES})
+            and (
+                scope["path"] in {*_WEB_FILES, "/ui/config"}
+                or scope["path"] in {f"/ui/locales/{lang}.json" for lang in SUPPORTED_LANGUAGES}
+            )
         )
         # Trust the socket peer only, never client-supplied forwarding headers.
         if protocol == "mcp" and not is_websocket:
@@ -151,10 +238,17 @@ class AccessAndSizeLimit:
             # other headers and the exact JSON/body sent by the client.
             debug_headers = {
                 key.decode("latin1"): (
-                    "<redacted>" if key.lower() in {
-                        b"authorization", b"proxy-authorization", b"cookie", b"set-cookie",
-                        b"x-api-key", b"api-key",
-                    } else value.decode("latin1")
+                    "<redacted>"
+                    if key.lower()
+                    in {
+                        b"authorization",
+                        b"proxy-authorization",
+                        b"cookie",
+                        b"set-cookie",
+                        b"x-api-key",
+                        b"api-key",
+                    }
+                    else value.decode("latin1")
                 )
                 for key, value in scope.get("headers", [])
             }
@@ -173,7 +267,11 @@ class AccessAndSizeLimit:
             _LOG.debug(
                 "protocol=%s transport=%s event=request_payload request_id=%s "
                 "method=%s path=%s headers=%s body=%s",
-                protocol, transport, request_id, method, path,
+                protocol,
+                transport,
+                request_id,
+                method,
+                path,
                 json.dumps(debug_headers, ensure_ascii=False, separators=(",", ":")),
                 debug_body,
             )
@@ -181,6 +279,14 @@ class AccessAndSizeLimit:
         delivered = False
 
         async def bounded_receive():
+            """Reject streamed request bodies that exceed the configured limit.
+
+            Returns:
+                dict[str, Any]: Next ASGI receive event.
+
+            Notes:
+                No application-specific exceptions are raised for valid inputs.
+            """
             nonlocal delivered
             if not delivered:
                 delivered = True
@@ -191,6 +297,20 @@ class AccessAndSizeLimit:
 
 
 def completion(text, identifier, created, model):
+    """Build an OpenAI completion envelope from validated chat output.
+
+    Args:
+        text (str): Text to parse, normalize, match or render.
+        identifier (str): Completion or call identifier.
+        created (int): Unix timestamp in whole seconds.
+        model (str): Public model identifier or configured HEF path.
+
+    Returns:
+        dict[str, Any]: Completion ID, model, choices and finish reason.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     message = text if isinstance(text, dict) else {"role": "assistant", "content": text}
     return {
         "id": identifier,
@@ -198,13 +318,30 @@ def completion(text, identifier, created, model):
         "created": created,
         "model": model,
         "choices": [
-            {"index": 0, "message": message,
-             "finish_reason": "tool_calls" if message.get("tool_calls") else "stop"}
+            {
+                "index": 0,
+                "message": message,
+                "finish_reason": "tool_calls" if message.get("tool_calls") else "stop",
+            }
         ],
     }
 
 
 def create_app(settings=None, backend=None, litert_backend=None, vision_backend=None):
+    """Compose HTTP, MCP, Wyoming, MQTT and resident inference services.
+
+    Args:
+        settings (Settings): Validated service settings controlling enabled models and limits.
+        backend (ChatBackend): Resident backend used for generation or context preparation.
+        litert_backend (ChatBackend | None): Injected LiteRT backend; None creates one when enabled.
+        vision_backend (HailoVisionBackend | None): Injected detector backend; None uses the resident Hailo detector.
+
+    Returns:
+        FastAPI: Application with backend lifecycle and request validation.
+
+    Raises:
+        ValueError: Service settings or protocol configuration are invalid.
+    """
     settings = settings or Settings.from_env()
     runtime = Runtime(settings, backend, litert_backend)
     vision = VisionRuntime(settings, vision_backend)
@@ -215,7 +352,19 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
 
     @mcp.tool()
     async def analyze_image(image_base64: str, prompt: str, max_tokens: int = 256) -> str:
-        """Analyze a base64-encoded camera snapshot using the configured resident VLM."""
+        """Analyze a base64-encoded camera snapshot using the configured resident VLM.
+
+        Args:
+            image_base64 (str): Base64-encoded image or image data URL.
+            prompt (str): Question text or prepared native prompt messages.
+            max_tokens (int): Maximum generated tokens reserved for the response.
+
+        Returns:
+            str: Model analysis of the supplied image.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         request = ChatRequest(
             messages=[
                 {
@@ -232,20 +381,47 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
 
     @mcp.tool()
     async def transcribe_audio(audio_base64: str, language: str | None = None) -> str:
-        """Transcribe a base64 WAV/FLAC/OGG recording with the configured multilingual Whisper model."""
+        """Transcribe a base64 WAV/FLAC/OGG recording with the configured multilingual Whisper model.
+
+        Args:
+            audio_base64 (str): Base64-encoded recording or audio data URL.
+            language (str | None): Language code; None uses the configured or detected language.
+
+        Returns:
+            str: Recognized speech text.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         request = TranscribeRequest(audio_base64=audio_base64, language=language)
         data = decode_base64(request.audio_base64, settings.max_body)
-        _debug(settings,
-               "protocol=mcp operation=whisper_transcribe request_id=%s model=%s language=%s audio=%s bytes=%d",
-               uuid.uuid4().hex[:12], settings.stt_model, request.language or settings.language,
-               audio_metadata(data), len(data))
+        _debug(
+            settings,
+            "protocol=mcp operation=whisper_transcribe request_id=%s model=%s language=%s audio=%s bytes=%d",
+            uuid.uuid4().hex[:12],
+            settings.stt_model,
+            request.language or settings.language,
+            audio_metadata(data),
+            len(data),
+        )
         return await runtime.transcribe(
             audio_file(data, settings.max_audio_seconds), request.language
         )
 
     @mcp.tool()
     async def chat_text(prompt: str, max_tokens: int = 256) -> str:
-        """Ask the configured chat model a text question. Does not execute Home Assistant actions."""
+        """Ask the configured chat model a text question. Does not execute Home Assistant actions.
+
+        Args:
+            prompt (str): Question text or prepared native prompt messages.
+            max_tokens (int): Maximum generated tokens reserved for the response.
+
+        Returns:
+            str: Generated text or a validated assistant message.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         return await runtime.chat(
             ChatRequest(messages=[{"role": "user", "content": prompt}], max_tokens=max_tokens)
         )
@@ -262,6 +438,17 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
 
     @asynccontextmanager
     async def lifespan(app):
+        """Start resident services and release them when the application stops.
+
+        Args:
+            app (ASGIApp): Application whose lifecycle or ASGI events are wrapped.
+
+        Yields:
+            None: Keeps services active within the application lifespan.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         mqtt_task = None
         try:
             await runtime.start()  # Failure prevents all listeners from becoming ready.
@@ -291,6 +478,17 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
     app.add_middleware(AccessAndSizeLimit, settings=settings)
 
     async def web_file(request):
+        """Serve a bundled UI asset with restrictive browser security headers.
+
+        Args:
+            request (Request): HTTP request associated with this operation.
+
+        Returns:
+            FileResponse: Requested static asset.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         return FileResponse(
             _WEB / _WEB_FILES[request.url.path],
             headers={
@@ -311,6 +509,14 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
 
     @app.get("/ui/config", include_in_schema=False)
     async def web_config():
+        """Expose enabled models, limits and language settings to the browser.
+
+        Returns:
+            dict[str, Any]: Public UI configuration without credentials.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         return {
             "auth_required": bool(settings.api_key),
             "vlm_model": settings.vlm_model,
@@ -318,13 +524,20 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
             "hailo_llm_model": settings.hailo_llm_model_id,
             "default_text_model": runtime.default_text_model,
             "vision_models": ([settings.vlm_model] if settings.vlm_enabled else [])
-            + ([HA_ASSIST_MODEL] if settings.ha_assist_enabled and settings.vlm_enabled
-               and settings.ha_assist_vision_model == settings.vlm_model else []),
+            + (
+                [HA_ASSIST_MODEL]
+                if settings.ha_assist_enabled
+                and settings.vlm_enabled
+                and settings.ha_assist_vision_model == settings.vlm_model
+                else []
+            ),
             "object_detection": vision.status(),
             "ha_assist_model": HA_ASSIST_MODEL,
             "ha_assist": runtime.status()["ha_assist"],
             "model_limits": runtime.model_limits,
-            "vlm_max_images": ModelManager(settings).entries.get(settings.vlm_model, {}).get("max_images", 1),
+            "vlm_max_images": ModelManager(settings)
+            .entries.get(settings.vlm_model, {})
+            .get("max_images", 1),
             "chat_models": runtime.chat_models,
             "whisper_model": settings.stt_model,
             "language": settings.language,
@@ -338,66 +551,192 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
 
     @app.get("/ui/locales/{language}.json", include_in_schema=False)
     async def web_locale(language: str):
+        """Return browser translations for a supported UI language.
+
+        Args:
+            language (str): Language code; None uses the configured or detected language.
+
+        Returns:
+            dict[str, Any] | JSONResponse: Translation catalogue or a 404 response.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         if language not in SUPPORTED_LANGUAGES:
             return JSONResponse({"error": "Unsupported language"}, status_code=404)
         data = catalogue(language)
-        return {"ui": data["ui"], "language_name": data["language_name"],
-                "language_names": data["language_names"]}
+        return {
+            "ui": data["ui"],
+            "language_name": data["language_name"],
+            "language_names": data["language_names"],
+        }
 
     @app.exception_handler(BusyError)
     async def busy_handler(request, exc):
+        """Map unavailable models and full queues to HTTP 503.
+
+        Args:
+            request (Request): HTTP request associated with this operation.
+            exc (BaseException | None): Exception being translated or passed to context cleanup.
+
+        Returns:
+            JSONResponse: Error response with a retry hint.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         return JSONResponse({"error": str(exc)}, status_code=503, headers={"Retry-After": "5"})
 
     @app.exception_handler(ValueError)
     async def value_handler(request, exc):
+        """Map invalid service input to HTTP 400.
+
+        Args:
+            request (Request): HTTP request associated with this operation.
+            exc (BaseException | None): Exception being translated or passed to context cleanup.
+
+        Returns:
+            JSONResponse: Client error message.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         return JSONResponse({"error": str(exc)}, status_code=400)
 
     @app.exception_handler(InputBudgetError)
     async def input_budget_handler(request, exc):
-        return JSONResponse({"error": {
-            "message": str(exc), "type": "invalid_request_error",
-            "code": "input_token_limit_exceeded", "input_tokens": exc.tokens,
-            "input_limit": exc.limit,
-        }}, status_code=400)
+        """Expose required input tokens and the effective limit as HTTP 400.
+
+        Args:
+            request (Request): HTTP request associated with this operation.
+            exc (BaseException | None): Exception being translated or passed to context cleanup.
+
+        Returns:
+            JSONResponse: Structured input_token_limit_exceeded error.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
+        return JSONResponse(
+            {
+                "error": {
+                    "message": str(exc),
+                    "type": "invalid_request_error",
+                    "code": "input_token_limit_exceeded",
+                    "input_tokens": exc.tokens,
+                    "input_limit": exc.limit,
+                }
+            },
+            status_code=400,
+        )
 
     @app.exception_handler(LiteRTInferenceError)
     async def litert_error_handler(request, exc):
-        return JSONResponse({"error": {"message": str(exc), "type": "inference_error"}}, status_code=502)
+        """Map native LiteRT inference failure to HTTP 502.
+
+        Args:
+            request (Request): HTTP request associated with this operation.
+            exc (BaseException | None): Exception being translated or passed to context cleanup.
+
+        Returns:
+            JSONResponse: Structured inference error.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
+        return JSONResponse(
+            {"error": {"message": str(exc), "type": "inference_error"}}, status_code=502
+        )
 
     @app.exception_handler(asyncio.TimeoutError)
     async def timeout_handler(request, exc):
+        """Map inference deadline expiry to HTTP 504.
+
+        Args:
+            request (Request): HTTP request associated with this operation.
+            exc (BaseException | None): Exception being translated or passed to context cleanup.
+
+        Returns:
+            JSONResponse: Timeout response; native work may still be running.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         return JSONResponse(
             {"error": "Inference timed out; native work may still be completing"}, status_code=504
         )
 
     @app.get("/health")
     async def health():
+        """Return readiness and status for inference and transport services.
+
+        Returns:
+            JSONResponse: HTTP 200 when required services are ready, otherwise 503.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         return JSONResponse(
             {**runtime.status(), "vision": vision.status(), "mqtt_connected": mqtt.connected},
-            status_code=200 if runtime.ready and (not settings.vision_enabled or vision.ready) else 503,
+            status_code=200
+            if runtime.ready and (not settings.vision_enabled or vision.ready)
+            else 503,
         )
 
     @app.get("/v1/models")
     async def models():
+        """List currently enabled or ready models in OpenAI format.
+
+        Returns:
+            dict[str, Any]: Model identifiers and owning backend names.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         return {
             "object": "list",
             "data": [
                 {"id": model, "object": "model", "owned_by": "hailo"}
-                for model in runtime.hailo_chat_models + ([settings.stt_model] if settings.whisper_enabled else [])
-            ] + ([{"id": settings.vision_model_id, "object": "model", "owned_by": "hailo"}]
-                 if vision.ready else [])
-            + ([{"id": LLM_MODEL, "object": "model", "owned_by": "litert-lm"}]
-                 if runtime.litert_ready else [])
-            + ([{"id": HA_ASSIST_MODEL, "object": "model", "owned_by": "hailo-services"}]
-               if settings.ha_assist_enabled else []),
+                for model in runtime.hailo_chat_models
+                + ([settings.stt_model] if settings.whisper_enabled else [])
+            ]
+            + (
+                [{"id": settings.vision_model_id, "object": "model", "owned_by": "hailo"}]
+                if vision.ready
+                else []
+            )
+            + (
+                [{"id": LLM_MODEL, "object": "model", "owned_by": "litert-lm"}]
+                if runtime.litert_ready
+                else []
+            )
+            + (
+                [{"id": HA_ASSIST_MODEL, "object": "model", "owned_by": "hailo-services"}]
+                if settings.ha_assist_enabled
+                else []
+            ),
         }
 
     @app.post("/v1/vision/detect")
     async def vision_detect(request: VisionDetectRequest, http_request: Request):
+        """Detect objects and report normalized and pixel-space boxes.
+
+        Args:
+            request (VisionDetectRequest): Validated chat request, history, tool policy and request-local metadata.
+            http_request (Request): HTTP request providing correlation and timing state.
+
+        Returns:
+            dict[str, Any]: Detections, image dimensions and request metrics.
+
+        Raises:
+            HTTPException: The detector is unavailable (503) or the requested model is unknown (400).
+        """
         if not vision.ready:
             raise HTTPException(503, "Vision model is disabled or not ready")
         if request.model and request.model not in {
-            settings.vision_model, settings.vision_model_id, Path(settings.vision_model).name
+            settings.vision_model,
+            settings.vision_model_id,
+            Path(settings.vision_model).name,
         }:
             raise HTTPException(400, f"Unknown vision model: {request.model}")
         started = time.perf_counter()
@@ -411,23 +750,29 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
             if confidence <= 0:
                 continue
             ymin, xmin, ymax, xmax = (float(value) for value in row[2:6])
-            detections.append({
-                "class_id": class_id,
-                "label": COCO80[class_id] if 0 <= class_id < len(COCO80) else str(class_id),
-                "confidence": confidence,
-                "box": {"x_min": xmin, "y_min": ymin, "x_max": xmax, "y_max": ymax},
-                "box_pixels": {
-                    "x_min": max(0, min(width, round(xmin * width))),
-                    "y_min": max(0, min(height, round(ymin * height))),
-                    "x_max": max(0, min(width, round(xmax * width))),
-                    "y_max": max(0, min(height, round(ymax * height))),
-                },
-            })
+            detections.append(
+                {
+                    "class_id": class_id,
+                    "label": COCO80[class_id] if 0 <= class_id < len(COCO80) else str(class_id),
+                    "confidence": confidence,
+                    "box": {"x_min": xmin, "y_min": ymin, "x_max": xmax, "y_max": ymax},
+                    "box_pixels": {
+                        "x_min": max(0, min(width, round(xmin * width))),
+                        "y_min": max(0, min(height, round(ymin * height))),
+                        "x_max": max(0, min(width, round(xmax * width))),
+                        "y_max": max(0, min(height, round(ymax * height))),
+                    },
+                }
+            )
         request_id = http_request.scope.get("state", {}).get("request_id", "-")
-        _debug(settings,
-               "protocol=http operation=vision_detect request_id=%s model=%s detections=%d inference_ms=%.1f",
-               request_id, settings.vision_model_id, len(detections),
-               (time.perf_counter() - started) * 1000)
+        _debug(
+            settings,
+            "protocol=http operation=vision_detect request_id=%s model=%s detections=%d inference_ms=%.1f",
+            request_id,
+            settings.vision_model_id,
+            len(detections),
+            (time.perf_counter() - started) * 1000,
+        )
         return {
             "id": "vision-" + uuid.uuid4().hex,
             "object": "vision.detection",
@@ -440,6 +785,22 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
 
     @app.post("/v1/chat/completions")
     async def chat(request: ChatRequest, http_request: Request):
+        """Return an OpenAI completion or SSE stream with request metrics.
+
+        Args:
+            request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+            http_request (Request): HTTP request providing correlation and timing state.
+
+        Returns:
+            dict[str, Any] | StreamingResponse: Completion envelope or streaming HTTP response.
+
+        Raises:
+            ValueError: Input, selected model or generated function calls are invalid.
+            BusyError: A required backend is unavailable or its queue is full.
+            InputBudgetError: Required context exceeds the effective input budget.
+            LiteRTInferenceError: Native CPU generation fails.
+            asyncio.TimeoutError: Inference exceeds the configured request deadline.
+        """
         request = runtime.default_chat_request(request)
         identifier, created = "chatcmpl-" + uuid.uuid4().hex, int(time.time())
         request_id = http_request.scope.get("state", {}).get("request_id", "-")
@@ -449,11 +810,17 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
             for message in request.messages
             for part in (message["content"] if isinstance(message.get("content"), list) else [])
         )
-        _debug(settings,
-               "protocol=http operation=chat_completion request_id=%s model=%s messages=%d images=%d max_tokens=%d max_input_tokens=%s stream=%s",
-               request_id,
-               request.model, len(request.messages), image_count,
-               request.max_tokens, request.max_input_tokens, request.stream)
+        _debug(
+            settings,
+            "protocol=http operation=chat_completion request_id=%s model=%s messages=%d images=%d max_tokens=%d max_input_tokens=%s stream=%s",
+            request_id,
+            request.model,
+            len(request.messages),
+            image_count,
+            request.max_tokens,
+            request.max_input_tokens,
+            request.stream,
+        )
         if settings.debug_log:
             _LOG.debug(
                 "protocol=http operation=chat_completion event=validated_request "
@@ -474,7 +841,28 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
             return result
 
         async def events():
+            """Stream OpenAI completion chunks, timing metadata and terminal markers.
+
+            Yields:
+                str: SSE event containing a completion chunk or error.
+
+            Notes:
+                No application-specific exceptions are raised for valid inputs.
+            """
+
             def event(delta, finish=None):
+                """Serialize an OpenAI completion chunk as a server-sent event.
+
+                Args:
+                    delta (dict[str, Any]): OpenAI streaming message delta.
+                    finish (str | None): Finish reason, or None while generation continues.
+
+                Returns:
+                    str: SSE data frame.
+
+                Notes:
+                    No application-specific exceptions are raised for valid inputs.
+                """
                 return (
                     "data: "
                     + json.dumps(
@@ -494,19 +882,36 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
                 if request.model == HA_ASSIST_MODEL or has_tool_context(request):
                     # Buffer native tool output so invalid/incomplete calls are never streamed
                     # as actions or spoken as text by the voice assistant.
-                    if request.model == HA_ASSIST_MODEL and settings.ha_wait_messages and isinstance(runtime, Runtime):
+                    if (
+                        request.model == HA_ASSIST_MODEL
+                        and settings.ha_wait_messages
+                        and isinstance(runtime, Runtime)
+                    ):
                         loop = asyncio.get_running_loop()
                         started = asyncio.Event()
                         response_language = [settings.service_language]
 
                         def on_inference(language):
+                            """Emit a localized wait notification when native inference starts.
+
+                            Args:
+                                language (str | None): Language code; None uses the configured or detected language.
+
+                            Returns:
+                                None: Queues a wait notification for streaming clients.
+
+                            Notes:
+                                No application-specific exceptions are raised for valid inputs.
+                            """
                             response_language[0] = language
                             loop.call_soon_threadsafe(started.set)
 
                         inference = asyncio.create_task(runtime.chat(request, on_inference))
                         notification = asyncio.create_task(started.wait())
                         try:
-                            await asyncio.wait({inference, notification}, return_when=asyncio.FIRST_COMPLETED)
+                            await asyncio.wait(
+                                {inference, notification}, return_when=asyncio.FIRST_COMPLETED
+                            )
                             if started.is_set() and not inference.done():
                                 yield event({"content": wait_sentence(response_language[0]) + "\n"})
                             result = await inference
@@ -521,10 +926,14 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
                         if result.get("content"):
                             yield event({"content": result["content"]})
                         if result.get("tool_calls"):
-                            yield event({"tool_calls": [
-                                {"index": index, **call}
-                                for index, call in enumerate(result["tool_calls"])
-                            ]})
+                            yield event(
+                                {
+                                    "tool_calls": [
+                                        {"index": index, **call}
+                                        for index, call in enumerate(result["tool_calls"])
+                                    ]
+                                }
+                            )
                         yield event({}, "tool_calls" if result.get("tool_calls") else "stop")
                     else:
                         yield event({"content": result})
@@ -537,12 +946,25 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
                 _LOG.exception("Streaming inference failed request_id=%s", request_id)
                 yield (
                     "data: "
-                    + json.dumps({"error": {
-                        "message": str(exc),
-                        "type": "invalid_request_error" if isinstance(exc, InputBudgetError) else "inference_error",
-                        **({"code": "input_token_limit_exceeded", "input_tokens": exc.tokens,
-                            "input_limit": exc.limit} if isinstance(exc, InputBudgetError) else {}),
-                    }})
+                    + json.dumps(
+                        {
+                            "error": {
+                                "message": str(exc),
+                                "type": "invalid_request_error"
+                                if isinstance(exc, InputBudgetError)
+                                else "inference_error",
+                                **(
+                                    {
+                                        "code": "input_token_limit_exceeded",
+                                        "input_tokens": exc.tokens,
+                                        "input_limit": exc.limit,
+                                    }
+                                    if isinstance(exc, InputBudgetError)
+                                    else {}
+                                ),
+                            }
+                        }
+                    )
                     + "\n\n"
                 )
             yield "data: [DONE]\n\n"
@@ -557,6 +979,21 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
         language: Annotated[str | None, Form()] = None,
         response_format: Annotated[str, Form()] = "json",
     ):
+        """Decode an uploaded recording and return a Whisper transcription.
+
+        Args:
+            request (Request): HTTP request associated with this operation.
+            file (Annotated[UploadFile, File()]): Uploaded supported audio recording.
+            model (str): Public model identifier or configured HEF path.
+            language (Annotated[str | None, Form()]): Language code; None uses the configured or detected language.
+            response_format (Annotated[str, Form()]): Requested transcription output format: json or text.
+
+        Returns:
+            dict | PlainTextResponse: Transcript with request metrics, or plain text when requested.
+
+        Raises:
+            HTTPException: The model or response format is unsupported, or the upload is oversized.
+        """
         if model not in {settings.stt_model, settings.whisper_hef, "whisper-1", STT_MODEL}:
             raise HTTPException(400, "Unknown transcription model")
         if response_format not in {"json", "text"}:
@@ -570,17 +1007,38 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
         if len(data) > settings.max_body:
             raise HTTPException(413, "Audio upload too large")
         metadata = audio_metadata(data)
-        _debug(settings,
-               "protocol=http operation=whisper_transcribe request_id=%s model=%s language=%s audio=%s bytes=%d",
-               request.scope.get("state", {}).get("request_id", "-"), model,
-               language or settings.language, metadata, len(data))
+        _debug(
+            settings,
+            "protocol=http operation=whisper_transcribe request_id=%s model=%s language=%s audio=%s bytes=%d",
+            request.scope.get("state", {}).get("request_id", "-"),
+            model,
+            language or settings.language,
+            metadata,
+            len(data),
+        )
         text = await runtime.transcribe(audio_file(data, settings.max_audio_seconds), language)
-        return PlainTextResponse(text) if response_format == "text" else {
-            "text": text, "metrics": response_metrics({}, request.scope["state"]),
-        }
+        return (
+            PlainTextResponse(text)
+            if response_format == "text"
+            else {
+                "text": text,
+                "metrics": response_metrics({}, request.scope["state"]),
+            }
+        )
 
     @app.websocket("/ws")
     async def websocket(ws: WebSocket):
+        """Dispatch JSON chat, transcription and health operations over WebSocket.
+
+        Args:
+            ws (WebSocket): Connected client socket.
+
+        Returns:
+            None: Sends operation results or structured errors until disconnect.
+
+        Raises:
+            ValueError: Provide a string id of at most 64 characters.
+        """
         await ws.accept()
         try:
             while True:
@@ -597,21 +1055,32 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
                     if not isinstance(identifier, str) or len(identifier) > 64:
                         raise ValueError("Provide a string id of at most 64 characters")
                     operation = str(envelope.get("op", "unknown"))
-                    _debug(settings,
-                           "protocol=websocket event=request_start request_id=%s operation=%s",
-                           identifier, operation)
+                    _debug(
+                        settings,
+                        "protocol=websocket event=request_start request_id=%s operation=%s",
+                        identifier,
+                        operation,
+                    )
                     result = await dispatch(
                         runtime, settings, envelope["op"], envelope.get("payload", {})
                     )
                     await ws.send_json({"id": identifier, "ok": True, "result": result})
-                    _debug(settings,
-                           "protocol=websocket event=request_end request_id=%s operation=%s duration_ms=%.1f ok=true",
-                           identifier, operation, (time.perf_counter() - started) * 1000)
+                    _debug(
+                        settings,
+                        "protocol=websocket event=request_end request_id=%s operation=%s duration_ms=%.1f ok=true",
+                        identifier,
+                        operation,
+                        (time.perf_counter() - started) * 1000,
+                    )
                 except Exception as exc:
-                    _debug(settings,
-                           "protocol=websocket event=request_error request_id=%s operation=%s duration_ms=%.1f error_type=%s",
-                           identifier or "-", operation, (time.perf_counter() - started) * 1000,
-                           type(exc).__name__)
+                    _debug(
+                        settings,
+                        "protocol=websocket event=request_error request_id=%s operation=%s duration_ms=%.1f error_type=%s",
+                        identifier or "-",
+                        operation,
+                        (time.perf_counter() - started) * 1000,
+                        type(exc).__name__,
+                    )
                     await ws.send_json({"id": identifier, "ok": False, "error": str(exc)})
         except WebSocketDisconnect:
             pass

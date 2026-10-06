@@ -331,6 +331,9 @@ unavailable rather than being estimated.
 
 ## Documentation
 
+- [Technical architecture and file responsibilities](doc/architecture.md)
+- [Docstring conventions and IDE support](doc/docstring-style.md)
+
 - [How HA-Assist works and why it does not send everything to an LLM](doc/ha-assist.md)
 - [APIs, LLM/VLM, YOLO/Frigate and Home Assistant](doc/api.md)
 - [Installation, Gemma provisioning and HTTPS](doc/installation.md)

@@ -7,10 +7,23 @@ import uuid
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError
 
+from .tool_retrieval import latest_user_text as _latest_user_text
+
 _LOG = logging.getLogger(__name__)
 
 
 def arguments_object(value):
+    """Parse tool arguments and require a JSON object.
+
+    Args:
+        value (Any): Input value inspected or normalized by this helper.
+
+    Returns:
+        dict[str, Any]: Decoded or original argument mapping.
+
+    Raises:
+        ValueError: Tool arguments must be valid JSON.
+    """
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -22,6 +35,17 @@ def arguments_object(value):
 
 
 def validate_tools(tools):
+    """Validate unique function names, schemas and local-only JSON references.
+
+    Args:
+        tools (list[dict[str, Any]] | None): Client-provided OpenAI function schemas.
+
+    Returns:
+        None: Accepts valid tool definitions.
+
+    Raises:
+        ValueError: Invalid function parameter schema.
+    """
     names = set()
     for tool in tools:
         function = tool.get("function")
@@ -36,16 +60,31 @@ def validate_tools(tools):
         schema = function.get("parameters", {"type": "object", "properties": {}})
         if not isinstance(schema, dict):
             raise ValueError("Function parameters must be a JSON schema object")
+
         # Never retrieve remote schemas supplied by a caller/model.
         def check_refs(node):
+            """Reject remote JSON Schema references recursively.
+
+            Args:
+                node (Any): Nested schema node to inspect or modify.
+
+            Returns:
+                None: Accepts local-only schema references.
+
+            Raises:
+                ValueError: Only local JSON schema references are supported.
+            """
             if isinstance(node, dict):
                 for key, value in node.items():
-                    if key in {"$ref", "$dynamicRef"} and (not isinstance(value, str) or not value.startswith("#")):
+                    if key in {"$ref", "$dynamicRef"} and (
+                        not isinstance(value, str) or not value.startswith("#")
+                    ):
                         raise ValueError("Only local JSON schema references are supported")
                     check_refs(value)
             elif isinstance(node, list):
                 for value in node:
                     check_refs(value)
+
         check_refs(schema)
         try:
             Draft202012Validator.check_schema(schema)
@@ -54,6 +93,17 @@ def validate_tools(tools):
 
 
 def validate_history_calls(calls):
+    """Validate historical function calls and unique non-empty call IDs.
+
+    Args:
+        calls (list[dict[str, Any]]): Assistant function calls from a tool round.
+
+    Returns:
+        None: Accepts structurally valid historical calls.
+
+    Raises:
+        ValueError: tool_calls must be a list.
+    """
     if not isinstance(calls, list):
         raise ValueError("tool_calls must be a list")
     ids = set()
@@ -70,6 +120,17 @@ def validate_history_calls(calls):
 
 
 def selected_tools(request):
+    """Apply disabled, required or forced tool-choice policy.
+
+    Args:
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+
+    Returns:
+        list[dict[str, Any]]: Tools available for this generation.
+
+    Raises:
+        ValueError: tool_choice=required requires tools.
+    """
     tools = request.tools or []
     if request.tool_choice == "none":
         return []
@@ -84,21 +145,76 @@ def selected_tools(request):
 
 
 def native_tools(litert_lm, tools):
+    """Wrap client tool schemas as non-executable native LiteRT tools.
+
+    Args:
+        litert_lm (Any): Imported native LiteRT module exposing Tool classes.
+        tools (list[dict[str, Any]] | None): Client-provided OpenAI function schemas.
+
+    Returns:
+        list[Tool]: Native tool declarations; execution remains client-owned.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
+
     class ClientTool(litert_lm.Tool):
+        """Expose client tool metadata while rejecting local execution of client actions."""
+
         def __init__(self, description):
+            """Initialize ClientTool configuration and owned dependencies.
+
+            Args:
+                description (dict[str, Any]): Client tool schema exposed to native LiteRT.
+
+            Returns:
+                None: Creates the object without running inference.
+
+            Notes:
+                No application-specific exceptions are raised for valid inputs.
+            """
             self.description = description
 
         def get_tool_description(self):
+            """Return the client tool schema required by LiteRT.
+
+            Returns:
+                dict[str, Any]: Original tool description.
+
+            Notes:
+                No application-specific exceptions are raised for valid inputs.
+            """
             return self.description
 
         def execute(self, param):
+            """Reject server-side execution of client-owned tools.
+
+            Args:
+                param (Any): Native tool-execution request rejected by the client-owned adapter.
+
+            Returns:
+                None: Never returns; tool execution belongs to the requesting client.
+
+            Raises:
+                RuntimeError: Home Assistant tools must be executed by Home Assistant.
+            """
             raise RuntimeError("Home Assistant tools must be executed by Home Assistant")
 
     return [ClientTool(tool) for tool in tools]
 
 
 def native_messages(messages):
-    """Translate history and match every tool result to its pending call ID."""
+    """Translate history and match every tool result to its pending call ID.
+
+    Args:
+        messages (list[dict[str, Any]]): Ordered OpenAI or native conversation messages.
+
+    Returns:
+        list[dict[str, Any]]: Native history with matched calls and grouped tool results.
+
+    Raises:
+        ValueError: Missing results for previous tool calls.
+    """
     converted, pending = [], {}
     for message in messages:
         role, content = message["role"], message.get("content")
@@ -124,9 +240,16 @@ def native_messages(messages):
             for call in message["tool_calls"]:
                 function = call["function"]
                 pending[call["id"]] = function["name"]
-                calls.append({"id": call["id"], "type": "function", "function": {
-                    "name": function["name"], "arguments": arguments_object(function["arguments"]),
-                }})
+                calls.append(
+                    {
+                        "id": call["id"],
+                        "type": "function",
+                        "function": {
+                            "name": function["name"],
+                            "arguments": arguments_object(function["arguments"]),
+                        },
+                    }
+                )
             value["tool_calls"] = calls
         converted.append(value)
     if pending:
@@ -137,29 +260,35 @@ def native_messages(messages):
 
 
 def _normalized_text(value):
+    """Normalize entity text without language alias substitution.
+
+    Args:
+        value (Any): Input value inspected or normalized by this helper.
+
+    Returns:
+        str: Case-folded, punctuation-free matching text.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     text = str(value).casefold().replace("ß", "ss")
     text = text.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
     text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _latest_user_text(messages):
-    for message in reversed(messages):
-        if message.get("role") != "user":
-            continue
-        content = message.get("content")
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            return " ".join(
-                part.get("text", "") for part in content
-                if isinstance(part, dict) and part.get("type") == "text"
-            )
-        return ""
-    return ""
-
-
 def _relevant_entities(messages):
+    """Parse static entity names, domains and areas from HA system messages.
+
+    Args:
+        messages (list[dict[str, Any]]): Ordered OpenAI or native conversation messages.
+
+    Returns:
+        list[dict[str, str]]: Parsed static entities used for argument target normalization.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     entities = []
     for message in messages:
         if message.get("role") != "system" or not isinstance(message.get("content"), str):
@@ -170,11 +299,13 @@ def _relevant_entities(messages):
             flags=re.MULTILINE | re.DOTALL,
         )
         for name, domain, area in blocks:
-            entities.append({
-                "name": name.strip(),
-                "domain": domain.strip(),
-                "area": area.strip() if area else "",
-            })
+            entities.append(
+                {
+                    "name": name.strip(),
+                    "domain": domain.strip(),
+                    "area": area.strip() if area else "",
+                }
+            )
     return entities
 
 
@@ -185,6 +316,17 @@ def _prefer_area_target(arguments, schema, messages):
     and a domain, the user must mention an area, the selected name must not be
     explicitly present in the user text, and at least two relevant entities of
     that domain must exist in the mentioned area.
+
+    Args:
+        arguments (dict[str, Any]): Function argument values to validate or encode.
+        schema (dict[str, Any]): Client JSON Schema defining permitted arguments.
+        messages (list[dict[str, Any]]): Ordered OpenAI or native conversation messages.
+
+    Returns:
+        dict[str, Any]: Arguments with safe area/domain targeting when appropriate.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
     """
     if not isinstance(arguments, dict) or not isinstance(arguments.get("name"), str):
         return arguments
@@ -208,7 +350,8 @@ def _prefer_area_target(arguments, schema, messages):
             continue
         area_groups.setdefault(entity["area"], []).append(entity)
     matching = [
-        (area, members) for area, members in area_groups.items()
+        (area, members)
+        for area, members in area_groups.items()
         if _normalized_text(area) in user_text and len(members) >= 2
     ]
     if len(matching) != 1:
@@ -221,6 +364,7 @@ def _prefer_area_target(arguments, schema, messages):
     repaired["area"] = area
     return repaired
 
+
 def _expand_name_list_arguments(arguments, schema, parallel_tool_calls):
     """Repair Gemma's common HA multi-target shape without inventing arguments.
 
@@ -230,6 +374,17 @@ def _expand_name_list_arguments(arguments, schema, parallel_tool_calls):
     as independent tool calls only when the client explicitly allows parallel
     calls. All expanded argument objects are still validated against the
     caller-provided JSON schema afterwards.
+
+    Args:
+        arguments (dict[str, Any]): Function argument values to validate or encode.
+        schema (dict[str, Any]): Client JSON Schema defining permitted arguments.
+        parallel_tool_calls (bool): Whether multi-target output may expand into parallel function calls.
+
+    Returns:
+        list[dict[str, Any]]: One argument mapping per allowed target.
+
+    Raises:
+        ValueError: Model returned multiple device names while parallel_tool_calls is disabled.
     """
     properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
     name_schema = properties.get("name", {}) if isinstance(properties, dict) else {}
@@ -250,7 +405,19 @@ def _expand_name_list_arguments(arguments, schema, parallel_tool_calls):
 
 
 def response_message(response, request, text):
-    """Validate generated function names and arguments before returning actions."""
+    """Validate generated function names and arguments before returning actions.
+
+    Args:
+        response (Any): Native output or decoded assistant response to normalize.
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+        text (str): Text to parse, normalize, match or render.
+
+    Returns:
+        ChatResult: Validated assistant call message, plain text or localized HA validation response.
+
+    Raises:
+        ValueError: Model returned invalid tool_calls.
+    """
     if hasattr(response, "to_json"):
         response = response.to_json()
     calls = response.get("tool_calls", []) if isinstance(response, dict) else []
@@ -281,9 +448,11 @@ def response_message(response, request, text):
                 json.dumps(original_arguments, ensure_ascii=False, separators=(",", ":")),
                 json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
             )
-        expanded_arguments = (_expand_name_list_arguments(
-            arguments, schema, request.parallel_tool_calls
-        ) if getattr(request, "_ha_assist", False) else [arguments])
+        expanded_arguments = (
+            _expand_name_list_arguments(arguments, schema, request.parallel_tool_calls)
+            if getattr(request, "_ha_assist", False)
+            else [arguments]
+        )
         if len(expanded_arguments) > 1:
             _LOG.debug(
                 "event=tool_argument_normalization request_id=%s tool=%s "
@@ -297,28 +466,36 @@ def response_message(response, request, text):
         for expanded in expanded_arguments:
             if getattr(request, "_ha_assist", False):
                 from .ha_request_plan import validate_action
+
                 if not validate_action(request, name, expanded):
                     from .i18n import t
-                    request._metrics["ha_validation"] = {"accepted": False, "reason": "target_or_value"}
-                    return t('ha_plan.clarify_target')
+
+                    request._metrics["ha_validation"] = {
+                        "accepted": False,
+                        "reason": "target_or_value",
+                    }
+                    return t("ha_plan.clarify_target")
             try:
                 Draft202012Validator(schema).validate(expanded)
             except ValidationError as exc:
                 if getattr(request, "_ha_assist", False):
                     from .i18n import t
+
                     request._metrics["ha_validation"] = {"accepted": False, "reason": "schema"}
-                    return t('ha_plan.tool_failed')
+                    return t("ha_plan.tool_failed")
                 raise ValueError(
                     f"Model returned invalid arguments for {name}: {exc.message}"
                 ) from exc
-            normalized.append({
-                "id": "call_" + uuid.uuid4().hex,
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "arguments": json.dumps(expanded, ensure_ascii=False),
-                },
-            })
+            normalized.append(
+                {
+                    "id": "call_" + uuid.uuid4().hex,
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": json.dumps(expanded, ensure_ascii=False),
+                    },
+                }
+            )
     if not normalized:
         if request.tool_choice == "required" or isinstance(request.tool_choice, dict):
             raise ValueError("Model did not return the required tool call")
@@ -327,6 +504,22 @@ def response_message(response, request, text):
 
 
 def has_tool_context(request):
-    return bool(request.tools) or request.tool_choice is not None or any(
-        message.get("role") == "tool" or message.get("tool_calls") for message in request.messages
+    """Check whether declarations, choices or history require tool handling.
+
+    Args:
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+
+    Returns:
+        bool: Whether generation must preserve tool semantics.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
+    return (
+        bool(request.tools)
+        or request.tool_choice is not None
+        or any(
+            message.get("role") == "tool" or message.get("tool_calls")
+            for message in request.messages
+        )
     )

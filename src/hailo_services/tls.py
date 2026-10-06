@@ -14,10 +14,34 @@ from pathlib import Path
 
 
 def run(*args):
+    """Run a checked subprocess and capture text output.
+
+    Args:
+        *args (Any): Command arguments passed without a shell.
+
+    Returns:
+        str: Standard output of the successful command.
+
+    Raises:
+        FileNotFoundError: The requested executable is not installed.
+        subprocess.CalledProcessError: The command exits with a nonzero status.
+    """
     return subprocess.run(args, check=True, capture_output=True, text=True).stdout
 
 
 def names(dns=(), ips=()):
+    """Discover and validate certificate hostnames and interface addresses.
+
+    Args:
+        dns (Iterable[str]): Additional certificate DNS names.
+        ips (Iterable[str]): Additional certificate IP addresses.
+
+    Returns:
+        tuple[list[str], list[str]]: Unique DNS names and IP addresses for subjectAltName.
+
+    Raises:
+        ValueError: A certificate hostname or IP address is invalid.
+    """
     hostname = socket.gethostname()
     detected = [hostname, hostname.split(".")[0] + ".local", "localhost", *dns]
     addresses = ["127.0.0.1", "::1", *ips]
@@ -41,6 +65,19 @@ def names(dns=(), ips=()):
 
 
 def write(path, content, mode=0o644):
+    """Write a file through a temporary sibling with explicit permissions.
+
+    Args:
+        path (str | Path): Filesystem destination or diagnostic schema path.
+        content (str | bytes): File contents or generated static-context text.
+        mode (int): POSIX permission bits for the written file.
+
+    Returns:
+        None: Atomically replaces the destination file.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     temporary = path.with_name(path.name + ".tmp")
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     try:
@@ -52,7 +89,28 @@ def write(path, content, mode=0o644):
         temporary.unlink(missing_ok=True)
 
 
-def generate(directory, dns=(), ips=(), https_port=8443, http_port=8090, max_body=16777216, timeout=180):
+def generate(
+    directory, dns=(), ips=(), https_port=8443, http_port=8090, max_body=16777216, timeout=180
+):
+    """Create or reuse local TLS certificates and nginx configuration.
+
+    Args:
+        directory (str | Path): Directory containing TLS keys, certificates and proxy files.
+        dns (Iterable[str]): Additional certificate DNS names.
+        ips (Iterable[str]): Additional certificate IP addresses.
+        https_port (int): Public HTTPS listener port.
+        http_port (int): Internal HTTP service port.
+        max_body (int): Maximum proxy request body size in bytes.
+        timeout (float): Operation deadline or proxy timeout in seconds.
+
+    Returns:
+        dict[str, list[str]]: Certificate metadata with DNS names and IP addresses.
+
+    Raises:
+        ValueError: Certificate names, ports, paths or existing CA artifacts are invalid.
+        OSError: Certificate or configuration files cannot be written.
+        subprocess.CalledProcessError: OpenSSL generation or certificate verification fails.
+    """
     if not 1 <= https_port <= 65535 or not 1 <= http_port <= 65535 or https_port == http_port:
         raise ValueError("HTTPS and HTTP ports must be distinct and between 1 and 65535")
     if max_body < 1024 or timeout <= 0:
@@ -65,14 +123,33 @@ def generate(directory, dns=(), ips=(), https_port=8443, http_port=8090, max_bod
     directory.chmod(0o755)
     ca_key, ca_cert = directory / "ca.key", directory / "hailo-ca.crt"
     if ca_key.exists() != ca_cert.exists():
-        raise ValueError("Incomplete CA key/certificate pair; restore the missing file before retrying")
+        raise ValueError(
+            "Incomplete CA key/certificate pair; restore the missing file before retrying"
+        )
     if not ca_key.exists():
         # Only the self-signed CA is installed on clients; its private key never leaves the host.
         try:
-            run("openssl", "req", "-x509", "-newkey", "rsa:3072", "-sha256", "-nodes",
-                "-days", "3650", "-subj", "/CN=Hailo-10H Local CA", "-keyout", str(ca_key),
-                "-out", str(ca_cert), "-addext", "basicConstraints=critical,CA:TRUE,pathlen:0",
-                "-addext", "keyUsage=critical,keyCertSign,cRLSign")
+            run(
+                "openssl",
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:3072",
+                "-sha256",
+                "-nodes",
+                "-days",
+                "3650",
+                "-subj",
+                "/CN=Hailo-10H Local CA",
+                "-keyout",
+                str(ca_key),
+                "-out",
+                str(ca_cert),
+                "-addext",
+                "basicConstraints=critical,CA:TRUE,pathlen:0",
+                "-addext",
+                "keyUsage=critical,keyCertSign,cRLSign",
+            )
         except BaseException:
             ca_key.unlink(missing_ok=True)
             ca_cert.unlink(missing_ok=True)
@@ -81,7 +158,9 @@ def generate(directory, dns=(), ips=(), https_port=8443, http_port=8090, max_bod
     ca_cert.chmod(0o644)
     # Refuse expired CAs or mismatched key pairs instead of silently changing client trust.
     run("openssl", "x509", "-in", str(ca_cert), "-checkend", "2592000", "-noout")
-    if run("openssl", "pkey", "-in", str(ca_key), "-pubout") != run("openssl", "x509", "-in", str(ca_cert), "-pubkey", "-noout"):
+    if run("openssl", "pkey", "-in", str(ca_key), "-pubout") != run(
+        "openssl", "x509", "-in", str(ca_cert), "-pubkey", "-noout"
+    ):
         raise ValueError("Existing CA certificate does not match its private key")
     key, cert = directory / "server.key", directory / "server.crt"
     meta = {"dns": dns, "ips": ips}
@@ -92,21 +171,58 @@ def generate(directory, dns=(), ips=(), https_port=8443, http_port=8090, max_bod
             reuse = json.loads(previous.read_text()) == meta
             run("openssl", "x509", "-in", str(cert), "-checkend", "2592000", "-noout")
             run("openssl", "verify", "-CAfile", str(ca_cert), str(cert))
-            reuse = reuse and run("openssl", "pkey", "-in", str(key), "-pubout") == run("openssl", "x509", "-in", str(cert), "-pubkey", "-noout")
+            reuse = reuse and run("openssl", "pkey", "-in", str(key), "-pubout") == run(
+                "openssl", "x509", "-in", str(cert), "-pubkey", "-noout"
+            )
         except (subprocess.CalledProcessError, json.JSONDecodeError):
             reuse = False
     if not reuse:
         temporary_key, temporary_cert = directory / "server.new.key", directory / "server.new.crt"
         csr, extensions = directory / "server.csr", directory / "server.ext"
         san = ",".join([*(f"DNS:{name}" for name in dns), *(f"IP:{ip}" for ip in ips)])
-        write(extensions, "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=" + san + "\n")
+        write(
+            extensions,
+            "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName="
+            + san
+            + "\n",
+        )
         try:
-            run("openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes", "-sha256",
-                "-subj", "/CN=" + dns[0], "-keyout", str(temporary_key), "-out", str(csr))
+            run(
+                "openssl",
+                "req",
+                "-new",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-sha256",
+                "-subj",
+                "/CN=" + dns[0],
+                "-keyout",
+                str(temporary_key),
+                "-out",
+                str(csr),
+            )
             temporary_key.chmod(0o600)
-            run("openssl", "x509", "-req", "-in", str(csr), "-CA", str(ca_cert), "-CAkey", str(ca_key),
-                "-set_serial", "0x" + secrets.token_hex(16), "-days", "365", "-sha256",
-                "-extfile", str(extensions), "-out", str(temporary_cert))
+            run(
+                "openssl",
+                "x509",
+                "-req",
+                "-in",
+                str(csr),
+                "-CA",
+                str(ca_cert),
+                "-CAkey",
+                str(ca_key),
+                "-set_serial",
+                "0x" + secrets.token_hex(16),
+                "-days",
+                "365",
+                "-sha256",
+                "-extfile",
+                str(extensions),
+                "-out",
+                str(temporary_cert),
+            )
             run("openssl", "verify", "-CAfile", str(ca_cert), str(temporary_cert))
             temporary_cert.chmod(0o644)
             temporary_key.replace(key)
@@ -116,17 +232,26 @@ def generate(directory, dns=(), ips=(), https_port=8443, http_port=8090, max_bod
             for temporary in (temporary_key, temporary_cert, csr, extensions):
                 temporary.unlink(missing_ok=True)
     key.chmod(0o600)
-    der = subprocess.run(["openssl", "x509", "-in", str(ca_cert), "-outform", "DER"], check=True, capture_output=True).stdout
+    der = subprocess.run(
+        ["openssl", "x509", "-in", str(ca_cert), "-outform", "DER"], check=True, capture_output=True
+    ).stdout
     profile = {
-        "PayloadType": "Configuration", "PayloadVersion": 1,
-        "PayloadIdentifier": "local.hailo10h.ca.profile", "PayloadUUID": str(uuid.uuid4()),
+        "PayloadType": "Configuration",
+        "PayloadVersion": 1,
+        "PayloadIdentifier": "local.hailo10h.ca.profile",
+        "PayloadUUID": str(uuid.uuid4()),
         "PayloadDisplayName": "Hailo-10H Local CA",
         "PayloadDescription": "Trust the local Hailo HTTPS service. Enable certificate trust after installing.",
-        "PayloadContent": [{
-            "PayloadType": "com.apple.security.root", "PayloadVersion": 1,
-            "PayloadIdentifier": "local.hailo10h.ca.certificate", "PayloadUUID": str(uuid.uuid4()),
-            "PayloadDisplayName": "Hailo-10H Local CA", "PayloadContent": der,
-        }],
+        "PayloadContent": [
+            {
+                "PayloadType": "com.apple.security.root",
+                "PayloadVersion": 1,
+                "PayloadIdentifier": "local.hailo10h.ca.certificate",
+                "PayloadUUID": str(uuid.uuid4()),
+                "PayloadDisplayName": "Hailo-10H Local CA",
+                "PayloadContent": der,
+            }
+        ],
     }
     write(directory / "hailo-ca.mobileconfig", plistlib.dumps(profile))
     # Dedicated server block: HTTP API, SSE, WebSocket and MCP use the existing runtime.
@@ -142,7 +267,7 @@ def generate(directory, dns=(), ips=(), https_port=8443, http_port=8090, max_bod
         default_type application/x-x509-ca-cert;
     }}
     location = /hailo-ca.mobileconfig {{
-        alias {directory / 'hailo-ca.mobileconfig'};
+        alias {directory / "hailo-ca.mobileconfig"};
         default_type application/x-apple-aspen-config;
     }}
     location / {{
@@ -159,11 +284,23 @@ def generate(directory, dns=(), ips=(), https_port=8443, http_port=8090, max_bod
     }}
 }}
 """
-    write(directory / "nginx-site.conf", "map $http_upgrade $hailo_connection_upgrade {\n    default upgrade;\n    '' close;\n}\n" + configuration)
+    write(
+        directory / "nginx-site.conf",
+        "map $http_upgrade $hailo_connection_upgrade {\n    default upgrade;\n    '' close;\n}\n"
+        + configuration,
+    )
     return meta
 
 
 def main():
+    """Start the command-line entry point for this module.
+
+    Returns:
+        None: Runs the configured command until completion.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", default="/etc/hailo-10h-services/tls")
     parser.add_argument("--dns", action="append", default=[])
@@ -177,6 +314,7 @@ def main():
     values = {}
     if Path(args.config).exists():
         import yaml
+
         document = yaml.safe_load(Path(args.config).read_text()) or {}
         for key in ("port", "max_body", "request_timeout", "host"):
             if key in document.get("settings", {}):
@@ -190,15 +328,30 @@ def main():
         parser.error("HTTPS proxy needs HAILO_HOST=0.0.0.0 or 127.0.0.1")
     old_umask = os.umask(0o077)
     try:
-        meta = generate(args.directory, args.dns, args.ip, args.port,
-                        int(values.get("HAILO_PORT", args.http_port)),
-                        int(values.get("HAILO_MAX_BODY", 16777216)),
-                        float(values.get("HAILO_REQUEST_TIMEOUT", 180)))
+        meta = generate(
+            args.directory,
+            args.dns,
+            args.ip,
+            args.port,
+            int(values.get("HAILO_PORT", args.http_port)),
+            int(values.get("HAILO_MAX_BODY", 16777216)),
+            float(values.get("HAILO_REQUEST_TIMEOUT", 180)),
+        )
     finally:
         os.umask(old_umask)
     print("Certificate DNS names: " + ", ".join(meta["dns"]))
     print("Certificate IP addresses: " + ", ".join(meta["ips"]))
-    print(run("openssl", "x509", "-in", str(Path(args.directory) / "hailo-ca.crt"), "-noout", "-fingerprint", "-sha256").strip())
+    print(
+        run(
+            "openssl",
+            "x509",
+            "-in",
+            str(Path(args.directory) / "hailo-ca.crt"),
+            "-noout",
+            "-fingerprint",
+            "-sha256",
+        ).strip()
+    )
 
 
 if __name__ == "__main__":

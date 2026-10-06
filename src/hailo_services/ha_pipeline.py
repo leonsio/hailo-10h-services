@@ -6,7 +6,6 @@ import json
 import logging
 import re
 import uuid
-from functools import wraps
 
 from jsonschema import ValidationError, validate
 
@@ -25,7 +24,17 @@ _DIRECT_ATTRIBUTES = (
 
 
 def is_home_assistant_request(request):
-    """Require identifiable HA tools/history, not a device word in user text."""
+    """Require identifiable HA tools/history, not a device word in user text.
+
+    Args:
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+
+    Returns:
+        Any: Result as described by the operation.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     if not getattr(request, "_ha_assist", False):
         return False
     names = {tool.get("function", {}).get("name") for tool in request.tools or []}
@@ -37,11 +46,34 @@ def is_home_assistant_request(request):
 
 
 def needs_inference(request):
+    """Check whether preparation already produced a deterministic response.
+
+    Args:
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+
+    Returns:
+        bool: True when a generative backend is still required.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     return not any(getattr(request, name, None) is not None for name in _DIRECT_ATTRIBUTES)
 
 
 def task_history(request, *, encoder=None, embedding_cache=None):
-    """Keep active tool dependencies; retire completed HA turns at the HA boundary."""
+    """Keep active tool dependencies; retire completed HA turns at the HA boundary.
+
+    Args:
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+        encoder (MiniLM | None): Optional resident semantic encoder; None uses lexical matching.
+        embedding_cache (dict[str, np.ndarray] | None): Bounded cache for static retrieval embeddings.
+
+    Returns:
+        Any: Result as described by the operation.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     from .ha_routing import assess_ha_relevance
 
     systems = [m for m in request.messages if m.get("role") == "system"]
@@ -56,9 +88,23 @@ def task_history(request, *, encoder=None, embedding_cache=None):
         return request
 
     def relevant(turn, semantic=False):
+        """Check whether a history turn depends on Home Assistant context.
+
+        Args:
+            turn (list[dict[str, Any]]): One user turn with its assistant and tool messages.
+            semantic (bool): Whether semantic relevance fallback is allowed.
+
+        Returns:
+            bool: Whether the turn needs HA entity or tool context.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         return assess_ha_relevance(
-            systems + [turn[0]], request.tools,
-            encoder=encoder if semantic else None, embedding_cache=embedding_cache,
+            systems + [turn[0]],
+            request.tools,
+            encoder=encoder if semantic else None,
+            embedding_cache=embedding_cache,
         )["relevant"]
 
     active = turns[-1]
@@ -68,21 +114,48 @@ def task_history(request, *, encoder=None, embedding_cache=None):
     retained = []
     if not house:
         for turn in turns[:-1]:
-            if not any(m.get("role") == "tool" or m.get("tool_calls") for m in turn) and not relevant(turn):
+            if not any(
+                m.get("role") == "tool" or m.get("tool_calls") for m in turn
+            ) and not relevant(turn):
                 retained.extend(turn)
     messages = systems + retained + active
     prepared = request.model_copy(update={"messages": messages})
     request._metrics["ha_history"] = {
         "policy": "current_ha_turn" if house else "general_conversation",
-        "messages_before": len(request.messages), "messages_after": len(messages),
+        "messages_before": len(request.messages),
+        "messages_after": len(messages),
     }
     return prepared
 
 
 def _target(request, domain, query):
+    """Resolve one explicit entity or area target in the requested domain.
+
+    Args:
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+        domain (str | None): Resolved Home Assistant domain, or None.
+        query (str): User question or normalized utterance to match.
+
+    Returns:
+        dict[str, Any] | None: Safe name/area/domain arguments, or None for ambiguity.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     entities = [e for e in _entries(request.messages) if e["domain"] == domain]
 
     def contains(value):
+        """Match a whole normalized catalogue phrase in the current query.
+
+        Args:
+            value (Any): Input value inspected or normalized by this helper.
+
+        Returns:
+            bool: Whether the phrase occurs with word boundaries.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         return bool(value) and (" " + normalize_matching(value) + " ") in (" " + query + " ")
 
     areas = {e["area"] for e in entities if e["area"] and contains(e["area"])}
@@ -111,7 +184,17 @@ def _target(request, domain, query):
 
 
 def direct_numeric_action(request):
-    """Absolute brightness/cover position only; uncertain/composite requests defer."""
+    """Absolute brightness/cover position only; uncertain/composite requests defer.
+
+    Args:
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+
+    Returns:
+        dict[str, Any] | None: Assistant brightness/position call, or None when ambiguous or unsupported.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     if request.tool_choice == "none" or request.messages[-1].get("role") != "user":
         return None
     query = normalize_matching(latest_user_text(request.messages))
@@ -174,6 +257,18 @@ def direct_numeric_action(request):
 
 
 def _valid_direct(request, response):
+    """Validate direct calls against client schemas and composite-action guards.
+
+    Args:
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+        response (Any): Native output or decoded assistant response to normalize.
+
+    Returns:
+        bool: Whether every deterministic call is safe for this request.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     tools = {tool["function"]["name"]: tool["function"] for tool in request.tools or []}
     query = normalize_matching(latest_user_text(request.messages))
     for call in response.get("tool_calls", []):
@@ -191,107 +286,145 @@ def _valid_direct(request, response):
     return True
 
 
-def install():
-    from . import runtime
+def _prepare_boundary(backend, request, next_stage):
+    """Apply HA provenance, history, language and deterministic intent policy.
 
-    backend = runtime.HailoBackend
-    if getattr(backend, "_ha_pipeline_installed", False):
-        return
-    original_select = backend.select_tools
-    original_chat = runtime.LiteRTLMBackend.chat
+    Args:
+        backend (ChatBackend): Resident backend used for generation or context preparation.
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+        next_stage (Callable[[ChatRequest], ChatRequest]): Fallback preparation stage when this stage does not finish routing.
 
-    @wraps(original_select)
-    def select(self, request):
-        if not getattr(request, "_ha_assist", False):
-            return request
-        if request.tool_choice == "none":
-            return request
-        if not is_home_assistant_request(request):
-            return request
-        request = task_history(request, encoder=self.minilm,
-                               embedding_cache=self._retrieval_embedding_cache)
-        if self.settings.debug_log:
-            _LOG.debug("event=ha_history request_id=%s json=%s", request._request_id,
-                       json.dumps(request._metrics["ha_history"]))
-        language = request.language or detect_language(
-            latest_user_text(request.messages), self.settings.service_language
+    Returns:
+        ChatRequest: Prepared request with language, plan and optional direct result.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
+    if not getattr(request, "_ha_assist", False):
+        return request
+    if request.tool_choice == "none":
+        return request
+    if not is_home_assistant_request(request):
+        return request
+    request = task_history(
+        request, encoder=backend.minilm, embedding_cache=backend._retrieval_embedding_cache
+    )
+    if backend.settings.debug_log:
+        _LOG.debug(
+            "event=ha_history request_id=%s json=%s",
+            request._request_id,
+            json.dumps(request._metrics["ha_history"]),
         )
-        with using_language(language):
-            from .ha_intents import deterministic_intent
-            from .ha_request_plan import canonical_request, target_clarification, tool_failure
+    language = request.language or detect_language(
+        latest_user_text(request.messages), backend.settings.service_language
+    )
+    with using_language(language):
+        from .ha_intents import deterministic_intent
+        from .ha_request_plan import canonical_request, target_clarification, tool_failure
 
-            request = canonical_request(request, self.settings)
-            if self.settings.debug_log and getattr(request, "_ha_plan", None):
-                _LOG.debug("event=ha_plan request_id=%s json=%s", request._request_id,
-                           json.dumps(request._ha_plan, ensure_ascii=False))
-            immediate = tool_failure(request) or target_clarification(request)
-            if immediate is not None and not isinstance(request.tool_choice, dict):
-                prepared = request.model_copy()
-                object.__setattr__(prepared, "_direct_ha_response", immediate)
-                object.__setattr__(prepared, "_response_language", language)
-                return prepared
-
-            unresolved = getattr(request, "_ha_plan", {}).get("target_resolution") == "llm"
-            if unresolved:
-                direct, intent_trace = None, {"source": "catalogue_scores", "reason": "ambiguous"}
-            else:
-                direct, intent_trace = deterministic_intent(request, self.settings, language)
-            if direct is None and not unresolved:
-                direct = direct_numeric_action(request)
-                if direct is not None:
-                    intent_trace.update(source="direct_numeric", reason="validated",
-                                        arguments=json.loads(direct["tool_calls"][0]["function"]["arguments"]))
-            request._metrics["ha_intent"] = intent_trace
-            if direct is not None and getattr(request, "_ha_plan", None):
-                request._ha_plan["action"] = (request._ha_plan.get("action") or
-                    direct["tool_calls"][0]["function"]["name"])
-            if self.settings.debug_log:
-                _LOG.debug("event=ha_intent request_id=%s json=%s", request._request_id,
-                           json.dumps(intent_trace, ensure_ascii=False))
-            if direct is not None:
-                prepared = request.model_copy()
-                object.__setattr__(prepared, "_direct_ha_response", direct)
-                _LOG.info(
-                    "ha_route request_id=%s route=direct_hassil skipped_gemma=true",
-                    request._request_id,
-                )
-            elif unresolved:
-                from .ha_prompt_compiler import compile_ha_prompt
-
-                prepared, _ = compile_ha_prompt(request, request)
-            elif isinstance(request.tool_choice, dict):
-                # A forced tool is authoritative; no competing direct read/action.
-                prepared = request.model_copy()
-            else:
-                prepared = original_select(self, request)
-            direct_response = getattr(prepared, "_direct_ha_response", None)
-            if direct_response is not None and not _valid_direct(request, direct_response):
-                from .ha_prompt_compiler import compile_ha_prompt
-
-                prepared, _ = compile_ha_prompt(request, request)
-            if needs_inference(prepared):
-                messages = [dict(message) for message in prepared.messages]
-                if messages[0].get("role") == "system" and isinstance(
-                    messages[0].get("content"), str
-                ):
-                    messages[0]["content"] += "\n" + t("prompt.reply_language")
-                else:
-                    messages.insert(0, {"role": "system", "content": t("prompt.reply_language")})
-                prepared = prepared.model_copy(update={"messages": messages})
-            if getattr(request, "_ha_plan", None):
-                object.__setattr__(prepared, "_ha_plan", request._ha_plan)
+        request = canonical_request(request, backend.settings)
+        if backend.settings.debug_log and getattr(request, "_ha_plan", None):
+            _LOG.debug(
+                "event=ha_plan request_id=%s json=%s",
+                request._request_id,
+                json.dumps(request._ha_plan, ensure_ascii=False),
+            )
+        immediate = tool_failure(request) or target_clarification(request)
+        if immediate is not None and not isinstance(request.tool_choice, dict):
+            prepared = request.model_copy()
+            object.__setattr__(prepared, "_direct_ha_response", immediate)
             object.__setattr__(prepared, "_response_language", language)
-            object.__setattr__(prepared, "_ha_request", True)
             return prepared
 
-    @wraps(original_chat)
-    def chat(self, request, emit=None, cancelled=None, tools_prepared=False):
-        if not getattr(request, "_ha_assist", False):
-            return self.plain_chat(request, emit, cancelled, True)
-        with using_language(getattr(request, "_response_language", request.language or "de")):
-            # The successful-action shortcut also needs HA provenance.
-            return original_chat(self, request, emit, cancelled, True)
+        unresolved = getattr(request, "_ha_plan", {}).get("target_resolution") == "llm"
+        if unresolved:
+            direct, intent_trace = None, {"source": "catalogue_scores", "reason": "ambiguous"}
+        else:
+            direct, intent_trace = deterministic_intent(request, backend.settings, language)
+        if direct is None and not unresolved:
+            direct = direct_numeric_action(request)
+            if direct is not None:
+                intent_trace.update(
+                    source="direct_numeric",
+                    reason="validated",
+                    arguments=json.loads(direct["tool_calls"][0]["function"]["arguments"]),
+                )
+        request._metrics["ha_intent"] = intent_trace
+        if direct is not None and getattr(request, "_ha_plan", None):
+            request._ha_plan["action"] = (
+                request._ha_plan.get("action") or direct["tool_calls"][0]["function"]["name"]
+            )
+        if backend.settings.debug_log:
+            _LOG.debug(
+                "event=ha_intent request_id=%s json=%s",
+                request._request_id,
+                json.dumps(intent_trace, ensure_ascii=False),
+            )
+        if direct is not None:
+            prepared = request.model_copy()
+            object.__setattr__(prepared, "_direct_ha_response", direct)
+            _LOG.info(
+                "ha_route request_id=%s route=direct_hassil skipped_gemma=true",
+                request._request_id,
+            )
+        elif unresolved:
+            from .ha_prompt_compiler import compile_ha_prompt
 
-    backend.select_tools = select
-    runtime.LiteRTLMBackend.chat = chat
-    backend._ha_pipeline_installed = True
+            prepared, _ = compile_ha_prompt(request, request)
+        elif isinstance(request.tool_choice, dict):
+            # A forced tool is authoritative; no competing direct read/action.
+            prepared = request.model_copy()
+        else:
+            prepared = next_stage(request)
+        direct_response = getattr(prepared, "_direct_ha_response", None)
+        if direct_response is not None and not _valid_direct(request, direct_response):
+            from .ha_prompt_compiler import compile_ha_prompt
+
+            prepared, _ = compile_ha_prompt(request, request)
+        if needs_inference(prepared):
+            messages = [dict(message) for message in prepared.messages]
+            if messages[0].get("role") == "system" and isinstance(messages[0].get("content"), str):
+                messages[0]["content"] += "\n" + t("prompt.reply_language")
+            else:
+                messages.insert(0, {"role": "system", "content": t("prompt.reply_language")})
+            prepared = prepared.model_copy(update={"messages": messages})
+        if getattr(request, "_ha_plan", None):
+            object.__setattr__(prepared, "_ha_plan", request._ha_plan)
+        object.__setattr__(prepared, "_response_language", language)
+        object.__setattr__(prepared, "_ha_request", True)
+        return prepared
+
+
+def prepare_request(backend, request):
+    """Apply this HA preparation stage and invoke its fallback when needed.
+
+    Args:
+        backend (ChatBackend): Resident backend used for generation or context preparation.
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+
+    Returns:
+        ChatRequest: Prepared or unchanged request, possibly carrying a direct response.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
+    from functools import partial
+
+    from . import (
+        ha_action_verification,
+        ha_prompt_compiler,
+        ha_routing,
+        ha_state_routing,
+        ha_weather_routing,
+    )
+
+    stage = backend.retrieve_context
+    for prepare in (
+        ha_routing.prepare_request,
+        ha_state_routing.prepare_request,
+        ha_action_verification.prepare_request,
+        ha_prompt_compiler.prepare_request,
+        ha_weather_routing.prepare_request,
+    ):
+        stage = partial(prepare, backend, next_stage=stage)
+    return _prepare_boundary(backend, request, stage)

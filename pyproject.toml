@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hailo-10h-services"
 version = "0.1.0"
-description = "Resident SHARED Hailo-10H Qwen2-VL and Whisper gateway"
+description = "Resident Hailo-10H chat, speech and vision services with CPU LiteRT support"
 requires-python = ">=3.10"
 dependencies = [
   "fastapi>=0.115,<1", "uvicorn>=0.30,<1", "python-multipart>=0.0.18,<1",
@@ -36,5 +36,12 @@ testpaths = ["tests"]
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+select = ["E", "F", "I", "D100", "D101", "D102", "D103", "D104", "D105", "D107", "D205", "D209", "D400", "D417"]
 ignore = ["E501"]
+
+# PEP 257 / Google-style coverage is enforced for production modules.
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]

@@ -20,17 +20,52 @@ _LANGUAGE = ContextVar("hailo_language", default="de")
 
 @lru_cache(maxsize=3)
 def catalogue(language):
+    """Load and cache one supported language resource file.
+
+    Args:
+        language (str | None): Language code; None uses the configured or detected language.
+
+    Returns:
+        dict[str, Any]: Language text, aliases, labels, UI strings and routing resources.
+
+    Raises:
+        OSError: The language resource file cannot be read.
+        ValueError: The resource contains invalid JSON.
+    """
     with (Path(__file__).parent / "locales" / f"{language}.json").open(encoding="utf-8") as file:
         return json.load(file)
 
 
 def language_code(value, fallback="de"):
+    """Normalize a supported language code, retaining a configured fallback.
+
+    Args:
+        value (Any): Input value inspected or normalized by this helper.
+        fallback (str): Language used when detection or normalization cannot choose one.
+
+    Returns:
+        str: de, en or ru, or the supplied fallback.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     code = str(value or "").lower().split("-")[0].split("_")[0]
     return code if code in SUPPORTED_LANGUAGES else fallback
 
 
 @contextmanager
 def using_language(language):
+    """Set request-local language and restore the previous context on exit.
+
+    Args:
+        language (str | None): Language code; None uses the configured or detected language.
+
+    Yields:
+        None: Runs the context body with the selected language.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     token = _LANGUAGE.set(language_code(language))
     try:
         yield
@@ -39,10 +74,30 @@ def using_language(language):
 
 
 def current_language():
+    """Read the current request-local language.
+
+    Returns:
+        str: Active service language code.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     return _LANGUAGE.get()
 
 
 def t(key, **values):
+    """Format localized text with German fallback for missing translations.
+
+    Args:
+        key (str): Resource or field identifier to look up.
+        **values (Any): Formatting substitutions, metric updates or catalogue values, depending on the helper.
+
+    Returns:
+        str: Translated text with substituted placeholders.
+
+    Raises:
+        KeyError: The key is absent from both catalogues or a format value is missing.
+    """
     template = catalogue(current_language())["text"].get(key)
     if template is None:
         template = catalogue("de")["text"][key]
@@ -51,7 +106,30 @@ def t(key, **values):
 
 @lru_cache(maxsize=None)
 def lexicon(key):
+    """Load routing vocabulary and decode tagged sets and tuples.
+
+    Args:
+        key (str): Resource or field identifier to look up.
+
+    Returns:
+        Any: Cached routing vocabulary for the supplied key.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
+
     def unpack(value):
+        """Decode tagged sets and tuples in declarative routing vocabulary.
+
+        Args:
+            value (Any): Input value inspected or normalized by this helper.
+
+        Returns:
+            Any: Recursively decoded vocabulary value.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         if isinstance(value, dict):
             if "$set" in value:
                 return set(value["$set"])
@@ -64,6 +142,17 @@ def lexicon(key):
 
 
 def labels(section):
+    """Read localized labels for a domain or measurement section.
+
+    Args:
+        section (str): Language catalogue label section.
+
+    Returns:
+        dict[str, Any]: Requested localized label mapping.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     return catalogue(current_language())[section]
 
 
@@ -71,6 +160,17 @@ _LAST_WAIT = {}
 
 
 def wait_sentence(language):
+    """Choose a localized wait message without repeating the last one.
+
+    Args:
+        language (str | None): Language code; None uses the configured or detected language.
+
+    Returns:
+        str: Selected wait notification.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     language = language_code(language)
     choices = [text for text in catalogue(language)["wait"] if text != _LAST_WAIT.get(language)]
     sentence = random.choice(choices)
@@ -79,6 +179,17 @@ def wait_sentence(language):
 
 
 def _plain(value):
+    """Case-fold text and normalize punctuation and German umlauts.
+
+    Args:
+        value (Any): Input value inspected or normalized by this helper.
+
+    Returns:
+        str: Plain text for language and alias matching.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     text = str(value).casefold().replace("ß", "ss")
     text = text.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
     return re.sub(r"\s+", " ", re.sub(r"[^\w]+", " ", text)).strip()
@@ -86,6 +197,14 @@ def _plain(value):
 
 @lru_cache(maxsize=1)
 def _aliases():
+    """Build a cached multilingual alias-to-canonical-word mapping.
+
+    Returns:
+        dict[str, str]: Normalized alias mapping.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     result = {}
     for language in SUPPORTED_LANGUAGES:
         for canonical, aliases in catalogue(language)["aliases"].items():
@@ -96,6 +215,14 @@ def _aliases():
 
 @lru_cache(maxsize=1)
 def _matching_pattern():
+    """Compile a cached whole-word pattern for all routing aliases.
+
+    Returns:
+        re.Pattern[str]: Regex matching the longest aliases first.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     aliases = _aliases()
     pattern = (
         r"(?<!\w)(?:"
@@ -106,10 +233,33 @@ def _matching_pattern():
 
 
 def normalize_matching(value):
+    """Canonicalize localized vocabulary without modifying catalogue targets.
+
+    Args:
+        value (Any): Input value inspected or normalized by this helper.
+
+    Returns:
+        str: Normalized language-independent matching text.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     return _matching_pattern().sub(lambda match: _aliases()[match[0]], _plain(value))
 
 
 def detect_language(text, fallback="de"):
+    """Infer German, English or Russian from script and known vocabulary.
+
+    Args:
+        text (str): Text to parse, normalize, match or render.
+        fallback (str): Language used when detection or normalization cannot choose one.
+
+    Returns:
+        str: Detected language, or normalized fallback.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     if re.search("[а-яА-ЯёЁ]", text):
         return "ru"
     plain = " " + _plain(text) + " "

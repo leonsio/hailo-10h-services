@@ -1,679 +1,47 @@
-"""One owner thread. No per-request VDevice/model creation or idle unloading."""
+"""Asynchronous scheduling, routing and lifecycle for resident backends."""
 
 import asyncio
-import json
-import inspect
 import logging
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from .backend_hailo import HailoBackend, _validate_hailo_temperature
+from .backend_litert import LiteRTLMBackend
 from .config import HA_ASSIST_MODEL, LLM_MODEL, Settings
-from .hailo_llm_chat import limit_request as limit_llm_request
-from .hailo_llm_chat import tool_response as llm_tool_response
-from .input_budget import InputBudgetError, history_candidates
-from .media import image_frame
-from .metrics import count_output, record
-from .minilm import MiniLM
-from .models import ModelManager, prepare_model_version
-from .tool_calling import (
-    has_tool_context,
-    native_messages,
-    native_tools,
-    response_message,
-    selected_tools,
-)
-from .tool_retrieval import compact_static_context, retrieve_tools
-from .vlm_chat import limit_request, tool_response
+from .errors import BusyError, LiteRTInferenceError
+from .interfaces import ChatBackend, ChatResult
+from .metrics import record
+from .models import ModelManager
+from .schemas import ChatRequest
+from .tool_calling import has_tool_context
 
+__all__ = ["BusyError", "HailoBackend", "LiteRTInferenceError", "LiteRTLMBackend", "Runtime"]
 _LOG = logging.getLogger(__name__)
-_INPUT_TOKEN_SAFETY_MARGIN = 256
-
-
-def _debug_json(enabled: bool, event: str, payload, *, request_id: str = "-"):
-    if enabled:
-        _LOG.debug(
-            "event=%s request_id=%s json=%s",
-            event,
-            request_id,
-            json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str),
-        )
-
-
-class BusyError(RuntimeError):
-    pass
-
-
-class LiteRTInferenceError(RuntimeError):
-    pass
-
-
-def _validate_hailo_temperature(request, kind="VLM"):
-    if request.temperature <= 0:
-        raise ValueError(
-            f"Hailo {kind} requires temperature > 0; use temperature=0.1. "
-            "Gemma accepts temperature=0, but HailoRT does not."
-        )
-
-
-class HailoBackend:
-    def __init__(self, settings: Settings):
-        self.settings = settings
-        self.device = self.vlm = self.llm = self.whisper = self.minilm = None
-        self.paths = {}
-        self.artifact_paths = {}
-        self._retrieval_embedding_cache = {}
-
-    def start(self):
-        if not any((self.settings.vlm_enabled, self.settings.hailo_llm_enabled,
-                    self.settings.whisper_enabled, self.settings.minilm_enabled)):
-            return
-        manager = ModelManager(self.settings, prepare_model_version())
-        for key, model, kind, enabled in (
-            ("vlm", self.settings.vlm_hef, "vlm", self.settings.vlm_enabled),
-            ("whisper", self.settings.whisper_hef, "whisper", self.settings.whisper_enabled),
-            ("llm", self.settings.hailo_llm_model, "llm", self.settings.hailo_llm_enabled),
-        ):
-            if enabled:
-                self.paths[key] = str(manager.resolve(model, kind))
-        if self.settings.minilm_enabled:
-            self.artifact_paths["minilm_hef"] = str(manager.resolve(
-                "minilm-l6-ruvector", "embedding", self.settings.minilm_hef_path
-            ))
-            # Host assets are also prepared before accelerator allocation.
-            for name in ("minilm-tokenizer", "minilm-weights"):
-                manager.resolve(name, "asset", Path(self.artifact_paths["minilm_hef"]).parent / manager.entry(name)["filename"])
-        from hailo_platform import VDevice
-
-        params = VDevice.create_params()
-        params.group_id = "SHARED"  # Mandatory, intentionally not configurable.
-        try:
-            if params.group_id != "SHARED":
-                raise RuntimeError("Hailo binding did not preserve mandatory group_id=SHARED")
-            _LOG.info("Creating Hailo VDevice with effective group_id=%s", params.group_id)
-            self.device = VDevice(params)
-            if self.settings.vlm_enabled:
-                from hailo_platform.genai import VLM
-
-                _LOG.info("Loading resident VLM %s", self.paths["vlm"])
-                self.vlm = VLM(self.device, self.paths["vlm"])
-            if self.settings.hailo_llm_enabled:
-                from hailo_platform.genai import LLM
-
-                _LOG.info("Loading resident Hailo LLM %s", self.paths["llm"])
-                self.llm = LLM(self.device, self.paths["llm"])
-            if self.settings.whisper_enabled:
-                from hailo_platform.genai import Speech2Text
-
-                _LOG.info("Loading resident Whisper %s", self.paths["whisper"])
-                self.whisper = Speech2Text(self.device, self.paths["whisper"])
-            if self.settings.minilm_enabled:
-                self.minilm = MiniLM(self.device, self.artifact_paths["minilm_hef"], manager)
-                self.artifact_paths.update(self.minilm.artifacts)
-            _LOG.info("All models initialized; VDevice group_id=SHARED; paths=%s", self.paths)
-        except BaseException:
-            self.close()
-            raise
-
-    def chat(self, request, emit=None, cancelled=None):
-        from .ha_action_verification import action_verification_response
-        from .ha_assist import has_images
-        from .i18n import using_language
-
-        with using_language(getattr(request, "_response_language", request.language or self.settings.service_language)):
-            decision = action_verification_response(request) if getattr(request, "_ha_assist", False) and not has_images(request) else None
-        direct = decision["response"] if decision else next((
-            getattr(request, name) for name in (
-                "_direct_ha_response", "_direct_ha_state_response", "_direct_weather_response"
-            ) if getattr(request, name, None) is not None
-        ), None)
-        if direct is not None:
-            if emit:
-                emit(direct)
-            return direct
-        if "model" not in request.model_fields_set:
-            request = request.model_copy(update={"model": (
-                self.settings.hailo_llm_model_id if self.settings.hailo_llm_enabled
-                else self.settings.vlm_model
-            )})
-        if request.model == self.settings.vlm_model and self.settings.vlm_enabled:
-            model, kind = self.vlm, "vlm"
-            configured_limit = self.settings.vlm_max_input_tokens
-            budget, parse_response = limit_request, tool_response
-        elif request.model == self.settings.hailo_llm_model_id and self.settings.hailo_llm_enabled:
-            model, kind = self.llm, "llm"
-            configured_limit = self.settings.hailo_llm_max_input_tokens
-            budget, parse_response = limit_llm_request, llm_tool_response
-        else:
-            raise ValueError(f"Unknown or disabled Hailo model: {request.model}")
-        if model is None:
-            raise BusyError(f"{request.model} is disabled")
-        _validate_hailo_temperature(request, kind.upper())
-        entry = ModelManager(self.settings).entries.get(request.model, {})
-        if entry.get("tool_calling", {}).get("parallel_calls") is False:
-            # Apply to both the compact prompt contract and output validation.
-            # A caller cannot override a model's single-call restriction.
-            request = request.model_copy(update={"parallel_tool_calls": False})
-        request, prompt = budget(
-            model, request, configured_limit, entry.get("context_length", 2048),
-            debug=self.settings.debug_log,
-            template_options=entry.get("prompt_template"),
-        )
-        size = tuple(entry.get("frame_size", [336, 336])) if kind == "vlm" else None
-        if kind == "vlm" and callable(getattr(model, "input_frame_shape", None)):
-            height, width, channels = model.input_frame_shape()
-            if channels != 3 or height < 1 or width < 1:
-                raise ValueError("VLM requires an unsupported input frame format")
-            size = (width, height)
-        frames = []
-        max_images = entry.get("max_images", 1)
-        for message in request.messages:
-            for part in message["content"] if isinstance(message.get("content"), list) else []:
-                if part["type"] == "image_url":
-                    if len(frames) >= max_images:
-                        raise ValueError(f"{request.model} supports at most {max_images} image(s) per request")
-                    frames.append(image_frame(part["image_url"]["url"], self.settings.max_body, size))
-        _debug_json(self.settings.debug_log, f"final_{kind}_request", {
-            "prompt": prompt, "frame_size": size, "images": len(frames),
-            "model": request.model, "max_input_tokens": configured_limit,
-            "parallel_tool_calls": request.parallel_tool_calls,
-            "prompt_template": entry.get("prompt_template", {}),
-        }, request_id=request._request_id)
-        output = []
-        started = time.perf_counter()
-        first_chunk_ms = None
-        # Clear only KV context, never unload the model weights.
-        try:
-            model.clear_context()
-            on_inference = getattr(request, "_on_inference", None)
-            if on_inference is not None:
-                on_inference(getattr(request, "_response_language", self.settings.service_language))
-            with model.generate(
-                prompt=prompt,
-                **({"frames": frames} if kind == "vlm" else {}),
-                temperature=request.temperature,
-                seed=request.seed,
-                max_generated_tokens=request.max_tokens,
-                **({"top_p": request.top_p} if request.top_p is not None else {}),
-            ) as generation:
-                for chunk in generation:
-                    if cancelled is not None and cancelled.is_set():
-                        break
-                    chunk = chunk.replace("<|im_end|>", "")
-                    if chunk:
-                        if first_chunk_ms is None:
-                            first_chunk_ms = (time.perf_counter() - started) * 1000
-                        output.append(chunk)
-                        if emit and not has_tool_context(request):
-                            emit(chunk)
-            raw_output = "".join(output).strip()
-            record(request._metrics, inference_ms=(time.perf_counter() - started) * 1000,
-                   ttft_ms=first_chunk_ms,
-                   ttft_source="first_text_chunk" if first_chunk_ms is not None else None)
-            count_output(request._metrics, getattr(model, "tokenize", None), raw_output)
-            result = parse_response(raw_output, request)
-            if emit and has_tool_context(request):
-                emit(result)
-            return result
-        finally:
-            model.clear_context()
-
-    def transcribe(self, audio, language):
-        from hailo_platform.genai import Speech2TextTask
-
-        if self.whisper is None:
-            raise BusyError("Whisper is disabled")
-        segments = self.whisper.generate_all_segments(
-            audio_data=audio,
-            task=Speech2TextTask.TRANSCRIBE,
-            language=language,
-            timeout_ms=int(self.settings.request_timeout * 1000),
-        )
-        return "".join(segment.text for segment in segments).strip()
-
-    def select_tools(self, request):
-        return self.retrieve_context(request)
-
-    def retrieve_context(self, request):
-        request_id = getattr(request, "_request_id", "-")
-        entity_trace = {} if self.settings.debug_log else None
-        _debug_json(
-            self.settings.debug_log,
-            "retrieval_input",
-            {
-                "model": request.model,
-                "messages": request.messages,
-                "tool_names": [
-                    tool.get("function", {}).get("name")
-                    for tool in (request.tools or [])
-                ],
-            },
-            request_id=request_id,
-        )
-        compact_messages, context_stats = compact_static_context(
-            request.messages,
-            encoder=self.minilm,
-            embedding_cache=self._retrieval_embedding_cache,
-            trace=entity_trace,
-        )
-        request = request.model_copy(update={"messages": compact_messages})
-        if context_stats["system_prompts_compacted"]:
-            _LOG.info(
-                "MiniLM entity retrieval: %d -> %d entities; %d chars removed",
-                context_stats["entities_before"],
-                context_stats["entities_after"],
-                context_stats["characters_removed"],
-            )
-        _debug_json(
-            self.settings.debug_log,
-            "entity_retrieval_trace",
-            entity_trace or {},
-            request_id=request_id,
-        )
-        _debug_json(
-            self.settings.debug_log,
-            "after_entity_retrieval",
-            {
-                "stats": context_stats,
-                "messages": compact_messages,
-            },
-            request_id=request_id,
-        )
-        if not request.tools:
-            return request
-        source = request.tools
-        if isinstance(request.tool_choice, dict):
-            name = request.tool_choice["function"]["name"]
-            source = [tool for tool in source if tool["function"]["name"] == name]
-        tool_trace = {} if self.settings.debug_log else None
-        selected, stats = retrieve_tools(
-            request.messages,
-            source,
-            encoder=self.minilm,
-            embedding_cache=self._retrieval_embedding_cache,
-            trace=tool_trace,
-        )
-        required_names = set()
-        for message in request.messages:
-            for call in message.get("tool_calls") or []:
-                if isinstance(call, dict):
-                    name = call.get("function", {}).get("name")
-                    if isinstance(name, str):
-                        required_names.add(name)
-        if required_names:
-            selected_names = {
-                tool.get("function", {}).get("name") for tool in selected
-            }
-            required = [
-                tool for tool in source
-                if tool.get("function", {}).get("name") in required_names
-                and tool.get("function", {}).get("name") not in selected_names
-            ]
-            selected = required + selected
-            stats["tools_after"] = len(selected)
-        _LOG.info(
-            "MiniLM tool retrieval: %d -> %d tools; %d enum values removed",
-            stats["tools_before"], stats["tools_after"], stats["enum_values_removed"],
-        )
-        _debug_json(
-            self.settings.debug_log,
-            "tool_retrieval_trace",
-            tool_trace or {},
-            request_id=request_id,
-        )
-        _debug_json(
-            self.settings.debug_log,
-            "after_tool_retrieval",
-            {
-                "stats": stats,
-                "required_tool_names": sorted(required_names),
-                "selected_tool_names": [
-                    tool.get("function", {}).get("name") for tool in selected
-                ],
-                "selected_tools": selected,
-                "messages": request.messages,
-            },
-            request_id=request_id,
-        )
-        return request.model_copy(update={"tools": selected})
-
-    def close(self):
-        # Release models before the device, including after partial startup.
-        for name in ("minilm", "whisper", "llm", "vlm", "device"):
-            resource = getattr(self, name)
-            if resource is not None:
-                try:
-                    if name == "minilm":
-                        resource.close()
-                    else:
-                        resource.release()
-                except Exception:
-                    _LOG.exception("Error releasing %s", name)
-                finally:
-                    setattr(self, name, None)
-
-
-class LiteRTLMBackend:
-    """Resident LiteRT-LM Python Engine for text-only Gemma requests."""
-
-    def __init__(
-        self,
-        model_path,
-        max_num_tokens=16384,
-        max_input_tokens=4096,
-        debug_log=False,
-        model_manager=None,
-    ):
-        self.model_manager = model_manager
-        self.model_path = str(Path(model_path).expanduser())
-        self.max_num_tokens = max_num_tokens
-        self.max_input_tokens = max_input_tokens
-        self.debug_log = debug_log
-        self.engine_context = None
-        self.engine = None
-        self.litert_lm = None
-
-    def start(self):
-        path = Path(self.model_path)
-        if self.model_manager is not None:
-            path = self.model_manager.resolve(LLM_MODEL, "litert", path)
-        if not path.is_file():
-            raise FileNotFoundError(f"LiteRT-LM model not found: {path}")
-        import litert_lm
-
-        self.litert_lm = litert_lm
-        self.engine_context = litert_lm.Engine(
-            str(path), backend=litert_lm.Backend.CPU(), max_num_tokens=self.max_num_tokens
-        )
-        self.engine = self.engine_context.__enter__()
-        _LOG.info("Loaded LiteRT-LM model %s on CPU; max_num_tokens=%d", path, self.max_num_tokens)
-
-    @staticmethod
-    def _messages(request):
-        messages = native_messages(request.messages)
-        if has_tool_context(request):
-            instructions = []
-            if request.tool_choice == "required" or isinstance(request.tool_choice, dict):
-                instructions.append("Return a function call using one of the available tools.")
-            if not request.parallel_tool_calls:
-                instructions.append("Return at most one function call in this response.")
-            if instructions:
-                instruction = "\n".join(instructions)
-                if messages[0]["role"] == "system":
-                    messages[0]["content"] += "\n" + instruction
-                else:
-                    messages.insert(0, {"role": "system", "content": instruction})
-        return messages
-
-    @staticmethod
-    def _prompt(messages):
-        return messages[-1] if messages[-1]["role"] == "tool" else messages[-1]["content"]
-
-    def _limit_input(self, request, tool_options):
-        if request.max_input_tokens is None:
-            return request
-        if not callable(getattr(self.engine, "tokenize", None)):
-            raise ValueError("max_input_tokens requires LiteRT-LM Engine.tokenize; upgrade litert-lm")
-        # This limit applies only after tool retrieval, immediately before Gemma.
-        # The incoming OpenAI request may be much larger because MiniLM processes
-        # its tool catalogue first. Native prefill still must fit the configured
-        # Gemma context, with the requested output budget reserved.
-        limit = min(request.max_input_tokens, self.max_input_tokens, self.max_num_tokens - request.max_tokens - 1)
-        if limit < 1:
-            raise ValueError("The configured LiteRT context leaves no room for input and output")
-        # Validate all original call/result dependencies before dropping history.
-        self._messages(request)
-        for candidate_index, candidate in enumerate(history_candidates(request.messages)):
-            trimmed = request.model_copy(update={"messages": candidate})
-            messages = self._messages(trimmed)
-            # A fresh native conversation supplies the same tools and prefix
-            # messages without running prefill or decoding. Release it before
-            # creating the next probe or the inference conversation.
-            with self.engine.create_conversation(
-                messages=messages[:-1], max_output_tokens=request.max_tokens, **tool_options,
-            ) as probe:
-                render = getattr(probe, "render_message_to_string", None)
-                if not callable(render):
-                    raise ValueError(
-                        "max_input_tokens requires LiteRT-LM Conversation.render_message_to_string; "
-                        "upgrade litert-lm"
-                    )
-                # LiteRT's Conversation already owns messages[:-1] and tool
-                # declarations. Rendering only the final message yields the
-                # complete prompt for Gemma. Rendering every message separately
-                # repeats the whole conversation prefix and tools per message.
-                rendered = render(messages[-1])
-                rendered_tools = json.dumps(
-                    selected_tools(request), ensure_ascii=False, separators=(",", ":")
-                ) if has_tool_context(request) else ""
-                raw_tokens = len(self.engine.tokenize(rendered))
-                # Keep conservative headroom for native bookkeeping/special tokens.
-                # Tools are already present in rendered; do not count their JSON
-                # payload a second time.
-                template_margin = _INPUT_TOKEN_SAFETY_MARGIN
-                tool_margin = 8 * len(selected_tools(request))
-                tokens = raw_tokens + template_margin + tool_margin
-            _debug_json(
-                self.debug_log,
-                "input_budget_candidate",
-                {
-                    "candidate_index": candidate_index,
-                    "messages_before": len(request.messages),
-                    "messages_after": len(candidate),
-                    "removed_messages": len(request.messages) - len(candidate),
-                    "raw_tokens": raw_tokens,
-                    "template_margin": template_margin,
-                    "tool_margin": tool_margin,
-                    "input_tokens": tokens,
-                    "input_limit": limit,
-                    "output_reserved": request.max_tokens,
-                    "accepted": tokens <= limit,
-                    "messages": messages,
-                    "tools": selected_tools(request),
-                    "render_strategy": "final_message_full_conversation",
-                    "rendered_prompt": rendered,
-                    "rendered_messages": rendered,
-                    "rendered_tools_reference": rendered_tools,
-                },
-                request_id=getattr(request, "_request_id", "-"),
-            )
-            if tokens <= limit:
-                record(trimmed._metrics, input_tokens=raw_tokens, input_tokens_source="tokenizer",
-                       input_budget_tokens=tokens, removed_messages=len(request.messages) - len(candidate))
-                _LOG.info(
-                    "input_budget model=%s input_tokens=%d limit=%d max_input_tokens=%d "
-                    "removed_messages=%d output_reserved=%d",
-                    request.model, tokens, limit, request.max_input_tokens,
-                    len(request.messages) - len(candidate), request.max_tokens,
-                )
-                _debug_json(
-                    self.debug_log,
-                    "input_budget_selected",
-                    {
-                        "input_tokens": tokens,
-                        "input_limit": limit,
-                        "removed_messages": len(request.messages) - len(candidate),
-                        "request": trimmed.model_dump(mode="json", exclude_none=False),
-                    },
-                    request_id=getattr(request, "_request_id", "-"),
-                )
-                return trimmed
-        _debug_json(
-            self.debug_log,
-            "input_budget_failed",
-            {
-                "input_tokens": tokens,
-                "input_limit": limit,
-                "request": request.model_dump(mode="json", exclude_none=False),
-            },
-            request_id=getattr(request, "_request_id", "-"),
-        )
-        raise InputBudgetError(
-            tokens, limit, request.max_input_tokens, self.max_num_tokens, request.max_tokens
-        )
-
-    @staticmethod
-    def _chunk_text(chunk):
-        if hasattr(chunk, "to_json"):
-            chunk = chunk.to_json()
-        if isinstance(chunk, dict) and isinstance(chunk.get("content"), str):
-            return chunk["content"]
-        return "".join(
-            item.get("text", "")
-            for item in chunk.get("content", [])
-            if isinstance(item, dict) and item.get("type") == "text"
-        ) if isinstance(chunk, dict) else ""
-
-    def chat(self, request, emit=None, cancelled=None, tools_prepared=False):
-        try:
-            return self._chat(request, emit, cancelled, tools_prepared)
-        except RuntimeError as exc:
-            _LOG.exception("LiteRT inference failed; model=%s context_tokens=%d", request.model, self.max_num_tokens)
-            raise LiteRTInferenceError(
-                f"LiteRT-LM inference failed (configured context: {self.max_num_tokens} tokens). "
-                "Check the preceding native log for the cause. If the input exceeds the context, "
-                "increase HAILO_LITERT_MAX_NUM_TOKENS and restart, or reduce the Home Assistant "
-                "prompt/history. Larger contexts require more RAM."
-            ) from exc
-
-    def _chat(self, request, emit=None, cancelled=None, tools_prepared=False):
-        if self.engine is None:
-            raise RuntimeError("LiteRT-LM is not ready")
-        if not has_tool_context(request):
-            from .i18n import detect_language, t, using_language
-            from .tool_retrieval import latest_user_text
-            with using_language(request.language or detect_language(latest_user_text(request.messages), "de")):
-                # Explicit user/system requests for detail override the default.
-                request = request.model_copy(update={"messages": [
-                    {"role": "system", "content": t("gemma.concise")}, *request.messages]})
-        if request.max_input_tokens is None:
-            request = request.model_copy(update={"max_input_tokens": self.max_input_tokens})
-        if getattr(request, "_ha_assist", False) and not tools_prepared and request.tools and not any(
-            message.get("role") == "tool" or message.get("tool_calls")
-            for message in request.messages
-        ):
-            source_tools = request.tools
-            if isinstance(request.tool_choice, dict):
-                forced_name = request.tool_choice["function"]["name"]
-                source_tools = [
-                    tool for tool in request.tools
-                    if tool["function"]["name"] == forced_name
-                ]
-            compact_tools, stats = retrieve_tools(request.messages, source_tools)
-            if stats["tools_after"] < stats["tools_before"] or stats["enum_values_removed"]:
-                request = request.model_copy(update={"tools": compact_tools})
-                _LOG.info(
-                    "tool_retrieval model=%s tools=%d->%d enum_values_removed=%d",
-                    request.model, stats["tools_before"], stats["tools_after"],
-                    stats["enum_values_removed"],
-                )
-        tool_options = {}
-        if has_tool_context(request):
-            if not hasattr(self.litert_lm, "Tool"):
-                raise ValueError("Installed LiteRT-LM lacks Tool support; upgrade litert-lm")
-            tool_options = {
-                "tools": native_tools(self.litert_lm, selected_tools(request)),
-                "automatic_tool_calling": False,
-            }
-            # The Python API varies by LiteRT version. Enable native constrained
-            # decoding only when explicitly exposed, never assume **kwargs means support.
-            engine = getattr(self.engine, "_engine", self.engine)
-            try:
-                supported = "enable_constrained_decoding" in inspect.signature(
-                    engine.create_conversation).parameters
-            except (ValueError, TypeError):
-                supported = False
-            if supported:
-                tool_options["enable_constrained_decoding"] = True
-            request._metrics["constrained_decoding"] = {
-                "enabled": supported, "validation": "schema_and_ha_target"}
-        _debug_json(
-            self.debug_log,
-            "before_input_budget",
-            request.model_dump(mode="json", exclude_none=False),
-            request_id=getattr(request, "_request_id", "-"),
-        )
-        request = self._limit_input(request, tool_options)
-        messages = self._messages(request)
-        _debug_json(
-            self.debug_log,
-            "final_gemma_request",
-            {
-                "request": request.model_dump(mode="json", exclude_none=False),
-                "native_messages": messages,
-                "selected_tools": selected_tools(request),
-                "max_num_tokens": self.max_num_tokens,
-                "max_input_tokens": request.max_input_tokens,
-                "max_output_tokens": request.max_tokens,
-            },
-            request_id=getattr(request, "_request_id", "-"),
-        )
-        with self.engine.create_conversation(
-            messages=messages[:-1],
-            sampler_config=self.litert_lm.SamplerConfig(
-                temperature=request.temperature, seed=request.seed,
-                **({"top_p": request.top_p} if request.top_p is not None else {}),
-            ),
-            max_output_tokens=request.max_tokens,
-            **tool_options,
-        ) as conversation:
-            prompt = self._prompt(messages)
-            on_inference = getattr(request, "_on_inference", None)
-            if on_inference is not None:
-                on_inference(getattr(request, "_response_language", "de"))
-            if emit is None or has_tool_context(request):
-                response = conversation.send_message(
-                    prompt, max_output_tokens=request.max_tokens
-                )
-                count_output(request._metrics, getattr(self.engine, "tokenize", None),
-                             self._chunk_text(response))
-                result = response_message(response, request, self._chunk_text(response).strip())
-                _debug_json(
-                    self.debug_log,
-                    "gemma_response",
-                    {
-                        "prompt": prompt,
-                        "raw_response": (
-                            response.to_json() if hasattr(response, "to_json") else response
-                        ),
-                        "parsed_response": result,
-                    },
-                    request_id=getattr(request, "_request_id", "-"),
-                )
-                if emit:
-                    emit(result)
-                return result
-            output = []
-            for chunk in conversation.send_message_async(
-                prompt, max_output_tokens=request.max_tokens
-            ):
-                if cancelled is not None and cancelled.is_set():
-                    break
-                text = self._chunk_text(chunk)
-                if text:
-                    output.append(text)
-                    emit(text)
-            result = "".join(output).strip()
-            count_output(request._metrics, getattr(self.engine, "tokenize", None), result)
-            _debug_json(
-                self.debug_log,
-                "gemma_stream_response",
-                {"prompt": prompt, "response": result, "chunks": output},
-                request_id=getattr(request, "_request_id", "-"),
-            )
-            return result
-
-    def close(self):
-        if self.engine_context is not None:
-            try:
-                self.engine_context.__exit__(None, None, None)
-            finally:
-                self.engine = self.engine_context = self.litert_lm = None
 
 
 class Runtime:
-    def __init__(self, settings: Settings, backend=None, litert_backend=None):
+    """Schedule resident chat and speech backends on separate bounded owner threads."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        backend: ChatBackend | None = None,
+        litert_backend: ChatBackend | None = None,
+    ):
+        """Initialize Runtime configuration and owned dependencies.
+
+        Args:
+            settings (Settings): Validated service settings controlling enabled models and limits.
+            backend (ChatBackend | None): Resident backend used for generation or context preparation.
+            litert_backend (ChatBackend | None): Injected LiteRT backend; None creates one when enabled.
+
+        Returns:
+            None: Creates the object without running inference.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         self.settings = settings
         self.backend = backend if backend is not None else HailoBackend(settings)
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hailo-owner")
@@ -682,7 +50,8 @@ class Runtime:
         self.litert_backend = litert_backend
         if self.litert_backend is None and (settings.litert_enabled or settings.litert_model_path):
             self.litert_backend = LiteRTLMBackend(
-                settings.litert_model_path or str(Path(settings.model_store) / "gemma-4-E2B-it.litertlm"),
+                settings.litert_model_path
+                or str(Path(settings.model_store) / "gemma-4-E2B-it.litertlm"),
                 settings.litert_max_num_tokens,
                 settings.litert_max_input_tokens,
                 settings.debug_log,
@@ -692,13 +61,22 @@ class Runtime:
             self.litert_backend.debug_log = settings.debug_log
         self.litert_executor = (
             ThreadPoolExecutor(max_workers=1, thread_name_prefix="litert-lm-owner")
-            if self.litert_backend is not None else None
+            if self.litert_backend is not None
+            else None
         )
         self.litert_pending = 0
         self.litert_ready = False
         self.litert_error = None
 
     async def start(self):
+        """Initialize resident resources or start the configured transport listener.
+
+        Returns:
+            None: Marks the service ready after successful initialization.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         await asyncio.get_running_loop().run_in_executor(self.executor, self.backend.start)
         self.ready = True
         if self.litert_backend is not None:
@@ -712,6 +90,20 @@ class Runtime:
                 _LOG.exception("LiteRT-LM startup failed; Hailo models remain available")
 
     def submit(self, function, *args, executor=None, litert=False):
+        """Schedule native work without releasing queue capacity on client timeout.
+
+        Args:
+            function (Callable[..., Any]): Synchronous work executed on the backend owner thread.
+            executor (Executor | None): Optional owner executor override.
+            litert (bool): Whether to charge the independent LiteRT queue.
+            *args (Any): Positional arguments forwarded to the native operation.
+
+        Returns:
+            asyncio.Future[Any]: Future completing when owner-thread work actually finishes.
+
+        Raises:
+            BusyError: Runtime is not ready.
+        """
         if not self.ready:
             raise BusyError("Runtime is not ready")
         pending = self.litert_pending if litert else self.pending
@@ -721,12 +113,26 @@ class Runtime:
             self.litert_pending += 1
         else:
             self.pending += 1
-        future = asyncio.get_running_loop().run_in_executor(executor or self.executor, function, *args)
+        future = asyncio.get_running_loop().run_in_executor(
+            executor or self.executor, function, *args
+        )
         # A timed out/disconnected client must NOT release capacity before native work ends.
         future.add_done_callback(lambda completed: self._completed(completed, litert))
         return future
 
     def _completed(self, future, litert=False):
+        """Release queue capacity and observe late worker exceptions.
+
+        Args:
+            future (asyncio.Future[Any]): Completed future for native owner-thread work.
+            litert (bool): Whether to charge the independent LiteRT queue.
+
+        Returns:
+            None: Updates pending counters after native work completes.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         if litert:
             self.litert_pending -= 1
         else:
@@ -735,13 +141,40 @@ class Runtime:
             future.exception()  # Observe late exceptions after client cancellation/timeout.
 
     async def call(self, function, *args):
+        """Await Hailo owner-thread work with a shielded request deadline.
+
+        Args:
+            function (Callable[..., Any]): Synchronous work executed on the backend owner thread.
+            *args (Any): Positional arguments forwarded to the native operation.
+
+        Returns:
+            Any: Result returned by the submitted native callable.
+
+        Raises:
+            BusyError: The runtime is unavailable or its owner queue is full.
+            asyncio.TimeoutError: The client deadline expires; native work remains shielded.
+        """
         future = self.submit(function, *args)
         return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 
     def default_chat_request(self, request):
+        """Resolve an omitted model and validate native Hailo sampling constraints.
+
+        Args:
+            request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+
+        Returns:
+            ChatRequest: Request with an enabled default text or vision model.
+
+        Raises:
+            ValueError: Image requests require an enabled VLM.
+        """
         if "model" not in request.model_fields_set:
-            images = any(part.get("type") == "image_url" for m in request.messages
-                         for part in (m.get("content") if isinstance(m.get("content"), list) else []))
+            images = any(
+                part.get("type") == "image_url"
+                for m in request.messages
+                for part in (m.get("content") if isinstance(m.get("content"), list) else [])
+            )
             if images:
                 if not self.settings.vlm_enabled:
                     raise ValueError("Image requests require an enabled VLM")
@@ -754,7 +187,23 @@ class Runtime:
             _validate_hailo_temperature(request, kind)
         return request
 
-    async def chat(self, request, on_inference=None):
+    async def chat(self, request: ChatRequest, on_inference=None) -> ChatResult:
+        """Route one chat request through deterministic HA preparation or a native backend.
+
+        Args:
+            request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+            on_inference (Callable[[str], None] | None): Optional callback notified with response language before generation.
+
+        Returns:
+            ChatResult: Deterministic response or generated text/tool message.
+
+        Raises:
+            ValueError: The selected model or HA-Assist route is invalid.
+            BusyError: A required backend is unavailable or its queue is full.
+            InputBudgetError: Required input exceeds the effective budget.
+            LiteRTInferenceError: Native LiteRT generation fails.
+            asyncio.TimeoutError: The configured request deadline expires.
+        """
         request = self.default_chat_request(request)
         if request.model == HA_ASSIST_MODEL:
             from .ha_assist import prepare, target_model
@@ -763,8 +212,14 @@ class Runtime:
             request = request.model_copy(update={"model": target})
             request, direct = await self.call(prepare, self.backend, request)
             if direct is not None:
-                record(request._metrics, inference_ms=0, input_tokens=0, output_tokens=0,
-                       input_tokens_source="deterministic", output_tokens_source="deterministic")
+                record(
+                    request._metrics,
+                    inference_ms=0,
+                    input_tokens=0,
+                    output_tokens=0,
+                    input_tokens_source="deterministic",
+                    output_tokens_source="deterministic",
+                )
                 return direct
             if on_inference is not None:
                 object.__setattr__(request, "_on_inference", on_inference)
@@ -782,12 +237,35 @@ class Runtime:
         return await self.call(self.backend.chat, request)
 
     async def call_litert(self, function, *args):
-        future = self.submit(
-            function, *args, executor=self.litert_executor, litert=True
-        )
+        """Await LiteRT owner-thread work with independent bounded capacity.
+
+        Args:
+            function (Callable[..., Any]): Synchronous work executed on the backend owner thread.
+            *args (Any): Positional arguments forwarded to the native operation.
+
+        Returns:
+            Any: Result returned by the submitted LiteRT callable.
+
+        Raises:
+            BusyError: The LiteRT backend is unavailable or its queue is full.
+            asyncio.TimeoutError: The client deadline expires; native work remains shielded.
+        """
+        future = self.submit(function, *args, executor=self.litert_executor, litert=True)
         return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 
     async def stream(self, request):
+        """Yield output chunks and record latency when iteration finishes.
+
+        Args:
+            request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+
+        Yields:
+            ChatResult: Text chunks or validated assistant messages.
+
+        Raises:
+            ValueError: The requested chat model is unknown or its sampling policy is invalid.
+            BusyError: The runtime, model or selected owner queue is unavailable.
+        """
         request = self.default_chat_request(request)
         if request.model == HA_ASSIST_MODEL or has_tool_context(request):
             yield await self.chat(request)
@@ -822,22 +300,61 @@ class Runtime:
             cancelled.set()
 
     async def transcribe(self, audio, language=None):
+        """Transcribe normalized audio through the resident Whisper model.
+
+        Args:
+            audio (np.ndarray): Normalized 16 kHz mono float32 samples for Whisper.
+            language (str | None): Language code; None uses the configured or detected language.
+
+        Returns:
+            str: Recognized speech text.
+
+        Raises:
+            BusyError: Whisper is disabled or the runtime queue is unavailable.
+            asyncio.TimeoutError: Transcription exceeds the request deadline.
+        """
         return await self.call(self.backend.transcribe, audio, language or self.settings.language)
 
     @property
     def hailo_chat_models(self):
+        """List enabled Hailo generative model identifiers.
+
+        Returns:
+            list[str]: Configured enabled LLM and VLM identifiers.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         return ([self.settings.vlm_model] if self.settings.vlm_enabled else []) + (
             [self.settings.hailo_llm_model_id] if self.settings.hailo_llm_enabled else []
         )
 
     @property
     def chat_models(self):
-        return self.hailo_chat_models + ([LLM_MODEL] if self.litert_ready else []) + (
-            [HA_ASSIST_MODEL] if self.settings.ha_assist_enabled else []
+        """List enabled chat backends and the optional virtual HA-Assist model.
+
+        Returns:
+            list[str]: Public chat model identifiers.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
+        return (
+            self.hailo_chat_models
+            + ([LLM_MODEL] if self.litert_ready else [])
+            + ([HA_ASSIST_MODEL] if self.settings.ha_assist_enabled else [])
         )
 
     @property
     def default_text_model(self):
+        """Choose the configured default available text generation backend.
+
+        Returns:
+            str | None: Default text model, or None when no text backend is enabled.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         if self.litert_ready:
             return LLM_MODEL
         if self.settings.hailo_llm_enabled:
@@ -846,31 +363,66 @@ class Runtime:
 
     @property
     def model_limits(self):
+        """Expose configured input and image limits for chat models.
+
+        Returns:
+            dict[str, Any]: Per-model limits for clients and the UI.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         return {
-            self.settings.vlm_model: {"max_input_tokens": self.settings.vlm_max_input_tokens, "context_length": 2048},
+            self.settings.vlm_model: {
+                "max_input_tokens": self.settings.vlm_max_input_tokens,
+                "context_length": 2048,
+            },
             self.settings.hailo_llm_model_id: {
-                "max_input_tokens": self.settings.hailo_llm_max_input_tokens, "context_length": 2048},
-            LLM_MODEL: {"max_input_tokens": self.settings.litert_max_input_tokens,
-                        "context_length": self.settings.litert_max_num_tokens},
+                "max_input_tokens": self.settings.hailo_llm_max_input_tokens,
+                "context_length": 2048,
+            },
+            LLM_MODEL: {
+                "max_input_tokens": self.settings.litert_max_input_tokens,
+                "context_length": self.settings.litert_max_num_tokens,
+            },
         }
 
     def status(self):
+        """Summarize resident readiness, model paths and pending requests.
+
+        Returns:
+            dict[str, Any]: Serializable health and configuration details.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         return {
             "ready": self.ready,
             "group_id": "SHARED",
             "pending": self.pending,
             "model_limits": self.model_limits,
             "default_text_model": self.default_text_model,
-            "ha_assist": {"enabled": self.settings.ha_assist_enabled,
-                          "model": HA_ASSIST_MODEL,
-                          "text_model": self.settings.ha_assist_text_model,
-                          "vision_model": self.settings.ha_assist_vision_model,
-                          "text_ready": bool(self.settings.ha_assist_enabled and self.ready and (
-                              self.settings.ha_assist_text_model == LLM_MODEL and self.litert_ready
-                              or self.settings.hailo_llm_enabled and
-                              self.settings.ha_assist_text_model == self.settings.hailo_llm_model_id)),
-                          "vision_ready": bool(self.settings.ha_assist_enabled and self.ready and self.settings.vlm_enabled and
-                                               self.settings.ha_assist_vision_model == self.settings.vlm_model)},
+            "ha_assist": {
+                "enabled": self.settings.ha_assist_enabled,
+                "model": HA_ASSIST_MODEL,
+                "text_model": self.settings.ha_assist_text_model,
+                "vision_model": self.settings.ha_assist_vision_model,
+                "text_ready": bool(
+                    self.settings.ha_assist_enabled
+                    and self.ready
+                    and (
+                        self.settings.ha_assist_text_model == LLM_MODEL
+                        and self.litert_ready
+                        or self.settings.hailo_llm_enabled
+                        and self.settings.ha_assist_text_model == self.settings.hailo_llm_model_id
+                    )
+                ),
+                "vision_ready": bool(
+                    self.settings.ha_assist_enabled
+                    and self.ready
+                    and self.settings.vlm_enabled
+                    and self.settings.ha_assist_vision_model == self.settings.vlm_model
+                ),
+            },
             "litert_lm": {
                 "ready": self.litert_ready,
                 "model": LLM_MODEL if self.litert_backend else None,
@@ -880,7 +432,12 @@ class Runtime:
                 "pending": self.litert_pending,
                 "error": self.litert_error,
             },
-            "models": (self.hailo_chat_models + ([self.settings.stt_model] if self.settings.whisper_enabled else []) if self.ready else [])
+            "models": (
+                self.hailo_chat_models
+                + ([self.settings.stt_model] if self.settings.whisper_enabled else [])
+                if self.ready
+                else []
+            )
             + ([LLM_MODEL] if self.litert_ready else [])
             + ([HA_ASSIST_MODEL] if self.settings.ha_assist_enabled else []),
             "model_paths": self.backend.paths,
@@ -889,6 +446,14 @@ class Runtime:
         }
 
     async def close(self):
+        """Release resources owned by this service or native context.
+
+        Returns:
+            None: Closes native resources, connections or owner executors.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         self.ready = False
         try:
             # Queued work completes before releasing persistent models.

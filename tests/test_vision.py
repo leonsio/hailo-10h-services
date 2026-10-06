@@ -1,9 +1,11 @@
 import asyncio
 import base64
+import errno
 import io
 import json
 
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -80,9 +82,7 @@ def test_yolo26_decoder_returns_fixed_frigate_contract():
     scores = np.full((1, 80, 80, 80), -20, dtype=np.float32)
     bbox[0, 10, 10] = [1, 1, 1, 1]
     scores[0, 10, 10, 0] = 10
-    detections = decode_yolo26(
-        {"bbox": bbox, "classes": scores}, threshold=0.4, maximum=20
-    )
+    detections = decode_yolo26({"bbox": bbox, "classes": scores}, threshold=0.4, maximum=20)
     assert detections.shape == (20, 6)
     assert detections[0, 0] == 0
     assert detections[0, 1] > 0.99
@@ -128,25 +128,37 @@ def test_frigate_zmq_model_handshake_and_fixed_output(tmp_path):
                 return backend.detect(tensor, confidence or 0.4, maximum or 20)
 
         server = FrigateZmqServer(FakeVision(), settings)
-        await server.start()
+        try:
+            await server.start()
+        except zmq.ZMQError as exc:
+            await server.close()
+            if exc.errno == errno.EPERM:
+                pytest.skip("Execution environment denies ZeroMQ IPC socket binding")
+            raise
         context = zmq.asyncio.Context()
         socket = context.socket(zmq.REQ)
         socket.connect(endpoint)
         try:
-            await socket.send_multipart([
-                json.dumps({"model_request": True, "model_name": "yolov11m.hef"}).encode()
-            ])
+            await socket.send_multipart(
+                [json.dumps({"model_request": True, "model_name": "yolov11m.hef"}).encode()]
+            )
             handshake = json.loads((await socket.recv_multipart())[0])
             assert handshake["model_available"] is True
             assert handshake["model_loaded"] is True
 
             tensor = np.zeros((1, 640, 640, 3), dtype=np.uint8)
-            await socket.send_multipart([
-                json.dumps({
-                    "shape": list(tensor.shape), "dtype": "uint8", "model_type": "yolo-generic"
-                }).encode(),
-                tensor.tobytes(),
-            ])
+            await socket.send_multipart(
+                [
+                    json.dumps(
+                        {
+                            "shape": list(tensor.shape),
+                            "dtype": "uint8",
+                            "model_type": "yolo-generic",
+                        }
+                    ).encode(),
+                    tensor.tobytes(),
+                ]
+            )
             frames = await socket.recv_multipart()
             header = json.loads(frames[0])
             result = np.frombuffer(frames[1], dtype=np.float32).reshape(header["shape"])

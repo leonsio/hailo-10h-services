@@ -15,10 +15,14 @@ from hailo_services.runtime import HailoBackend, LiteRTLMBackend
 from hailo_services.schemas import ChatRequest
 from hailo_services.tool_retrieval import compact_static_context, retrieve_tools
 
-TOOL = {"type": "function", "function": {
-    "name": "intent__HassTurnOn", "description": "turn a light on",
-    "parameters": {"type": "object", "properties": {"entity_id": {"type": "string"}}},
-}}
+TOOL = {
+    "type": "function",
+    "function": {
+        "name": "intent__HassTurnOn",
+        "description": "turn a light on",
+        "parameters": {"type": "object", "properties": {"entity_id": {"type": "string"}}},
+    },
+}
 
 
 class BudgetBackend(LiteRTLMBackend):
@@ -29,7 +33,8 @@ class BudgetBackend(LiteRTLMBackend):
         self.rendered = []
         self.engine = SimpleNamespace(tokenize=lambda text: text.split())
         self.litert_lm = SimpleNamespace(
-            Tool=type("Tool", (), {}), SamplerConfig=lambda **kwargs: kwargs,
+            Tool=type("Tool", (), {}),
+            SamplerConfig=lambda **kwargs: kwargs,
         )
 
     def start(self):
@@ -49,11 +54,14 @@ class BudgetBackend(LiteRTLMBackend):
 
             def render_message_to_string(self, prompt):
                 backend.rendered.append(prompt)
-                return json.dumps({
-                    "messages": self.options["messages"], "tools": [
-                        t.get_tool_description() for t in self.options.get("tools", [])
-                    ], "prompt": prompt,
-                }, ensure_ascii=False)
+                return json.dumps(
+                    {
+                        "messages": self.options["messages"],
+                        "tools": [t.get_tool_description() for t in self.options.get("tools", [])],
+                        "prompt": prompt,
+                    },
+                    ensure_ascii=False,
+                )
 
             def send_message(self, prompt, **kwargs):
                 self.prompt = prompt
@@ -73,16 +81,28 @@ def test_api_trims_old_complete_rounds_and_keeps_tools_and_active_tool_turn():
         {"role": "user", "content": "old " * 5000},
         {"role": "assistant", "content": "old answer"},
         {"role": "user", "content": "active request"},
-        {"role": "assistant", "content": None, "tool_calls": [{
-            "id": "call_1", "type": "function", "function": {
-                "name": TOOL["function"]["name"], "arguments": "{}",
-            },
-        }]},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": TOOL["function"]["name"],
+                        "arguments": "{}",
+                    },
+                }
+            ],
+        },
         {"role": "tool", "tool_call_id": "call_1", "content": "result"},
     ]
     payload = {
-        "model": LLM_MODEL, "messages": messages, "tools": [TOOL],
-        "max_input_tokens": 4096, "max_tokens": 64,
+        "model": LLM_MODEL,
+        "messages": messages,
+        "tools": [TOOL],
+        "max_input_tokens": 4096,
+        "max_tokens": 64,
     }
     with TestClient(create_app(settings(), FakeBackend(), backend)) as client:
         response = client.post("/v1/chat/completions", json=payload)
@@ -100,9 +120,13 @@ def test_required_prompt_and_tool_schema_are_not_truncated_when_budget_is_imposs
     backend = BudgetBackend()
     payload = {
         "model": LLM_MODEL,
-        "messages": [{"role": "system", "content": "mandatory " * 4500},
-                     {"role": "user", "content": "turn"}],
-        "tools": [TOOL], "max_input_tokens": 4096, "max_tokens": 64,
+        "messages": [
+            {"role": "system", "content": "mandatory " * 4500},
+            {"role": "user", "content": "turn"},
+        ],
+        "tools": [TOOL],
+        "max_input_tokens": 4096,
+        "max_tokens": 64,
     }
     with TestClient(create_app(settings(), FakeBackend(), backend)) as client:
         response = client.post("/v1/chat/completions", json=payload)
@@ -118,12 +142,15 @@ def test_required_prompt_and_tool_schema_are_not_truncated_when_budget_is_imposs
 def test_context_reserves_output_space_when_cap_exceeds_available_input():
     backend = BudgetBackend(context=4096)
     backend.start()
-    request = req([
-        {"role": "system", "content": "sys"},
-        {"role": "user", "content": "earlier " * 4200},
-        {"role": "assistant", "content": "answer"},
-        {"role": "user", "content": "current"},
-    ], max_input_tokens=4096)
+    request = req(
+        [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "earlier " * 4200},
+            {"role": "assistant", "content": "answer"},
+            {"role": "user", "content": "current"},
+        ],
+        max_input_tokens=4096,
+    )
     # 4096 context - 64 requested output - 1 start token is the actual input ceiling.
     trimmed = backend._limit_input(request, {})
     assert trimmed.messages == [request.messages[0], *request.messages[-1:]]
@@ -148,15 +175,28 @@ def test_exact_budget_boundary_and_requested_value_are_applied(prompt_tokens, ac
 
 def test_malformed_old_tool_history_is_rejected_before_it_can_be_trimmed():
     backend = BudgetBackend()
-    request = req([
-        {"role": "user", "content": "old " * 5000},
-        {"role": "assistant", "content": None, "tool_calls": [{
-            "id": "pending", "type": "function", "function": {
-                "name": TOOL["function"]["name"], "arguments": "{}",
+    request = req(
+        [
+            {"role": "user", "content": "old " * 5000},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "pending",
+                        "type": "function",
+                        "function": {
+                            "name": TOOL["function"]["name"],
+                            "arguments": "{}",
+                        },
+                    }
+                ],
             },
-        }]},
-        {"role": "user", "content": "current"},
-    ], tools=[TOOL], max_input_tokens=4096)
+            {"role": "user", "content": "current"},
+        ],
+        tools=[TOOL],
+        max_input_tokens=4096,
+    )
     with pytest.raises(ValueError, match="Missing results"):
         backend._limit_input(request, {"tools": []})
     assert not backend.created
@@ -185,7 +225,10 @@ def test_invalid_max_input_tokens_values(value):
 
 def test_max_input_tokens_is_optional_for_existing_clients():
     assert req([{"role": "user", "content": "hello"}]).max_input_tokens is None
-    assert req([{"role": "user", "content": "hello"}], max_input_tokens="4096").max_input_tokens == 4096
+    assert (
+        req([{"role": "user", "content": "hello"}], max_input_tokens="4096").max_input_tokens
+        == 4096
+    )
 
 
 def test_default_budget_requires_engine_tokenizer():
@@ -202,23 +245,43 @@ def test_default_budget_requires_engine_tokenizer():
 
 def test_german_user_request_reduces_irrelevant_ha_tools_and_entity_enums():
     tools = [
-        {"type": "function", "function": {
-            "name": "intent__HassTurnOn", "description": "Turn on a living room light",
-            "parameters": {"type": "object", "properties": {"entity_id": {
-                "type": "string", "enum": [
-                    "light.wohnzimmer_stehlampe", "light.wohnzimmer_decke",
-                    "light.schlafzimmer_stehlampe", "light.kueche_decke",
-                ]
-            }}}
-        }},
-        {"type": "function", "function": {
-            "name": "intent__HassClimateSetTemperature", "description": "Set climate temperature",
-            "parameters": {"type": "object", "properties": {"temperature": {"type": "number"}}}
-        }},
-        {"type": "function", "function": {
-            "name": "intent__HassCoverClose", "description": "Close a window cover",
-            "parameters": {"type": "object", "properties": {"entity_id": {"type": "string"}}}
-        }},
+        {
+            "type": "function",
+            "function": {
+                "name": "intent__HassTurnOn",
+                "description": "Turn on a living room light",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "entity_id": {
+                            "type": "string",
+                            "enum": [
+                                "light.wohnzimmer_stehlampe",
+                                "light.wohnzimmer_decke",
+                                "light.schlafzimmer_stehlampe",
+                                "light.kueche_decke",
+                            ],
+                        }
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "intent__HassClimateSetTemperature",
+                "description": "Set climate temperature",
+                "parameters": {"type": "object", "properties": {"temperature": {"type": "number"}}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "intent__HassCoverClose",
+                "description": "Close a window cover",
+                "parameters": {"type": "object", "properties": {"entity_id": {"type": "string"}}},
+            },
+        },
     ]
     selected, stats = retrieve_tools(
         [{"role": "user", "content": "Mach bitte die Stehlampe im Wohnzimmer an."}], tools
@@ -252,7 +315,10 @@ When controlling Home Assistant always call the intent tools.
 This device is not able to start timers."""
     messages = [
         {"role": "system", "content": system},
-        {"role": "user", "content": [{"type": "text", "text": "schalte das Licht in der Küche aus"}]},
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "schalte das Licht in der Küche aus"}],
+        },
     ]
     compact, stats = compact_static_context(messages)
     prompt = compact[0]["content"]
@@ -269,21 +335,30 @@ This device is not able to start timers."""
 
 def test_kitchen_light_off_request_keeps_only_relevant_action_tools():
     tools = [
-        {"type": "function", "function": {
-            "name": "intent__HassTurnOff",
-            "description": "Turns off/closes a device or entity.",
-            "parameters": {"type": "object", "properties": {"area": {"type": "string"}}},
-        }},
-        {"type": "function", "function": {
-            "name": "intent__HassTurnOn",
-            "description": "Turns on/opens a device or entity.",
-            "parameters": {"type": "object", "properties": {"area": {"type": "string"}}},
-        }},
-        {"type": "function", "function": {
-            "name": "todo__HassListAddItem",
-            "description": "Add item to a todo list",
-            "parameters": {"type": "object", "properties": {"item": {"type": "string"}}},
-        }},
+        {
+            "type": "function",
+            "function": {
+                "name": "intent__HassTurnOff",
+                "description": "Turns off/closes a device or entity.",
+                "parameters": {"type": "object", "properties": {"area": {"type": "string"}}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "intent__HassTurnOn",
+                "description": "Turns on/opens a device or entity.",
+                "parameters": {"type": "object", "properties": {"area": {"type": "string"}}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "todo__HassListAddItem",
+                "description": "Add item to a todo list",
+                "parameters": {"type": "object", "properties": {"item": {"type": "string"}}},
+            },
+        },
     ]
     selected, stats = retrieve_tools(
         [{"role": "user", "content": "schalte das Licht in der Küche aus"}],
@@ -296,30 +371,51 @@ def test_kitchen_light_off_request_keeps_only_relevant_action_tools():
 
 def test_explicit_turn_off_beats_live_context_and_light_set_descriptions():
     tools = [
-        {"type": "function", "function": {
-            "name": "homeassistant__GetLiveContext",
-            "description": (
-                "Provides current state. As a first step in conditional actions, "
-                "for example if something is on, turn off a light."
-            ),
-            "parameters": {"type": "object", "properties": {
-                "area": {"type": "string"}, "domain": {"type": "string"},
-            }},
-        }},
-        {"type": "function", "function": {
-            "name": "intent__HassTurnOff",
-            "description": "Turns off/closes a device or entity.",
-            "parameters": {"type": "object", "properties": {
-                "area": {"type": "string"}, "domain": {"type": "array"},
-            }},
-        }},
-        {"type": "function", "function": {
-            "name": "light__HassLightSet",
-            "description": "Sets brightness percentage or color of a light.",
-            "parameters": {"type": "object", "properties": {
-                "area": {"type": "string"}, "brightness": {"type": "integer"},
-            }},
-        }},
+        {
+            "type": "function",
+            "function": {
+                "name": "homeassistant__GetLiveContext",
+                "description": (
+                    "Provides current state. As a first step in conditional actions, "
+                    "for example if something is on, turn off a light."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "area": {"type": "string"},
+                        "domain": {"type": "string"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "intent__HassTurnOff",
+                "description": "Turns off/closes a device or entity.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "area": {"type": "string"},
+                        "domain": {"type": "array"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "light__HassLightSet",
+                "description": "Sets brightness percentage or color of a light.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "area": {"type": "string"},
+                        "brightness": {"type": "integer"},
+                    },
+                },
+            },
+        },
     ]
     selected, stats = retrieve_tools(
         [{"role": "user", "content": "schalte das Licht in der Küche aus"}],
@@ -335,11 +431,17 @@ def test_budget_counts_complete_litert_render_once_for_tool_followup():
     messages = [
         {"role": "system", "content": "system " * 1000},
         {"role": "user", "content": "schalte das Licht aus"},
-        {"role": "assistant", "content": None, "tool_calls": [{
-            "id": "call_live",
-            "type": "function",
-            "function": {"name": TOOL["function"]["name"], "arguments": "{}"},
-        }]},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_live",
+                    "type": "function",
+                    "function": {"name": TOOL["function"]["name"], "arguments": "{}"},
+                }
+            ],
+        },
         {"role": "tool", "tool_call_id": "call_live", "content": "state on"},
     ]
     request = req(messages, tools=[TOOL], max_input_tokens=4096)
@@ -352,29 +454,48 @@ def test_budget_counts_complete_litert_render_once_for_tool_followup():
 def test_active_tool_schema_is_preserved_alongside_retrieved_followup_tools():
     backend = HailoBackend(settings())
     backend.minilm = None
-    live = {"type": "function", "function": {
-        "name": "homeassistant__GetLiveContext",
-        "description": "Get current state",
-        "parameters": {"type": "object", "properties": {}},
-    }}
-    turn_off = {"type": "function", "function": {
-        "name": "intent__HassTurnOff",
-        "description": "Turns off a device",
-        "parameters": {"type": "object", "properties": {}},
-    }}
-    todo = {"type": "function", "function": {
-        "name": "todo__HassListAddItem",
-        "description": "Add a todo item",
-        "parameters": {"type": "object", "properties": {}},
-    }}
-    request = req([
-        {"role": "user", "content": "Wenn das Licht an ist, schalte es aus"},
-        {"role": "assistant", "content": None, "tool_calls": [{
-            "id": "call_live", "type": "function",
-            "function": {"name": "homeassistant__GetLiveContext", "arguments": "{}"},
-        }]},
-        {"role": "tool", "tool_call_id": "call_live", "content": "on"},
-    ], tools=[live, turn_off, todo])
+    live = {
+        "type": "function",
+        "function": {
+            "name": "homeassistant__GetLiveContext",
+            "description": "Get current state",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+    turn_off = {
+        "type": "function",
+        "function": {
+            "name": "intent__HassTurnOff",
+            "description": "Turns off a device",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+    todo = {
+        "type": "function",
+        "function": {
+            "name": "todo__HassListAddItem",
+            "description": "Add a todo item",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+    request = req(
+        [
+            {"role": "user", "content": "Wenn das Licht an ist, schalte es aus"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_live",
+                        "type": "function",
+                        "function": {"name": "homeassistant__GetLiveContext", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_live", "content": "on"},
+        ],
+        tools=[live, turn_off, todo],
+    )
     object.__setattr__(request, "_ha_assist", True)
     selected = backend.select_tools(request)
     names = [tool["function"]["name"] for tool in selected.tools]
@@ -396,22 +517,31 @@ Static Context: An overview of the areas and the devices in this smart home:
   areas: Schlafzimmer
 
 When controlling Home Assistant always call the intent tools."""
-    turn_off = {"type": "function", "function": {
-        "name": "intent__HassTurnOff",
-        "description": "Turns off a light",
-        "parameters": {"type": "object", "properties": {"area": {"type": "string"}}},
-    }}
-    todo = {"type": "function", "function": {
-        "name": "todo__HassListAddItem",
-        "description": "Add todo item",
-        "parameters": {"type": "object", "properties": {}},
-    }}
-    request = req([
-        {"role": "system", "content": system},
-        {"role": "user", "content": "schalte das Licht in der Küche aus"},
-    ], tools=[turn_off, todo])
+    turn_off = {
+        "type": "function",
+        "function": {
+            "name": "intent__HassTurnOff",
+            "description": "Turns off a light",
+            "parameters": {"type": "object", "properties": {"area": {"type": "string"}}},
+        },
+    }
+    todo = {
+        "type": "function",
+        "function": {
+            "name": "todo__HassListAddItem",
+            "description": "Add todo item",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+    request = req(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": "schalte das Licht in der Küche aus"},
+        ],
+        tools=[turn_off, todo],
+    )
     request._request_id = "debug-entity-123"
-    with caplog.at_level("DEBUG", logger="hailo_services.runtime"):
+    with caplog.at_level("DEBUG", logger="hailo_services.backend_hailo"):
         object.__setattr__(request, "_ha_assist", True)
         selected = backend.select_tools(request)
     assert "event=entity_retrieval_trace request_id=debug-entity-123" in caplog.text
@@ -427,12 +557,16 @@ def test_debug_budget_logs_rendered_and_final_gemma_request(caplog):
     backend = BudgetBackend(context=4096)
     backend.debug_log = True
     backend.start()
-    request = req([
-        {"role": "system", "content": "system"},
-        {"role": "user", "content": "current"},
-    ], tools=[TOOL], max_input_tokens=4096)
+    request = req(
+        [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "current"},
+        ],
+        tools=[TOOL],
+        max_input_tokens=4096,
+    )
     request._request_id = "debug-budget-456"
-    with caplog.at_level("DEBUG", logger="hailo_services.runtime"):
+    with caplog.at_level("DEBUG", logger="hailo_services.backend_litert"):
         result = backend.chat(request, tools_prepared=True)
     assert result == "ok"
     assert "event=before_input_budget request_id=debug-budget-456" in caplog.text

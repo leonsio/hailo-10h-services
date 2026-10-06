@@ -11,7 +11,6 @@ import json
 import logging
 import re
 import uuid
-from functools import wraps
 
 from . import ha_state_routing as _state
 from .i18n import labels, lexicon, t
@@ -39,48 +38,116 @@ _WEATHER_DEVICE_CLASSES = {
 _TEMPERATURE_UNITS = {"°c", "c", "°f", "f", "k", "kelvin"}
 _HUMIDITY_UNITS = {"%"}
 
-_AMBIENT_WORDS = lexicon('ha_weather_routing._AMBIENT_WORDS')
-_OUTDOOR_WORDS = lexicon('ha_weather_routing._OUTDOOR_WORDS')
-_PROCESS_WORDS = lexicon('ha_weather_routing._PROCESS_WORDS')
+_AMBIENT_WORDS = lexicon("ha_weather_routing._AMBIENT_WORDS")
+_OUTDOOR_WORDS = lexicon("ha_weather_routing._OUTDOOR_WORDS")
+_PROCESS_WORDS = lexicon("ha_weather_routing._PROCESS_WORDS")
 
 
 def _normalized(value: object) -> str:
+    """Normalize text for language-independent HA matching.
+
+    Args:
+        value (object): Input value inspected or normalized by this helper.
+
+    Returns:
+        str: Canonical matching text.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     return _state._normalized(str(value))
 
 
 def _tokens(value: object) -> set[str]:
+    """Normalize and split text into retrieval or weather-matching terms.
+
+    Args:
+        value (object): Input value inspected or normalized by this helper.
+
+    Returns:
+        set[str]: Significant normalized terms.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     return set(_normalized(value).split())
 
 
 def _has_any_word(value: object, words: set[str]) -> bool:
+    """Check whether normalized input contains any supplied vocabulary term.
+
+    Args:
+        value (object): Input value inspected or normalized by this helper.
+        words (set[str]): Vocabulary to match against normalized input.
+
+    Returns:
+        bool: Whether at least one word matches.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     return bool(_tokens(value) & words)
 
 
 def _ambient_temperature_query(text: str) -> bool:
+    """Recognize an ambient-temperature question without a control verb.
+
+    Args:
+        text (str): Text to parse, normalize, match or render.
+
+    Returns:
+        bool: Whether environment temperature routing applies.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     normalized = _normalized(text)
     if _state._has_action_verb(normalized):
         return False
-    if re.search(lexicon('ha_weather_routing.pattern.63.17'), normalized):
+    if re.search(lexicon("ha_weather_routing.pattern.63.17"), normalized):
         return False
     return bool(
         re.search(
-            lexicon('ha_weather_routing.pattern.67.12'),
+            lexicon("ha_weather_routing.pattern.67.12"),
             normalized,
         )
     )
 
 
 def _weather_query(text: str) -> bool:
+    """Recognize a read-only weather or rain question.
+
+    Args:
+        text (str): Text to parse, normalize, match or render.
+
+    Returns:
+        bool: Whether weather routing applies.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     normalized = _normalized(text)
     if _state._has_action_verb(normalized) or _ambient_temperature_query(text):
         return False
     return bool(
-        re.search(lexicon('ha_weather_routing.pattern.79.18'), normalized)
-        or re.search(lexicon('ha_weather_routing.pattern.80.21'), normalized)
+        re.search(lexicon("ha_weather_routing.pattern.79.18"), normalized)
+        or re.search(lexicon("ha_weather_routing.pattern.80.21"), normalized)
     )
 
 
 def _explicit_area(query: str, entities: list[dict[str, str]]) -> str | None:
+    """Find an area explicitly mentioned in an environment query.
+
+    Args:
+        query (str): User question or normalized utterance to match.
+        entities (list[dict[str, str]]): Static or live HA entities relevant to the request.
+
+    Returns:
+        str | None: Uniquely matched area, or None.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     normalized = _normalized(query)
     areas = sorted({item["area"] for item in entities if item.get("area")}, key=len, reverse=True)
     matches = [area for area in areas if f" {_normalized(area)} " in f" {normalized} "]
@@ -88,6 +155,18 @@ def _explicit_area(query: str, entities: list[dict[str, str]]) -> str | None:
 
 
 def _outdoor_area(query: str, entities: list[dict[str, str]]) -> str | None:
+    """Resolve outdoor vocabulary to a unique outdoor catalogue area.
+
+    Args:
+        query (str): User question or normalized utterance to match.
+        entities (list[dict[str, str]]): Static or live HA entities relevant to the request.
+
+    Returns:
+        str | None: Matched outdoor area, or None.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     explicit = _explicit_area(query, entities)
     if explicit:
         return explicit
@@ -99,6 +178,17 @@ def _outdoor_area(query: str, entities: list[dict[str, str]]) -> str | None:
 
 
 def _environment_name_score(name: str) -> int:
+    """Score entity names for ambient environment relevance.
+
+    Args:
+        name (str): Function, attribute, device or model identifier.
+
+    Returns:
+        int: Heuristic score favouring environmental sources.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     words = _tokens(name)
     score = 0
     if words & _AMBIENT_WORDS:
@@ -111,6 +201,18 @@ def _environment_name_score(name: str) -> int:
 
 
 def _temperature_score(entity: dict[str, str], area: str | None) -> int:
+    """Rank static temperature candidates using domain, name and area.
+
+    Args:
+        entity (dict[str, str]): HA entity containing name, domain, area and optional state/attributes.
+        area (str | None): Resolved catalogue area, or None when no area is selected.
+
+    Returns:
+        int: Heuristic relevance score.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     if area is not None and entity.get("area") != area:
         return -1000
     domain = entity.get("domain", "")
@@ -121,12 +223,24 @@ def _temperature_score(entity: dict[str, str], area: str | None) -> int:
         return 120 + _environment_name_score(name)
     if domain == "climate":
         return 45 + _environment_name_score(name)
-    if re.search(lexicon('ha_weather_routing.pattern.125.17'), name):
+    if re.search(lexicon("ha_weather_routing.pattern.125.17"), name):
         return 75 + _environment_name_score(name)
     return 20 + _environment_name_score(name)
 
 
 def _temperature_sources(entities: list[dict[str, str]], query: str) -> list[dict[str, str]]:
+    """Select plausible static temperature sources for the query.
+
+    Args:
+        entities (list[dict[str, str]]): Static or live HA entities relevant to the request.
+        query (str): User question or normalized utterance to match.
+
+    Returns:
+        list[dict[str, str]]: Temperature candidates sorted by relevance.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     area = _outdoor_area(query, entities) or _explicit_area(query, entities)
     ranked = sorted(
         ((_temperature_score(item, area), index, item) for index, item in enumerate(entities)),
@@ -140,6 +254,17 @@ def _temperature_sources(entities: list[dict[str, str]], query: str) -> list[dic
 
 
 def _is_weather_sensor(entity: dict[str, str]) -> bool:
+    """Check whether a static sensor name indicates weather data.
+
+    Args:
+        entity (dict[str, str]): HA entity containing name, domain, area and optional state/attributes.
+
+    Returns:
+        bool: Whether the sensor is a weather candidate.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     if entity.get("domain") == "weather":
         return True
     if entity.get("domain") != "sensor":
@@ -155,19 +280,42 @@ def _is_weather_sensor(entity: dict[str, str]) -> bool:
 
 
 def _weather_sensor_order(name: str) -> int:
+    """Assign a stable priority to weather-related sensor names.
+
+    Args:
+        name (str): Function, attribute, device or model identifier.
+
+    Returns:
+        int: Ordering score used for weather selection.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     normalized = _normalized(name)
-    if re.search(lexicon('ha_weather_routing.pattern.160.17'), normalized) and not re.search(
-        lexicon('ha_weather_routing.match.160.8'), normalized
+    if re.search(lexicon("ha_weather_routing.pattern.160.17"), normalized) and not re.search(
+        lexicon("ha_weather_routing.match.160.8"), normalized
     ):
         return 0
-    if re.search(lexicon('ha_weather_routing.pattern.164.17'), normalized):
+    if re.search(lexicon("ha_weather_routing.pattern.164.17"), normalized):
         return 1
-    if re.search(lexicon('ha_weather_routing.match.165.17'), normalized):
+    if re.search(lexicon("ha_weather_routing.match.165.17"), normalized):
         return 2
     return 3
 
 
 def _weather_sources(entities: list[dict[str, str]], query: str) -> list[dict[str, str]]:
+    """Select weather entities and weather-related sensors.
+
+    Args:
+        entities (list[dict[str, str]]): Static or live HA entities relevant to the request.
+        query (str): User question or normalized utterance to match.
+
+    Returns:
+        list[dict[str, str]]: Static weather candidates for the requested area.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     area = _outdoor_area(query, entities) or _explicit_area(query, entities)
     sources = [item for item in entities if _is_weather_sensor(item)]
     if area is not None:
@@ -177,11 +325,24 @@ def _weather_sources(entities: list[dict[str, str]], query: str) -> list[dict[st
     weather_entities = [item for item in sources if item.get("domain") == "weather"]
     if weather_entities:
         return weather_entities[:2]
-    sources.sort(key=lambda item: (_weather_sensor_order(item.get("name", "")), item.get("name", "")))
+    sources.sort(
+        key=lambda item: (_weather_sensor_order(item.get("name", "")), item.get("name", ""))
+    )
     return sources[:4]
 
 
 def _tool_call(arguments: dict[str, object]) -> dict:
+    """Build one read-only GetLiveContext function call.
+
+    Args:
+        arguments (dict[str, object]): Function argument values to validate or encode.
+
+    Returns:
+        dict: Function call with a fresh ID and JSON arguments.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     return {
         "id": "call_" + uuid.uuid4().hex,
         "type": "function",
@@ -193,6 +354,17 @@ def _tool_call(arguments: dict[str, object]) -> dict:
 
 
 def _direct_call(arguments: dict[str, object]) -> dict:
+    """Wrap a live-context lookup as an assistant tool-call message.
+
+    Args:
+        arguments (dict[str, object]): Function argument values to validate or encode.
+
+    Returns:
+        dict: OpenAI assistant message containing the lookup call.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     return {
         "role": "assistant",
         "content": None,
@@ -201,6 +373,17 @@ def _direct_call(arguments: dict[str, object]) -> dict:
 
 
 def _latest_round(messages):
+    """Read the current completed live-context tool round.
+
+    Args:
+        messages (list[dict[str, Any]]): Ordered OpenAI or native conversation messages.
+
+    Returns:
+        tuple | None: Question, calls and result payloads, or None.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     user_index = -1
     for index in range(len(messages) - 1, -1, -1):
         if messages[index].get("role") == "user":
@@ -227,15 +410,48 @@ def _latest_round(messages):
 
 
 def _device_class(entity: dict) -> str:
+    """Read a live entity device class from its attributes.
+
+    Args:
+        entity (dict): HA entity containing name, domain, area and optional state/attributes.
+
+    Returns:
+        str: Normalized device class or empty text.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     return str(entity.get("attributes", {}).get("device_class", "")).casefold().strip()
 
 
 def _unit(entity: dict) -> str:
+    """Read the measurement unit from a live entity.
+
+    Args:
+        entity (dict): HA entity containing name, domain, area and optional state/attributes.
+
+    Returns:
+        str: Unit label or empty text.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     attrs = entity.get("attributes", {})
     return str(attrs.get("unit_of_measurement") or attrs.get("unit") or "").strip()
 
 
 def _numeric_state(entity: dict) -> str | None:
+    """Parse a finite numeric live state, excluding unknown/unavailable values.
+
+    Args:
+        entity (dict): HA entity containing name, domain, area and optional state/attributes.
+
+    Returns:
+        str | None: Formatted measurement with its unit, or None when unavailable.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     state = str(entity.get("state", ""))
     if state.casefold() in _INVALID_STATES:
         return None
@@ -249,6 +465,17 @@ def _numeric_state(entity: dict) -> str | None:
 
 
 def _temperature_value(entity: dict) -> str | None:
+    """Read ambient temperature and its unit from a live source.
+
+    Args:
+        entity (dict): HA entity containing name, domain, area and optional state/attributes.
+
+    Returns:
+        str | None: Formatted measurement with its unit, or None when unavailable.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     state = str(entity.get("state", "")).casefold()
     if state in _INVALID_STATES:
         return None
@@ -276,12 +503,23 @@ def _temperature_value(entity: dict) -> str | None:
     if device_class in _TEMPERATURE_DEVICE_CLASSES or unit in _TEMPERATURE_UNITS:
         return _numeric_state(entity)
     name = _normalized(entity.get("name", ""))
-    if re.search(lexicon('ha_weather_routing.pattern.280.17'), name):
+    if re.search(lexicon("ha_weather_routing.pattern.280.17"), name):
         return _numeric_state(entity)
     return None
 
 
 def _humidity_value(entity: dict) -> str | None:
+    """Read humidity from weather, climate or humidity sensor data.
+
+    Args:
+        entity (dict): HA entity containing name, domain, area and optional state/attributes.
+
+    Returns:
+        str | None: Formatted measurement with its unit, or None when unavailable.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     state = str(entity.get("state", "")).casefold()
     if state in _INVALID_STATES:
         return None
@@ -297,22 +535,45 @@ def _humidity_value(entity: dict) -> str | None:
     if (
         device_class in _HUMIDITY_DEVICE_CLASSES
         or normalized_unit in _HUMIDITY_UNITS
-        or re.search(lexicon('ha_weather_routing.pattern.301.21'), name)
+        or re.search(lexicon("ha_weather_routing.pattern.301.21"), name)
     ):
         return _numeric_state(entity)
     return None
 
 
 def _dew_point_value(entity: dict) -> str | None:
+    """Read dew-point temperature from a qualified live sensor.
+
+    Args:
+        entity (dict): HA entity containing name, domain, area and optional state/attributes.
+
+    Returns:
+        str | None: Formatted measurement with its unit, or None when unavailable.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     if _device_class(entity) in _DEW_POINT_DEVICE_CLASSES:
         return _numeric_state(entity)
     name = _normalized(entity.get("name", ""))
-    if re.search(lexicon('ha_weather_routing.match.310.17'), name):
+    if re.search(lexicon("ha_weather_routing.match.310.17"), name):
         return _numeric_state(entity)
     return None
 
 
 def _live_temperature_score(entity: dict, query: str) -> int:
+    """Rank live temperature sources using attributes and query location.
+
+    Args:
+        entity (dict): HA entity containing name, domain, area and optional state/attributes.
+        query (str): User question or normalized utterance to match.
+
+    Returns:
+        int: Heuristic relevance score.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     value = _temperature_value(entity)
     if value is None:
         return -1000
@@ -337,6 +598,18 @@ def _live_temperature_score(entity: dict, query: str) -> int:
 
 
 def _strong_ambient_evidence(entity: dict, query: str) -> bool:
+    """Require clear evidence that a measurement is ambient temperature.
+
+    Args:
+        entity (dict): HA entity containing name, domain, area and optional state/attributes.
+        query (str): User question or normalized utterance to match.
+
+    Returns:
+        bool: Whether the entity can answer an ambient-temperature question.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     if entity.get("domain") == "weather":
         return True
     name = _normalized(entity.get("name", ""))
@@ -346,10 +619,22 @@ def _strong_ambient_evidence(entity: dict, query: str) -> bool:
         entity.get("area", ""), _OUTDOOR_WORDS
     ):
         return True
-    return name in lexicon('ha_weather_routing.words.349.19')
+    return name in lexicon("ha_weather_routing.words.349.19")
 
 
 def _temperature_response(entities: list[dict], query: str) -> str | None:
+    """Render a temperature answer only for sufficiently clear live data.
+
+    Args:
+        entities (list[dict]): Static or live HA entities relevant to the request.
+        query (str): User question or normalized utterance to match.
+
+    Returns:
+        str | None: Localized answer, or None when generative interpretation is needed.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     ranked = sorted(
         (
             (_live_temperature_score(entity, query), index, entity, _temperature_value(entity))
@@ -360,20 +645,31 @@ def _temperature_response(entities: list[dict], query: str) -> str | None:
     ranked = [row for row in ranked if row[0] > -1000 and row[3] is not None]
     if not ranked:
         area = _explicit_area(query, _entries_from_live_entities(entities))
-        suffix = t('ha_weather_routing.420' , area=area) if area else ""
-        return t('ha_weather_routing.421' , suffix=suffix)
+        suffix = t("ha_weather_routing.420", area=area) if area else ""
+        return t("ha_weather_routing.421", suffix=suffix)
     best_score, _, best_entity, best_value = ranked[0]
     if len(ranked) == 1:
         if _strong_ambient_evidence(best_entity, query):
-            return t('ha_weather_routing.425' , best_value=best_value)
+            return t("ha_weather_routing.425", best_value=best_value)
         return None
     second_score = ranked[1][0]
     if best_score - second_score >= 15 and _strong_ambient_evidence(best_entity, query):
-        return t('ha_weather_routing.429' , best_value=best_value)
+        return t("ha_weather_routing.429", best_value=best_value)
     return None
 
 
 def _environmental_sensor(entity: dict) -> bool:
+    """Check whether a live sensor represents environmental data.
+
+    Args:
+        entity (dict): HA entity containing name, domain, area and optional state/attributes.
+
+    Returns:
+        bool: Whether the entity belongs in the compact environment context.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     if entity.get("domain") == "weather":
         return True
     if entity.get("domain") != "sensor":
@@ -384,22 +680,46 @@ def _environmental_sensor(entity: dict) -> bool:
     name = _normalized(entity.get("name", ""))
     return bool(
         re.search(
-            lexicon('ha_weather_routing.pattern.388.12'),
+            lexicon("ha_weather_routing.pattern.388.12"),
             name,
         )
     )
 
 
 def _weather_condition(state: str) -> str | None:
+    """Translate a canonical HA weather state into user-facing text.
+
+    Args:
+        state (str): Canonical HA entity state.
+
+    Returns:
+        str | None: Localized condition label.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     return labels("weather").get(state)
 
 
 def _pick_weather_group(entities: list[dict], query: str) -> list[dict] | None:
+    """Choose coherent weather data for the requested place.
+
+    Args:
+        entities (list[dict]): Static or live HA entities relevant to the request.
+        query (str): User question or normalized utterance to match.
+
+    Returns:
+        list[dict] | None: Coherent weather sources, an empty list when absent or None when ambiguous.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     relevant = [entity for entity in entities if _environmental_sensor(entity)]
     if not relevant:
         return []
     weather_entities = [
-        entity for entity in relevant
+        entity
+        for entity in relevant
         if entity.get("domain") == "weather"
         and str(entity.get("state", "")).casefold() not in _INVALID_STATES
     ]
@@ -410,7 +730,8 @@ def _pick_weather_group(entities: list[dict], query: str) -> list[dict] | None:
         weather = weather_entities[0]
         area = weather.get("area")
         companions = [
-            entity for entity in relevant
+            entity
+            for entity in relevant
             if area and entity.get("area") == area and entity.get("domain") == "sensor"
         ]
         return [weather, *companions]
@@ -443,7 +764,7 @@ def _pick_weather_group(entities: list[dict], query: str) -> list[dict] | None:
         if _has_any_word(area, _OUTDOOR_WORDS):
             score += 30
         if any(
-            _has_any_word(item.get("name", ""), lexicon('ha_weather_routing.words.432.48'))
+            _has_any_word(item.get("name", ""), lexicon("ha_weather_routing.words.432.48"))
             for item in members
         ):
             score += 20
@@ -459,11 +780,23 @@ def _pick_weather_group(entities: list[dict], query: str) -> list[dict] | None:
 
 
 def _weather_response(entities: list[dict], query: str = "") -> str | None:
+    """Render weather or rain answers from coherent live measurements.
+
+    Args:
+        entities (list[dict]): Static or live HA entities relevant to the request.
+        query (str): User question or normalized utterance to match.
+
+    Returns:
+        str | None: Localized weather answer, or None for ambiguous data.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     group = _pick_weather_group(entities, query)
     if group is None:
         return None
     if not group:
-        return t('ha_weather_routing.520')
+        return t("ha_weather_routing.520")
     weather = next((item for item in group if item.get("domain") == "weather"), None)
     condition = None
     temperature = None
@@ -496,21 +829,34 @@ def _weather_response(entities: list[dict], query: str = "") -> str | None:
         if dew_point is None:
             dew_point = _dew_point_value(entity)
     if not any((condition, temperature, humidity, dew_point)):
-        return t('ha_weather_routing.548')
+        return t("ha_weather_routing.548")
     parts = []
     if condition:
-        parts.append(t('ha_weather_routing.551' , condition=condition))
+        parts.append(t("ha_weather_routing.551", condition=condition))
     if temperature:
-        parts.append((t('ha_weather_routing.553') if parts else t('ha_weather_routing.553')) + temperature)
+        parts.append(
+            (t("ha_weather_routing.553") if parts else t("ha_weather_routing.553")) + temperature
+        )
     if humidity:
-        parts.append(t('ha_weather_routing.555' , humidity=humidity))
+        parts.append(t("ha_weather_routing.555", humidity=humidity))
     sentence = ", ".join(parts) + "." if parts else ""
     if dew_point:
-        sentence += (" " if sentence else "") + t('ha_weather_routing.558' , dew_point=dew_point)
+        sentence += (" " if sentence else "") + t("ha_weather_routing.558", dew_point=dew_point)
     return sentence
 
 
 def _entries_from_live_entities(entities: list[dict]) -> list[dict[str, str]]:
+    """Render compact model-readable entries from live entities.
+
+    Args:
+        entities (list[dict]): Static or live HA entities relevant to the request.
+
+    Returns:
+        list[dict[str, str]]: Compact entity blocks including current state and selected attributes.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     return [
         {
             "name": str(item.get("name", "")),
@@ -522,6 +868,20 @@ def _entries_from_live_entities(entities: list[dict]) -> list[dict[str, str]]:
 
 
 def _compact_environment_decision(request, entities: list[dict], query: str, kind: str):
+    """Build a minimal tool-free fallback for ambiguous environment data.
+
+    Args:
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+        entities (list[dict]): Static or live HA entities relevant to the request.
+        query (str): User question or normalized utterance to match.
+        kind (str): Model role, measurement category or environment query kind.
+
+    Returns:
+        ChatRequest: Request containing only relevant live context and question.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     relevant = [
         entity
         for entity in entities
@@ -535,29 +895,37 @@ def _compact_environment_decision(request, entities: list[dict], query: str, kin
             f"area={entity.get('area')}; state={entity.get('state')}; "
             f"device_class={attrs.get('device_class', '')}; unit={_unit(entity)}; "
             f"current_temperature={attrs.get('current_temperature', '')}; "
-            "attributes=" + json.dumps({
-                key: attrs[key] for key in (
-                    "temperature", "temperature_unit", "humidity", "pressure", "pressure_unit",
-                    "wind_speed", "wind_speed_unit", "wind_bearing", "current_temperature",
-                    "device_class", "unit_of_measurement",
-                ) if key in attrs
-            }, ensure_ascii=False)
+            "attributes="
+            + json.dumps(
+                {
+                    key: attrs[key]
+                    for key in (
+                        "temperature",
+                        "temperature_unit",
+                        "humidity",
+                        "pressure",
+                        "pressure_unit",
+                        "wind_speed",
+                        "wind_speed_unit",
+                        "wind_bearing",
+                        "current_temperature",
+                        "device_class",
+                        "unit_of_measurement",
+                    )
+                    if key in attrs
+                },
+                ensure_ascii=False,
+            )
         )
-    task = (
-        t('ha_weather_routing.589')
-        if kind == "temperature"
-        else t('ha_weather_routing.591')
-    )
+    task = t("ha_weather_routing.589") if kind == "temperature" else t("ha_weather_routing.591")
     messages = [
         {
             "role": "system",
-            "content": (
-                t('ha_weather_routing.597' , task=task)
-            ),
+            "content": (t("ha_weather_routing.597", task=task)),
         },
         {
             "role": "user",
-            "content": t('ha_weather_routing.608' , query=query) + "\n".join(lines),
+            "content": t("ha_weather_routing.608", query=query) + "\n".join(lines),
         },
     ]
     prepared = request.model_copy(update={"messages": messages, "tools": None, "tool_choice": None})
@@ -571,6 +939,19 @@ def _initial_live_arguments(
     *,
     kind: str,
 ) -> dict[str, object]:
+    """Build broad read-only filters for weather or ambient temperature.
+
+    Args:
+        static_entities (list[dict[str, str]]): Entities from the HA static catalogue.
+        query (str): User question or normalized utterance to match.
+        kind (str): Model role, measurement category or environment query kind.
+
+    Returns:
+        dict[str, object]: Domain filters and an optional resolved area.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     area = _outdoor_area(query, static_entities) or _explicit_area(query, static_entities)
     if kind == "temperature":
         arguments: dict[str, object] = {"domain": ["sensor", "climate", "weather"]}
@@ -581,108 +962,94 @@ def _initial_live_arguments(
     return arguments
 
 
-def install():
-    from . import runtime
+def prepare_request(backend, request, next_stage):
+    """Apply this HA preparation stage and invoke its fallback when needed.
 
-    backend_cls = runtime.HailoBackend
-    litert_cls = runtime.LiteRTLMBackend
-    if getattr(backend_cls, "_ha_weather_routing_installed", False):
-        return
+    Args:
+        backend (ChatBackend): Resident backend used for generation or context preparation.
+        request (ChatRequest): Validated chat request, history, tool policy and request-local metadata.
+        next_stage (Callable[[ChatRequest], ChatRequest]): Fallback preparation stage when this stage does not finish routing.
 
-    original_select_tools = backend_cls.select_tools
-    original_litert_chat = litert_cls.chat
+    Returns:
+        ChatRequest: Prepared or unchanged request, possibly carrying a direct response.
 
-    @wraps(original_select_tools)
-    def select_tools(self, request):
-        request_id = getattr(request, "_request_id", "-")
-        query = latest_user_text(request.messages).strip()
-        live_tool = _state._live_tool(request.tools)
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
+    request_id = getattr(request, "_request_id", "-")
+    query = latest_user_text(request.messages).strip()
+    live_tool = _state._live_tool(request.tools)
 
-        round_data = _latest_round(request.messages)
-        if round_data is not None and (_weather_query(query) or _ambient_temperature_query(query)):
-            _, calls, results = round_data
-            entities = _state._live_entities(results, calls)
-            if _weather_query(query):
-                answer = _weather_response(entities, query)
-                if answer is None:
-                    compact = _compact_environment_decision(request, entities, query, "weather")
-                    _LOG.info(
-                        "ha_weather_route request_id=%s route=weather_decision_minimal entities=%d tools=0",
-                        request_id,
-                        len(entities),
-                    )
-                    return compact
-                prepared = request.model_copy(update={"tools": None, "tool_choice": None})
-                prepared._request_id = request_id
-                object.__setattr__(prepared, "_direct_weather_response", answer)
+    round_data = _latest_round(request.messages)
+    if round_data is not None and (_weather_query(query) or _ambient_temperature_query(query)):
+        _, calls, results = round_data
+        entities = _state._live_entities(results, calls)
+        if _weather_query(query):
+            answer = _weather_response(entities, query)
+            if answer is None:
+                compact = _compact_environment_decision(request, entities, query, "weather")
                 _LOG.info(
-                    "ha_weather_route request_id=%s route=direct_weather_response entities=%d skipped_gemma=true",
+                    "ha_weather_route request_id=%s route=weather_decision_minimal entities=%d tools=0",
                     request_id,
                     len(entities),
                 )
-                return prepared
-
-            answer = _temperature_response(entities, query)
-            if answer is not None:
-                prepared = request.model_copy(update={"tools": None, "tool_choice": None})
-                prepared._request_id = request_id
-                object.__setattr__(prepared, "_direct_weather_response", answer)
-                _LOG.info(
-                    "ha_weather_route request_id=%s route=direct_temperature_response entities=%d skipped_gemma=true",
-                    request_id,
-                    len(entities),
-                )
-                return prepared
-
-            compact = _compact_environment_decision(request, entities, query, "temperature")
+                return compact
+            prepared = request.model_copy(update={"tools": None, "tool_choice": None})
+            prepared._request_id = request_id
+            object.__setattr__(prepared, "_direct_weather_response", answer)
             _LOG.info(
-                "ha_weather_route request_id=%s route=temperature_decision_minimal entities=%d tools=0",
+                "ha_weather_route request_id=%s route=direct_weather_response entities=%d skipped_gemma=true",
                 request_id,
                 len(entities),
             )
-            return compact
-
-        if live_tool is None or any(message.get("role") == "tool" for message in request.messages):
-            return original_select_tools(self, request)
-
-        static_entities = _state._entries(request.messages)
-        if _weather_query(query):
-            arguments = _initial_live_arguments(static_entities, query, kind="weather")
-            prepared = request.model_copy(update={"tools": [live_tool], "tool_choice": None})
-            prepared._request_id = request_id
-            object.__setattr__(prepared, "_direct_ha_response", _direct_call(arguments))
-            _LOG.info(
-                "ha_weather_route request_id=%s route=generic_weather_live filters=%s skipped_gemma=true",
-                request_id,
-                json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
-            )
             return prepared
 
-        if _ambient_temperature_query(query):
-            arguments = _initial_live_arguments(static_entities, query, kind="temperature")
-            prepared = request.model_copy(update={"tools": [live_tool], "tool_choice": None})
-            prepared._request_id = request_id
-            object.__setattr__(prepared, "_direct_ha_response", _direct_call(arguments))
-            _LOG.info(
-                "ha_weather_route request_id=%s route=generic_temperature_live filters=%s skipped_gemma=true",
-                request_id,
-                json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
-            )
-            return prepared
-
-        return original_select_tools(self, request)
-
-    @wraps(original_litert_chat)
-    def litert_chat(self, request, emit=None, cancelled=None, tools_prepared=False):
-        answer = getattr(request, "_direct_weather_response", None)
+        answer = _temperature_response(entities, query)
         if answer is not None:
-            request_id = getattr(request, "_request_id", "-")
-            _LOG.info("direct_ha_weather_response request_id=%s skipped_gemma=true", request_id)
-            if emit:
-                emit(answer)
-            return answer
-        return original_litert_chat(self, request, emit, cancelled, tools_prepared)
+            prepared = request.model_copy(update={"tools": None, "tool_choice": None})
+            prepared._request_id = request_id
+            object.__setattr__(prepared, "_direct_weather_response", answer)
+            _LOG.info(
+                "ha_weather_route request_id=%s route=direct_temperature_response entities=%d skipped_gemma=true",
+                request_id,
+                len(entities),
+            )
+            return prepared
 
-    backend_cls.select_tools = select_tools
-    litert_cls.chat = litert_chat
-    backend_cls._ha_weather_routing_installed = True
+        compact = _compact_environment_decision(request, entities, query, "temperature")
+        _LOG.info(
+            "ha_weather_route request_id=%s route=temperature_decision_minimal entities=%d tools=0",
+            request_id,
+            len(entities),
+        )
+        return compact
+
+    if live_tool is None or any(message.get("role") == "tool" for message in request.messages):
+        return next_stage(request)
+
+    static_entities = _state._entries(request.messages)
+    if _weather_query(query):
+        arguments = _initial_live_arguments(static_entities, query, kind="weather")
+        prepared = request.model_copy(update={"tools": [live_tool], "tool_choice": None})
+        prepared._request_id = request_id
+        object.__setattr__(prepared, "_direct_ha_response", _direct_call(arguments))
+        _LOG.info(
+            "ha_weather_route request_id=%s route=generic_weather_live filters=%s skipped_gemma=true",
+            request_id,
+            json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
+        )
+        return prepared
+
+    if _ambient_temperature_query(query):
+        arguments = _initial_live_arguments(static_entities, query, kind="temperature")
+        prepared = request.model_copy(update={"tools": [live_tool], "tool_choice": None})
+        prepared._request_id = request_id
+        object.__setattr__(prepared, "_direct_ha_response", _direct_call(arguments))
+        _LOG.info(
+            "ha_weather_route request_id=%s route=generic_temperature_live filters=%s skipped_gemma=true",
+            request_id,
+            json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
+        )
+        return prepared
+
+    return next_stage(request)

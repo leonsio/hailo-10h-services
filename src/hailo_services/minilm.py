@@ -11,17 +11,35 @@ from .models import ModelManager
 _LOG = logging.getLogger(__name__)
 
 
-
 class MiniLM:
+    """Own the resident Hailo encoder and host tokenizer/embedding assets."""
+
     def __init__(self, device, hef_path, manager=None):
+        """Initialize MiniLM configuration and owned dependencies.
+
+        Args:
+            device (VDevice): Existing SHARED Hailo device owned by the backend thread.
+            hef_path (str | Path): Filesystem path to the selected HEF artifact.
+            manager (ModelManager | None): Model resolver for required encoder assets.
+
+        Returns:
+            None: Creates the object without running inference.
+
+        Raises:
+            ValueError: MiniLM embedding assets have unexpected shapes.
+        """
         from hailo_platform import FormatType
         from safetensors import safe_open
         from tokenizers import Tokenizer
 
         directory = Path(hef_path).parent
         manager = manager or ModelManager(Settings())
-        tokenizer_path = manager.resolve("minilm-tokenizer", "asset", directory / "minilm-tokenizer.json")
-        weights_path = manager.resolve("minilm-weights", "asset", directory / "minilm-model.safetensors")
+        tokenizer_path = manager.resolve(
+            "minilm-tokenizer", "asset", directory / "minilm-tokenizer.json"
+        )
+        weights_path = manager.resolve(
+            "minilm-weights", "asset", directory / "minilm-model.safetensors"
+        )
         self.tokenizer = Tokenizer.from_file(str(tokenizer_path))
         self.tokenizer.enable_truncation(max_length=128)
         self.tokenizer.enable_padding(length=128, pad_id=0, pad_token="[PAD]")
@@ -46,10 +64,24 @@ class MiniLM:
         except BaseException:
             self.config_context = None
             raise
-        self.artifacts = {"minilm_tokenizer": str(tokenizer_path), "minilm_weights": str(weights_path)}
+        self.artifacts = {
+            "minilm_tokenizer": str(tokenizer_path),
+            "minilm_weights": str(weights_path),
+        }
         _LOG.info("Loaded resident MiniLM HEF %s on Hailo SHARED device", hef_path)
 
     def embed(self, text):
+        """Encode text with host embeddings, resident MiniLM and masked pooling.
+
+        Args:
+            text (str): Text to parse, normalize, match or render.
+
+        Returns:
+            np.ndarray: L2-normalized 384-dimensional embedding vector.
+
+        Raises:
+            RuntimeError: Native inference or encoder bindings fail.
+        """
         encoded = self.tokenizer.encode(text)
         ids = np.asarray(encoded.ids, dtype=np.intp)
         mask = np.asarray(encoded.attention_mask, dtype=np.float32)
@@ -75,6 +107,14 @@ class MiniLM:
         return vector / max(float(norm), 1e-12)
 
     def close(self):
+        """Release resources owned by this service or native context.
+
+        Returns:
+            None: Closes native resources, connections or owner executors.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         if self.config_context is not None:
             self.config_context.__exit__(None, None, None)
             self.config_context = None

@@ -1,3 +1,5 @@
+"""Pydantic request models and input validation for public APIs."""
+
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
@@ -6,6 +8,24 @@ from .config import VLM_MODEL
 
 
 class ChatRequest(BaseModel):
+    """Validate OpenAI chat input, tool policy and generation limits.
+
+    Attributes:
+        model (str): Native model exposing tokenization/template methods, or a catalogue identifier. Default: VLM_MODEL.
+        messages (list[dict[str, Any]]): Ordered OpenAI or native conversation messages.
+        max_tokens (int): Maximum generated tokens reserved for the response.
+        max_input_tokens (int | None): Configured maximum input-token count before generation.
+        temperature (float): Temperature.
+        top_p (float | None): Top p.
+        seed (int): Seed.
+        stream (bool): Stream. Default: False.
+        user (str | None): User. Default: None.
+        language (str | None): Language code; None uses the configured or detected language.
+        tools (list[dict[str, Any]] | None): Client-provided OpenAI function schemas.
+        tool_choice (str | dict[str, Any] | None): Tool choice. Default: None.
+        parallel_tool_calls (bool): Whether multi-target output may expand into parallel function calls. Default: True.
+    """
+
     model_config = ConfigDict(extra="forbid")
     _request_id: str = PrivateAttr(default="-")
     _metrics: dict[str, Any] = PrivateAttr(default_factory=dict)
@@ -26,6 +46,17 @@ class ChatRequest(BaseModel):
     @field_validator("tools")
     @classmethod
     def check_tools(cls, tools):
+        """Validate OpenAI function definitions before accepting a chat request.
+
+        Args:
+            tools (list[dict[str, Any]] | None): Client-provided OpenAI function schemas.
+
+        Returns:
+            list[dict[str, Any]] | None: Original validated tools.
+
+        Notes:
+            No application-specific exceptions are raised for valid inputs.
+        """
         from .tool_calling import validate_tools
 
         validate_tools(tools or [])
@@ -36,6 +67,17 @@ class ChatRequest(BaseModel):
     def check_max_input_tokens(cls, value):
         # Local OpenAI LLM renders custom request-body values as template text.
         # Accept a decimal string such as "4096", but reject bools/floats.
+        """Accept integer input limits and decimal template strings.
+
+        Args:
+            value (Any): Input value inspected or normalized by this helper.
+
+        Returns:
+            int | None: Parsed integer limit, or None.
+
+        Raises:
+            ValueError: max_input_tokens must be an integer.
+        """
         if isinstance(value, bool):
             raise ValueError("max_input_tokens must be an integer")
         if isinstance(value, str):
@@ -49,17 +91,42 @@ class ChatRequest(BaseModel):
     @field_validator("tool_choice")
     @classmethod
     def check_tool_choice(cls, choice):
+        """Validate automatic, disabled, required or forced function selection.
+
+        Args:
+            choice (str | dict[str, Any] | None): OpenAI automatic, disabled, required or forced function choice.
+
+        Returns:
+            str | dict[str, Any] | None: Original validated choice.
+
+        Raises:
+            ValueError: Unsupported tool_choice.
+        """
         if choice is None or choice in ("auto", "none", "required"):
             return choice
-        if (isinstance(choice, dict) and choice.get("type") == "function"
-                and isinstance(choice.get("function"), dict)
-                and isinstance(choice["function"].get("name"), str)):
+        if (
+            isinstance(choice, dict)
+            and choice.get("type") == "function"
+            and isinstance(choice.get("function"), dict)
+            and isinstance(choice["function"].get("name"), str)
+        ):
             return choice
         raise ValueError("Unsupported tool_choice")
 
     @field_validator("messages")
     @classmethod
     def check_messages(cls, messages):
+        """Validate roles, content parts and historical function-call shapes.
+
+        Args:
+            messages (list[dict[str, Any]]): Ordered OpenAI or native conversation messages.
+
+        Returns:
+            list[dict[str, Any]]: Original validated message history.
+
+        Raises:
+            ValueError: Only text and base64 image_url parts are supported.
+        """
         for message in messages:
             if message.get("role") not in {"system", "user", "assistant", "tool"}:
                 raise ValueError("Only system/user/assistant/tool messages are supported")
@@ -96,13 +163,27 @@ class ChatRequest(BaseModel):
 
 
 class TranscribeRequest(BaseModel):
+    """Validate the JSON audio-transcription envelope.
+
+    Attributes:
+        audio_base64 (str): Base64-encoded recording or audio data URL.
+        language (str | None): Language code; None uses the configured or detected language.
+    """
+
     model_config = ConfigDict(extra="forbid")
     audio_base64: str
     language: str | None = Field(default=None, pattern=r"^[a-z]{2}$")
 
 
 class VisionDetectRequest(BaseModel):
-    """OpenAI-style JSON envelope for resident object detection."""
+    """OpenAI-style JSON envelope for resident object detection.
+
+    Attributes:
+        model (str | None): Native model exposing tokenization/template methods, or a catalogue identifier. Default: None.
+        image (str): Image.
+        confidence (float | None): Detection score threshold; None uses service settings.
+        max_detections (int | None): Max detections.
+    """
 
     model_config = ConfigDict(extra="forbid")
     model: str | None = None

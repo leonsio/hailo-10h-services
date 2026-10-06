@@ -10,6 +10,18 @@ def slot_rankings(text, values, *, threshold=90.0, margin=8.0):
 
     Scores measure character similarity, not calibrated probabilities. Threshold
     and runner-up margin control when a correction can be used without inference.
+
+    Args:
+        text (str): Text to parse, normalize, match or render.
+        values (Iterable[str]): Actual catalogue names and areas eligible for slot repair.
+        threshold (float): Minimum fuzzy score or detection confidence for acceptance.
+        margin (float): Required distance between the best and runner-up fuzzy score.
+
+    Returns:
+        list[dict[str, Any]]: Span repairs with scores, runner-up candidates and ambiguity flags.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
     """
     words = list(re.finditer(r"\w+", text, re.UNICODE))
     values = sorted(set(value for value in values if value))
@@ -51,6 +63,19 @@ def slot_rankings(text, values, *, threshold=90.0, margin=8.0):
 
 
 def slot_repairs(text, values, *, threshold=90.0, margin=8.0):
-    """Repair only one uniquely ranked catalogue span; defer ties to inference."""
+    """Repair only one uniquely ranked catalogue span; defer ties to inference.
+
+    Args:
+        text (str): Text to parse, normalize, match or render.
+        values (Iterable[str]): Actual catalogue names and areas eligible for slot repair.
+        threshold (float): Minimum fuzzy score or detection confidence for acceptance.
+        margin (float): Required distance between the best and runner-up fuzzy score.
+
+    Returns:
+        list[dict[str, Any]]: Single safe repair, or an empty list when absent/ambiguous.
+
+    Notes:
+        No application-specific exceptions are raised for valid inputs.
+    """
     repairs = slot_rankings(text, values, threshold=threshold, margin=margin)
     return repairs if len(repairs) == 1 and not repairs[0]["ambiguous"] else []

@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from hailo_services.app import create_app
+from hailo_services.chat_hailo_vlm import model_prompt
 from hailo_services.config import HA_ASSIST_MODEL, LLM_MODEL, Settings
 from hailo_services.ha_fuzzy import slot_repairs
 from hailo_services.ha_intents import deterministic_intent
@@ -14,7 +15,6 @@ from hailo_services.runtime import HailoBackend, LiteRTLMBackend
 from hailo_services.schemas import ChatRequest
 from hailo_services.tool_calling import response_message
 from hailo_services.tool_retrieval import retrieve_tools
-from hailo_services.vlm_chat import model_prompt
 
 SYSTEM = """Home Assistant
 Static Context:
@@ -34,23 +34,40 @@ Static Context:
 
 
 def tool(name, **properties):
-    return {"type": "function", "function": {"name": name, "parameters": {
-        "type": "object", "properties": {
-            "area": {"type": "string"}, "name": {"type": "string"},
-            "domain": {"type": "array", "items": {"type": "string"}}, **properties},
-        "additionalProperties": False}}}
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "area": {"type": "string"},
+                    "name": {"type": "string"},
+                    "domain": {"type": "array", "items": {"type": "string"}},
+                    **properties,
+                },
+                "additionalProperties": False,
+            },
+        },
+    }
 
 
-TOOLS = [tool("intent__HassTurnOn"), tool("intent__HassTurnOff"),
-         tool("light__HassLightSet", brightness={"type": "integer", "minimum": 0, "maximum": 100}),
-         tool("intent__HassSetPosition", position={"type": "integer", "minimum": 0, "maximum": 100}),
-         tool("climate__HassClimateSetTemperature", temperature={"type": "number"})]
+TOOLS = [
+    tool("intent__HassTurnOn"),
+    tool("intent__HassTurnOff"),
+    tool("light__HassLightSet", brightness={"type": "integer", "minimum": 0, "maximum": 100}),
+    tool("intent__HassSetPosition", position={"type": "integer", "minimum": 0, "maximum": 100}),
+    tool("climate__HassClimateSetTemperature", temperature={"type": "number"}),
+]
 
 
 def payload(text="Mach das Licht im Wohnzimmer aus", model=HA_ASSIST_MODEL, **extra):
-    return {"model": model, "messages": [{"role": "system", "content": SYSTEM},
-                                           {"role": "user", "content": text}],
-            "tools": copy.deepcopy(TOOLS), **extra}
+    return {
+        "model": model,
+        "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": text}],
+        "tools": copy.deepcopy(TOOLS),
+        **extra,
+    }
 
 
 class Backend(HailoBackend):
@@ -98,8 +115,9 @@ class LLM:
 
 @pytest.fixture
 def service():
-    settings = Settings(litert_enabled=True, wyoming_port=0, minilm_enabled=False,
-                        whisper_enabled=False)
+    settings = Settings(
+        litert_enabled=True, wyoming_port=0, minilm_enabled=False, whisper_enabled=False
+    )
     backend, llm = Backend(settings), LLM()
     with TestClient(create_app(settings, backend, llm)) as client:
         yield client, backend, llm
@@ -112,13 +130,26 @@ def test_catalogue_and_status(service):
     assert HA_ASSIST_MODEL in client.get("/ui/config").json()["vision_models"]
 
 
-@pytest.mark.parametrize("text,tool_name,key,value", [
-    ("Mach das Licht im Wohnzimmer aus", "intent__HassTurnOff", "area", "Wohnzimmer"),
-    ("Mach das Licht im Wohnzimer aus", "intent__HassTurnOff", "area", "Wohnzimmer"),
-    ("Stelle das Licht im Wohnzimmer auf 40 Prozent", "light__HassLightSet", "brightness", 40),
-    ("Stelle den Rollladen im Wohnzimmer auf 60 Prozent", "intent__HassSetPosition", "position", 60),
-    ("Stelle die Temperatur im Wohnzimmer auf 22 Grad", "climate__HassClimateSetTemperature", "temperature", 22),
-])
+@pytest.mark.parametrize(
+    "text,tool_name,key,value",
+    [
+        ("Mach das Licht im Wohnzimmer aus", "intent__HassTurnOff", "area", "Wohnzimmer"),
+        ("Mach das Licht im Wohnzimer aus", "intent__HassTurnOff", "area", "Wohnzimmer"),
+        ("Stelle das Licht im Wohnzimmer auf 40 Prozent", "light__HassLightSet", "brightness", 40),
+        (
+            "Stelle den Rollladen im Wohnzimmer auf 60 Prozent",
+            "intent__HassSetPosition",
+            "position",
+            60,
+        ),
+        (
+            "Stelle die Temperatur im Wohnzimmer auf 22 Grad",
+            "climate__HassClimateSetTemperature",
+            "temperature",
+            22,
+        ),
+    ],
+)
 def test_hassil_direct_calls_without_inference(service, text, tool_name, key, value):
     client, backend, llm = service
     result = client.post("/v1/chat/completions", json=payload(text)).json()
@@ -149,7 +180,10 @@ def test_plain_requests_preserve_messages_and_tools_without_selection(service, m
 @pytest.mark.parametrize("stream", [False, True])
 def test_general_text_uses_one_llm_and_retains_virtual_response_name(service, stream):
     client, backend, llm = service
-    result = client.post("/v1/chat/completions", json=payload("Was ist die Hauptstadt von Frankreich?", stream=stream))
+    result = client.post(
+        "/v1/chat/completions",
+        json=payload("Was ist die Hauptstadt von Frankreich?", stream=stream),
+    )
     assert result.status_code == 200
     assert len(llm.calls) == 1 and not backend.calls
     assert llm.calls[0].model == LLM_MODEL
@@ -161,9 +195,20 @@ def test_general_text_uses_one_llm_and_retains_virtual_response_name(service, st
 def completed_light_turn():
     return [
         {"role": "user", "content": "Mach das Licht im Wohnzimmer aus"},
-        {"role": "assistant", "content": None, "tool_calls": [{
-            "id": "old_action", "type": "function", "function": {
-                "name": "intent__HassTurnOff", "arguments": '{"area":"Wohnzimmer","domain":["light"]}'}}]},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "old_action",
+                    "type": "function",
+                    "function": {
+                        "name": "intent__HassTurnOff",
+                        "arguments": '{"area":"Wohnzimmer","domain":["light"]}',
+                    },
+                }
+            ],
+        },
         {"role": "tool", "tool_call_id": "old_action", "content": '{"success":true}'},
         {"role": "assistant", "content": "Erledigt."},
     ]
@@ -188,14 +233,18 @@ def test_percent_path_after_completed_action(service, stream):
 def test_general_followup_keeps_geography_but_retires_house_actions(service):
     client, _, llm = service
     body = payload("Welche Sehenswürdigkeiten gibt es dort?")
-    geography = [{"role": "user", "content": "Was ist die Hauptstadt von Portugal?"},
-                 {"role": "assistant", "content": "Lisboa."}]
+    geography = [
+        {"role": "user", "content": "Was ist die Hauptstadt von Portugal?"},
+        {"role": "assistant", "content": "Lisboa."},
+    ]
     body["messages"][1:1] = geography + completed_light_turn()
     response = client.post("/v1/chat/completions", json=body)
     assert response.status_code == 200
     assert len(llm.calls) == 1
     assert llm.calls[0].tools is None
-    assert [m for m in llm.calls[0].messages if m["role"] != "system"] == geography + body["messages"][-1:]
+    assert [m for m in llm.calls[0].messages if m["role"] != "system"] == geography + body[
+        "messages"
+    ][-1:]
     assert all("Static Context:" not in str(m) for m in llm.calls[0].messages)
 
 
@@ -205,7 +254,8 @@ def test_house_prompt_is_compiled_without_finished_history(service):
     body["tools"][2]["function"]["parameters"]["properties"]["color"] = {"type": "string"}
     body["messages"][1:1] = completed_light_turn() + [
         {"role": "user", "content": "Was ist die Hauptstadt von Portugal?"},
-        {"role": "assistant", "content": "Lisboa."}]
+        {"role": "assistant", "content": "Lisboa."},
+    ]
     response = client.post("/v1/chat/completions", json=body)
     assert response.status_code == 200
     assert len(llm.calls) == 1
@@ -219,8 +269,10 @@ def test_house_prompt_is_compiled_without_finished_history(service):
 def test_image_bypasses_text_shortcuts_and_uses_one_vlm(service):
     client, backend, llm = service
     body = payload()
-    body["messages"][-1]["content"] = [{"type": "text", "text": "Mach das Licht im Wohnzimmer aus"},
-                                         {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}]
+    body["messages"][-1]["content"] = [
+        {"type": "text", "text": "Mach das Licht im Wohnzimmer aus"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+    ]
     result = client.post("/v1/chat/completions", json=body).json()
     assert result["metrics"]["ha_route"]["route"] == "vlm"
     assert len(backend.calls) == 1 and not llm.calls and not backend.selections
@@ -230,8 +282,13 @@ def test_image_bypasses_text_shortcuts_and_uses_one_vlm(service):
 
 
 def test_text_target_can_be_native_hailo_llm():
-    settings = Settings(hailo_llm_enabled=True, ha_assist_text_model="Qwen2.5-1.5B-Instruct",
-                        wyoming_port=0, minilm_enabled=False, whisper_enabled=False)
+    settings = Settings(
+        hailo_llm_enabled=True,
+        ha_assist_text_model="Qwen2.5-1.5B-Instruct",
+        wyoming_port=0,
+        minilm_enabled=False,
+        whisper_enabled=False,
+    )
     backend = Backend(settings)
     with TestClient(create_app(settings, backend)) as client:
         response = client.post("/v1/chat/completions", json=payload("Erkläre Relativität"))
@@ -249,9 +306,14 @@ def test_failed_llm_never_falls_back_to_vlm():
         assert len(llm.calls) == 1 and not backend.calls
 
 
-@pytest.mark.parametrize("settings", [Settings(ha_assist_enabled=False),
-                                       Settings(ha_assist_text_model=Settings().vlm_model),
-                                       Settings(ha_assist_text_model="unknown")])
+@pytest.mark.parametrize(
+    "settings",
+    [
+        Settings(ha_assist_enabled=False),
+        Settings(ha_assist_text_model=Settings().vlm_model),
+        Settings(ha_assist_text_model="unknown"),
+    ],
+)
 def test_disabled_or_wrong_role_rejects_without_model_calls(settings):
     backend = Backend(settings)
     with TestClient(create_app(settings, backend)) as client:
@@ -259,11 +321,16 @@ def test_disabled_or_wrong_role_rejects_without_model_calls(settings):
         assert not backend.calls
 
 
-@pytest.mark.parametrize("text", ["Schalte das Licht im Wohnzimmer nicht aus",
-                                   "Mach das Licht im Wohnzimmer aus und die Heizung an",
-                                   "Wenn es dunkel ist mach das Licht im Wohnzimmer an",
-                                   "Schalte die Deckenlampe und Stehlampe aus",
-                                   "Stelle das Licht im Wohnzimmer auf 140 Prozent"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Schalte das Licht im Wohnzimmer nicht aus",
+        "Mach das Licht im Wohnzimmer aus und die Heizung an",
+        "Wenn es dunkel ist mach das Licht im Wohnzimmer an",
+        "Schalte die Deckenlampe und Stehlampe aus",
+        "Stelle das Licht im Wohnzimmer auf 140 Prozent",
+    ],
+)
 def test_negation_conditional_composite_and_out_of_range_do_not_match(text):
     response, trace = deterministic_intent(ChatRequest(**payload(text)), Settings(), "de")
     assert response is None, trace
@@ -288,8 +355,16 @@ def test_tool_choice_and_schema_constraints(service):
 
 def test_plain_output_is_not_repaired_as_ha_area_target():
     request = ChatRequest(**payload(model=LLM_MODEL))
-    response = {"tool_calls": [{"function": {"name": "intent__HassTurnOff",
-                                             "arguments": {"name": "Deckenlampe", "domain": ["light"]}}}]}
+    response = {
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "intent__HassTurnOff",
+                    "arguments": {"name": "Deckenlampe", "domain": ["light"]},
+                }
+            }
+        ]
+    }
     call = response_message(response, request, "")["tool_calls"][0]
     assert json.loads(call["function"]["arguments"])["name"] == "Deckenlampe"
     object.__setattr__(request, "_ha_assist", True)
@@ -299,13 +374,38 @@ def test_plain_output_is_not_repaired_as_ha_area_target():
 
 def test_plain_litert_tool_followup_reaches_engine_instead_of_acknowledgement(monkeypatch):
     body = payload(model=LLM_MODEL)
-    body["messages"].extend([
-        {"role": "assistant", "content": None, "tool_calls": [{"id": "a", "type": "function",
-         "function": {"name": "intent__HassTurnOn", "arguments": '{"name":"Deckenlampe"}'}}]},
-        {"role": "tool", "tool_call_id": "a", "content": json.dumps({"response_type": "action_done",
-         "data": {"success": [{"name": "Deckenlampe"}], "failed": []}})}])
+    body["messages"].extend(
+        [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "a",
+                        "type": "function",
+                        "function": {
+                            "name": "intent__HassTurnOn",
+                            "arguments": '{"name":"Deckenlampe"}',
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "a",
+                "content": json.dumps(
+                    {
+                        "response_type": "action_done",
+                        "data": {"success": [{"name": "Deckenlampe"}], "failed": []},
+                    }
+                ),
+            },
+        ]
+    )
     calls = []
-    monkeypatch.setattr(LiteRTLMBackend, "_chat", lambda self, req, *args: calls.append(req) or "native")
+    monkeypatch.setattr(
+        LiteRTLMBackend, "_chat", lambda self, req, *args: calls.append(req) or "native"
+    )
     assert LiteRTLMBackend("/unused").chat(ChatRequest(**body)) == "native"
     assert len(calls) == 1
 
@@ -324,10 +424,25 @@ def test_tool_retrieval_stable_ties_and_preserves_history_schema():
 def live_history(question, content):
     body = payload(question)
     body["tools"].append(tool("homeassistant__GetLiveContext"))
-    body["messages"].extend([
-        {"role": "assistant", "content": None, "tool_calls": [{"id": "read", "type": "function",
-         "function": {"name": "homeassistant__GetLiveContext", "arguments": '{"domain":["light"]}'}}]},
-        {"role": "tool", "tool_call_id": "read", "content": json.dumps(content)}])
+    body["messages"].extend(
+        [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "read",
+                        "type": "function",
+                        "function": {
+                            "name": "homeassistant__GetLiveContext",
+                            "arguments": '{"domain":["light"]}',
+                        },
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "read", "content": json.dumps(content)},
+        ]
+    )
     return body
 
 
@@ -344,11 +459,39 @@ def test_action_done_still_verifies_state_without_a_model(service):
     client, backend, llm = service
     body = payload()
     body["tools"].append(tool("homeassistant__GetLiveContext"))
-    body["messages"].extend([
-        {"role": "assistant", "content": None, "tool_calls": [{"id": "action", "type": "function",
-         "function": {"name": "intent__HassTurnOff", "arguments": '{"name":"Deckenlampe","domain":["light"]}'}}]},
-        {"role": "tool", "tool_call_id": "action", "content": json.dumps({"response_type": "action_done",
-         "data": {"success": [{"name": "Deckenlampe", "type": "entity", "id": "light.deckenlampe"}], "failed": []}})}])
+    body["messages"].extend(
+        [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "action",
+                        "type": "function",
+                        "function": {
+                            "name": "intent__HassTurnOff",
+                            "arguments": '{"name":"Deckenlampe","domain":["light"]}',
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "action",
+                "content": json.dumps(
+                    {
+                        "response_type": "action_done",
+                        "data": {
+                            "success": [
+                                {"name": "Deckenlampe", "type": "entity", "id": "light.deckenlampe"}
+                            ],
+                            "failed": [],
+                        },
+                    }
+                ),
+            },
+        ]
+    )
     result = client.post("/v1/chat/completions", json=body).json()
     function = result["choices"][0]["message"]["tool_calls"][0]["function"]
     assert function["name"] == "homeassistant__GetLiveContext"
@@ -359,9 +502,20 @@ def test_action_done_still_verifies_state_without_a_model(service):
 def test_unmatched_tool_history_cannot_take_a_direct_action(service):
     client, backend, llm = service
     body = payload()
-    body["messages"].insert(1, {"role": "assistant", "content": None, "tool_calls": [
-        {"id": "pending", "type": "function", "function": {
-            "name": "intent__HassTurnOn", "arguments": "{}"}}]})
+    body["messages"].insert(
+        1,
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "pending",
+                    "type": "function",
+                    "function": {"name": "intent__HassTurnOn", "arguments": "{}"},
+                }
+            ],
+        },
+    )
     assert client.post("/v1/chat/completions", json=body).status_code == 400
     assert not backend.calls and not llm.calls
 
@@ -370,9 +524,16 @@ def test_unmatched_tool_history_cannot_take_a_direct_action(service):
 def test_image_in_history_keeps_same_vision_target(service, stream):
     client, backend, llm = service
     body = payload("Und was siehst du rechts?", stream=stream)
-    body["messages"].insert(1, {"role": "user", "content": [
-        {"type": "text", "text": "Betrachte dieses Bild"},
-        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}]})
+    body["messages"].insert(
+        1,
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Betrachte dieses Bild"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+            ],
+        },
+    )
     body["messages"].insert(2, {"role": "assistant", "content": "Ein Raum"})
     response = client.post("/v1/chat/completions", json=body)
     assert response.status_code == 200
@@ -381,10 +542,13 @@ def test_image_in_history_keeps_same_vision_target(service, stream):
     assert "HA-Assist" in response.text
 
 
-@pytest.mark.parametrize("language,area,query", [
-    ("en", "Living Room", "turn off the lights in the living room"),
-    ("ru", "гостиной", "выключи свет в гостиной"),
-])
+@pytest.mark.parametrize(
+    "language,area,query",
+    [
+        ("en", "Living Room", "turn off the lights in the living room"),
+        ("ru", "гостиной", "выключи свет в гостиной"),
+    ],
+)
 def test_official_grammar_uses_request_language_and_dynamic_areas(language, area, query):
     body = payload(query)
     body["messages"][0]["content"] = SYSTEM.replace("Wohnzimmer", area)
@@ -397,7 +561,9 @@ def test_official_grammar_uses_request_language_and_dynamic_areas(language, area
 
 def test_configuration_env_overrides_yaml_targets(tmp_path, monkeypatch):
     path = tmp_path / "service.yaml"
-    path.write_text("settings:\n  ha_assist_text_model: gemma-4-E2B-it\n  ha_assist_fuzzy_enabled: true\n")
+    path.write_text(
+        "settings:\n  ha_assist_text_model: gemma-4-E2B-it\n  ha_assist_fuzzy_enabled: true\n"
+    )
     monkeypatch.setenv("HAILO_CONFIG", str(path))
     monkeypatch.setenv("HAILO_HA_ASSIST_TEXT_MODEL", "Qwen3-1.7B-Instruct")
     monkeypatch.setenv("HAILO_HA_ASSIST_FUZZY_ENABLED", "false")
@@ -409,12 +575,14 @@ def test_configuration_env_overrides_yaml_targets(tmp_path, monkeypatch):
 
 
 def test_optional_image_tools_can_return_a_validated_description(service):
-    from hailo_services.vlm_chat import tool_response
+    from hailo_services.chat_hailo_vlm import tool_response
 
     client, backend, _ = service
     body = payload()
-    body["messages"][-1]["content"] = [{"type": "text", "text": "Was siehst du?"},
-         {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}]
+    body["messages"][-1]["content"] = [
+        {"type": "text", "text": "Was siehst du?"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+    ]
     client.post("/v1/chat/completions", json=body)
     req = backend.calls[0]
     prompt = model_prompt(req)
@@ -425,119 +593,154 @@ def test_optional_image_tools_can_return_a_validated_description(service):
         tool_response('{"content":"Ein heller Raum."}', required)
 
 
-@pytest.mark.parametrize('text,tool_name,key,value', [
-    ('schalte das Licht in der Kuche aus', 'intent__HassTurnOff', 'area', 'Küche'),
-    ('Schalte das Licht in Wonzimmer auf 90%', 'light__HassLightSet', 'brightness', 90),
-    ('schalte das Licht im Wohnzimmer auf 70', 'light__HassLightSet', 'brightness', 70),
-    ('schalte das Lecht im Wohnzimmer auf 70%', 'light__HassLightSet', 'brightness', 70),
-])
+@pytest.mark.parametrize(
+    "text,tool_name,key,value",
+    [
+        ("schalte das Licht in der Kuche aus", "intent__HassTurnOff", "area", "Küche"),
+        ("Schalte das Licht in Wonzimmer auf 90%", "light__HassLightSet", "brightness", 90),
+        ("schalte das Licht im Wohnzimmer auf 70", "light__HassLightSet", "brightness", 70),
+        ("schalte das Lecht im Wohnzimmer auf 70%", "light__HassLightSet", "brightness", 70),
+    ],
+)
 def test_canonical_slots_avoid_gemma(service, text, tool_name, key, value):
     client, backend, llm = service
     body = payload(text)
-    body['messages'][0]['content'] += '\n- names: Küchenlampe\n  domain: light\n  areas: Küche\n'
-    result = client.post('/v1/chat/completions', json=body).json()
-    function = result['choices'][0]['message']['tool_calls'][0]['function']
-    assert function['name'] == tool_name
-    assert json.loads(function['arguments'])[key] == value
+    body["messages"][0]["content"] += "\n- names: Küchenlampe\n  domain: light\n  areas: Küche\n"
+    result = client.post("/v1/chat/completions", json=body).json()
+    function = result["choices"][0]["message"]["tool_calls"][0]["function"]
+    assert function["name"] == tool_name
+    assert json.loads(function["arguments"])[key] == value
     assert not backend.calls and not llm.calls
-    assert result['metrics']['ha_plan']['canonical']
+    assert result["metrics"]["ha_plan"]["canonical"]
 
 
 def test_unresolved_area_asks_without_model_or_device_guess(service):
     client, backend, llm = service
-    body = payload('schalte das Licht in der Unbekannt aus')
-    result = client.post('/v1/chat/completions', json=body).json()
-    assert 'tool_calls' not in result['choices'][0]['message']
-    assert 'genau' in result['choices'][0]['message']['content']
+    body = payload("schalte das Licht in der Unbekannt aus")
+    result = client.post("/v1/chat/completions", json=body).json()
+    assert "tool_calls" not in result["choices"][0]["message"]
+    assert "genau" in result["choices"][0]["message"]["content"]
     assert not backend.calls and not llm.calls
 
 
 def test_tool_error_has_no_gemma_followup(service):
     client, backend, llm = service
-    body = payload('schalte das Licht im Wohnzimmer auf 90%')
-    body['messages'] += [
-        {'role': 'assistant', 'content': None, 'tool_calls': [{
-            'id': 'failure', 'type': 'function', 'function': {
-                'name': 'light__HassLightSet', 'arguments': '{"area":"Wohnzimmer","brightness":90}'}}]},
-        {'role': 'tool', 'tool_call_id': 'failure', 'content': '{"error":"InvalidSlotInfo"}'},
+    body = payload("schalte das Licht im Wohnzimmer auf 90%")
+    body["messages"] += [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "failure",
+                    "type": "function",
+                    "function": {
+                        "name": "light__HassLightSet",
+                        "arguments": '{"area":"Wohnzimmer","brightness":90}',
+                    },
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "failure", "content": '{"error":"InvalidSlotInfo"}'},
     ]
-    result = client.post('/v1/chat/completions', json=body).json()
-    assert 'nicht erfolgreich' in result['choices'][0]['message']['content']
+    result = client.post("/v1/chat/completions", json=body).json()
+    assert "nicht erfolgreich" in result["choices"][0]["message"]["content"]
     assert not backend.calls and not llm.calls
 
 
 def test_catalogue_cache_updates_and_does_not_leak_mutations():
-    from hailo_services.ha_request_plan import catalogue, _catalogue
+    from hailo_services.ha_request_plan import _catalogue, catalogue
+
     _catalogue.cache_clear()
-    messages = payload()['messages']
+    messages = payload()["messages"]
     first = catalogue(messages)
-    first[0]['name'] = 'corrupted'
-    assert catalogue(messages)[0]['name'] == 'Deckenlampe'
+    first[0]["name"] = "corrupted"
+    assert catalogue(messages)[0]["name"] == "Deckenlampe"
     assert _catalogue.cache_info().hits == 1
     changed = copy.deepcopy(messages)
-    changed[0]['content'] = changed[0]['content'].replace('Deckenlampe', 'Neue Lampe')
-    assert catalogue(changed)[0]['name'] == 'Neue Lampe'
+    changed[0]["content"] = changed[0]["content"].replace("Deckenlampe", "Neue Lampe")
+    assert catalogue(changed)[0]["name"] == "Neue Lampe"
     assert _catalogue.cache_info().misses == 2
 
 
 def test_wrong_model_target_or_percent_color_is_rejected():
     from hailo_services.ha_request_plan import canonical_request
-    request = ChatRequest(**payload('schalte das Licht im Wohnzimmer auf 90%'))
-    object.__setattr__(request, '_ha_assist', True)
+
+    request = ChatRequest(**payload("schalte das Licht im Wohnzimmer auf 90%"))
+    object.__setattr__(request, "_ha_assist", True)
     request = canonical_request(request, Settings())
-    request.tools[2]['function']['parameters']['properties']['color'] = {'type': 'string'}
-    response = {'tool_calls': [{'function': {'name': 'light__HassLightSet',
-                'arguments': {'color': '90%', 'name': 'Heizung'}}}]}
-    result = response_message(response, request, '')
+    request.tools[2]["function"]["parameters"]["properties"]["color"] = {"type": "string"}
+    response = {
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "light__HassLightSet",
+                    "arguments": {"color": "90%", "name": "Heizung"},
+                }
+            }
+        ]
+    }
+    result = response_message(response, request, "")
     assert isinstance(result, str)
-    assert request._metrics['ha_validation']['accepted'] is False
+    assert request._metrics["ha_validation"]["accepted"] is False
 
 
-@pytest.mark.parametrize('text', [
-    'schalte das Licht im Wohnzimmer um 20% heller',
-    'schalte das Licht im Wohnzimmer auf 70% und die Heizung aus',
-    'schalte das Licht im Wohnzimmer auf 120%',
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "schalte das Licht im Wohnzimmer um 20% heller",
+        "schalte das Licht im Wohnzimmer auf 70% und die Heizung aus",
+        "schalte das Licht im Wohnzimmer auf 120%",
+    ],
+)
 def test_canonical_percent_does_not_execute_uncertain_commands(service, text):
     client, _, llm = service
-    result = client.post('/v1/chat/completions', json=payload(text))
+    result = client.post("/v1/chat/completions", json=payload(text))
     assert result.status_code == 200
     assert len(llm.calls) == 1
 
 
 def test_embedding_cache_is_bounded_and_reuses_vectors():
     from hailo_services.tool_retrieval import _embedding
+
     class Encoder:
         calls = 0
+
         def embed(self, text):
             self.calls += 1
             return [len(text)]
+
     encoder, cache = Encoder(), {}
-    assert _embedding(encoder, 'same', cache) == _embedding(encoder, 'same', cache)
+    assert _embedding(encoder, "same", cache) == _embedding(encoder, "same", cache)
     assert encoder.calls == 1
     for index in range(600):
         _embedding(encoder, str(index), cache)
     assert len(cache) == 512
 
 
-@pytest.mark.parametrize('area,typo', [('Wohnzimmer', 'Wonzimmer'),
-                                      ('Wohnzimmer', 'Wohnzimer'),
-                                      ('Arbeitszimmer', 'Arbetszimmer'),
-                                      ('Bibliothek', 'Bibliotehk')])
+@pytest.mark.parametrize(
+    "area,typo",
+    [
+        ("Wohnzimmer", "Wonzimmer"),
+        ("Wohnzimmer", "Wohnzimer"),
+        ("Arbeitszimmer", "Arbetszimmer"),
+        ("Bibliothek", "Bibliotehk"),
+    ],
+)
 def test_catalogue_spelling_is_universal(service, area, typo):
     client, backend, llm = service
-    body = payload(f'Schalte das Licht im {typo} auf 70%')
-    body['messages'][0]['content'] = SYSTEM.replace('Wohnzimmer', area)
-    result = client.post('/v1/chat/completions', json=body).json()
-    function = result['choices'][0]['message']['tool_calls'][0]['function']
-    assert json.loads(function['arguments'])['area'] == area
+    body = payload(f"Schalte das Licht im {typo} auf 70%")
+    body["messages"][0]["content"] = SYSTEM.replace("Wohnzimmer", area)
+    result = client.post("/v1/chat/completions", json=body).json()
+    function = result["choices"][0]["message"]["tool_calls"][0]["function"]
+    assert json.loads(function["arguments"])["area"] == area
     assert not backend.calls and not llm.calls
 
 
 def test_equal_catalogue_scores_use_one_llm_with_candidates(service):
     client, backend, llm = service
-    body = payload('Schalte das Licht im ArbeitsraumC auf 70%')
-    body['messages'][0]['content'] = '''Home Assistant
+    body = payload("Schalte das Licht im ArbeitsraumC auf 70%")
+    body["messages"][0]["content"] = """Home Assistant
 Static Context:
 - names: Leuchte A
   domain: light
@@ -548,27 +751,31 @@ Static Context:
 - names: Andere Leuchte
   domain: light
   areas: Garten
-'''
-    result = client.post('/v1/chat/completions', json=body).json()
+"""
+    result = client.post("/v1/chat/completions", json=body).json()
     assert len(llm.calls) == 1 and not backend.calls
     request = llm.calls[0]
-    candidates = request._ha_plan['target_candidates']
-    assert {c['value'] for c in candidates} == {'ArbeitsraumA', 'ArbeitsraumB'}
-    assert len({c['score'] for c in candidates}) == 1
-    assert request.messages[-1]['content'] == body['messages'][-1]['content']
-    assert 'Andere Leuchte' not in request.messages[0]['content']
-    parameters = request.tools[0]['function']['parameters']['properties']
-    assert parameters['area']['enum'] == ['ArbeitsraumA', 'ArbeitsraumB']
-    assert 'brightness' in parameters and 'color' not in parameters
+    candidates = request._ha_plan["target_candidates"]
+    assert {c["value"] for c in candidates} == {"ArbeitsraumA", "ArbeitsraumB"}
+    assert len({c["score"] for c in candidates}) == 1
+    assert request.messages[-1]["content"] == body["messages"][-1]["content"]
+    assert "Andere Leuchte" not in request.messages[0]["content"]
+    parameters = request.tools[0]["function"]["parameters"]["properties"]
+    assert parameters["area"]["enum"] == ["ArbeitsraumA", "ArbeitsraumB"]
+    assert "brightness" in parameters and "color" not in parameters
     from hailo_services.ha_request_plan import validate_action
-    assert validate_action(request, 'light__HassLightSet', {'area': 'ArbeitsraumA', 'brightness': 70})
-    assert not validate_action(request, 'light__HassLightSet', {'area': 'Garten', 'brightness': 70})
-    assert result['metrics']['ha_plan']['target_resolution'] == 'llm'
+
+    assert validate_action(
+        request, "light__HassLightSet", {"area": "ArbeitsraumA", "brightness": 70}
+    )
+    assert not validate_action(request, "light__HassLightSet", {"area": "Garten", "brightness": 70})
+    assert result["metrics"]["ha_plan"]["target_resolution"] == "llm"
 
 
 def test_close_runner_up_is_retained_even_below_acceptance_threshold():
     from hailo_services.ha_fuzzy import slot_rankings
-    matches = slot_rankings('Licht im ArbeitsraumC an', ['ArbeitsraumA', 'ArbeitsraumAB'])
-    assert len(matches) == 1 and matches[0]['ambiguous']
-    assert {c['value'] for c in matches[0]['candidates']} == {'ArbeitsraumA', 'ArbeitsraumAB'}
-    assert not slot_repairs('Licht im ArbeitsraumC an', ['ArbeitsraumA', 'ArbeitsraumAB'])
+
+    matches = slot_rankings("Licht im ArbeitsraumC an", ["ArbeitsraumA", "ArbeitsraumAB"])
+    assert len(matches) == 1 and matches[0]["ambiguous"]
+    assert {c["value"] for c in matches[0]["candidates"]} == {"ArbeitsraumA", "ArbeitsraumAB"}
+    assert not slot_repairs("Licht im ArbeitsraumC an", ["ArbeitsraumA", "ArbeitsraumAB"])

@@ -1,16 +1,32 @@
 "use strict";
+/** @param {string} id DOM identifier. @returns {HTMLElement|null} Matching element. */
 const $ = (id) => document.getElementById(id);
 let config, history = [], chatBusy = false, audioBusy = false;
 let audioBlob = null, audioName = "aufnahme.wav", audioURL = null, imageURL = null;
 let recording = null, starting = false, stopping = false, pageHidden = false;
 
 let uiLanguage = "de", uiStrings = {}, uiChoice = "auto", languageNames = {};
+/**
+ * Format a translated UI string with named placeholder values.
+ * @param {string} key Translation key.
+ * @param {Object<string, *>} [values] Placeholder substitutions.
+ * @returns {string} Localized text or the original key.
+ */
 function tr(key, values = {}) {
   return (uiStrings[key] || key).replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ""));
 }
+/**
+ * Read the persisted UI language preference when browser storage is available.
+ * @returns {string|null} Saved preference, or null when unavailable.
+ */
 function savedChoice() {
   try { return localStorage.getItem("hailo-ui-language") || "auto"; } catch { return "auto"; }
 }
+/**
+ * Resolve an explicit or automatic language choice to a supported locale.
+ * @param {string} choice Selected preference or auto.
+ * @returns {string} Supported locale code.
+ */
 function chooseLanguage(choice) {
   const supported = config?.ui_languages || ["de", "en", "ru"];
   if (supported.includes(choice)) return choice;
@@ -20,6 +36,11 @@ function chooseLanguage(choice) {
   }
   return config?.service_language || "de";
 }
+/**
+ * Load localized UI labels and refresh language-dependent controls.
+ * @param {string} choice Language preference.
+ * @returns {Promise<void>} Resolves after the UI catalogue is applied.
+ */
 async function loadLanguage(choice) {
   const language = chooseLanguage(choice);
   const response = await fetch(`ui/locales/${language}.json`);
@@ -43,14 +64,31 @@ $("ui-language").addEventListener("change", async () => {
   catch (error) { note("status-note", error.message, true); }
 });
 
+/**
+ * Display a localized status or error in a named UI element.
+ * @param {string} id DOM element identifier.
+ * @param {string} text Status text.
+ * @param {boolean} [error=false] Whether to use error styling.
+ * @returns {void}
+ */
 function note(id, text, error = false) {
   $(id).textContent = text;
   $(id).classList.toggle("error", error);
 }
+/**
+ * Build request headers using the current API key.
+ * @returns {Object<string, string>} JSON and optional Bearer authorization headers.
+ */
 function headers() {
   const key = $("api-key").value.trim();
   return key ? { Authorization: `Bearer ${key}` } : {};
 }
+/**
+ * Send an authenticated API request and decode its JSON response.
+ * @param {string} path Relative API path.
+ * @param {RequestInit} [options] Fetch request options.
+ * @returns {Promise<Object>} Decoded response; rejects on HTTP errors.
+ */
 async function request(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { ...headers(), ...options.headers } });
   const data = await response.json().catch(() => ({}));
@@ -61,16 +99,34 @@ async function request(path, options = {}) {
   }
   return data;
 }
+/**
+ * Format a timestamp using the current locale with millisecond precision.
+ * @param {Date} date Timestamp to display.
+ * @returns {string} Localized time.
+ */
 function preciseTime(date) {
   return new Intl.DateTimeFormat(uiLanguage, {
     year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
     second: "2-digit", fractionalSecondDigits: 3, timeZoneName: "short", hour12: false,
   }).format(date);
 }
+/**
+ * Format a finite duration for the metrics display.
+ * @param {number} ms Duration in milliseconds.
+ * @returns {string} Localized duration or unavailable marker.
+ */
 function duration(ms) {
   return typeof ms === "number" && Number.isFinite(ms) && ms >= 0
     ? `${(ms / 1000).toFixed(3)} s (${ms.toFixed(1)} ms)` : tr("metrics.unavailable");
 }
+/**
+ * Render client/server timing and available token/first-chunk measurements.
+ * @param {HTMLElement} node Metrics destination.
+ * @param {Object} timing Client-side timestamps and elapsed duration.
+ * @param {Object} [data] Server response with optional metrics.
+ * @param {Error|null} [error] Request failure, when present.
+ * @returns {void}
+ */
 function renderMeasurement(node, timing, data = {}, error = null) {
   const metrics = data.metrics || {}, usage = data.usage || {};
   const token = (kind, fallback) => {
@@ -111,6 +167,13 @@ function renderMeasurement(node, timing, data = {}, error = null) {
     content.textContent = `${tr("metrics.failed")}: ${error.message}`; node.append(content);
   }
 }
+/**
+ * Send a request while showing live elapsed time and final metrics.
+ * @param {string} path Relative API path.
+ * @param {RequestInit} options Fetch options.
+ * @param {HTMLElement} parent Container receiving the metrics element.
+ * @returns {Promise<Object>} Decoded API response; propagates request failures.
+ */
 async function measuredRequest(path, options, parent) {
   const node = document.createElement("div"); node.className = "request-metrics";
   parent.append(node);
@@ -127,13 +190,26 @@ async function measuredRequest(path, options, parent) {
     renderMeasurement(node, timing, data, failure);
   }
 }
+/**
+ * Check secure-context microphone and audio-worklet support.
+ * @returns {boolean} Whether browser recording is available.
+ */
 function canRecord() {
   return window.isSecureContext && navigator.mediaDevices?.getUserMedia && window.AudioContext && window.AudioWorkletNode;
 }
+/**
+ * Check whether the selected backend accepts only textual content.
+ * @param {string} [model] Model ID; defaults to the selected chat model.
+ * @returns {boolean} Whether image content must be removed for this model.
+ */
 function textOnlyModel(model = $("chat-model").value) {
   return config?.vision_models ? !config.vision_models.includes(model)
     : model === config?.llm_model || model === config?.hailo_llm_model;
 }
+/**
+ * Update recording, upload and submission controls for current state.
+ * @returns {void}
+ */
 function controls() {
   $("send-chat").disabled = chatBusy || !config;
   $("clear-chat").disabled = chatBusy;
@@ -146,6 +222,10 @@ function controls() {
   $("audio-file").disabled = !!recording || starting || stopping || audioBusy;
   $("transcribe").disabled = !config || !audioBlob || !!recording || starting || stopping || audioBusy;
 }
+/**
+ * Refresh service readiness and enabled-model status in the UI.
+ * @returns {Promise<void>} Resolves after status display updates.
+ */
 async function refreshStatus() {
   try {
     const response = await fetch("health", { cache: "no-store" });
@@ -165,6 +245,13 @@ async function refreshStatus() {
     note("status-note", tr("ui_7", {v0: error.message}), true);
   }
 }
+/**
+ * Append a chat message and optional image preview to the retained history.
+ * @param {string} role Message role.
+ * @param {string} text Message text.
+ * @param {string} [image] Optional image data URL.
+ * @returns {HTMLElement} Newly created message container.
+ */
 function bubble(role, text, image) {
   $("conversation").querySelector(".empty")?.remove();
   const node = document.createElement("div"); node.className = `message ${role}`;
@@ -175,6 +262,11 @@ function bubble(role, text, image) {
   $("conversation").append(node); node.scrollIntoView({ block: "nearest" });
   return node;
 }
+/**
+ * Read an uploaded image as a data URL.
+ * @param {File} file Selected image file.
+ * @returns {Promise<string>} Image data URL; rejects on file-reading errors.
+ */
 function readImage(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -228,6 +320,12 @@ $("chat-form").addEventListener("submit", async (event) => {
 $("clear-chat").addEventListener("click", () => {
   history = []; $("conversation").replaceChildren(); note("chat-note", tr("ui_20"));
 });
+/**
+ * Select a recording/upload and update its playback controls.
+ * @param {Blob} blob Encoded recording.
+ * @param {string} name Display/upload filename.
+ * @returns {void}
+ */
 function setAudio(blob, name) {
   if (audioURL) URL.revokeObjectURL(audioURL);
   audioBlob = blob; audioName = name;
@@ -236,6 +334,13 @@ function setAudio(blob, name) {
   $("audio-name").textContent = `${name} · ${(blob.size / 1024).toFixed(0)} KB`;
   $("transcript").value = ""; controls();
 }
+/**
+ * Encode recorded mono samples as a PCM16 WAV file.
+ * @param {Float32Array[]} chunks Recorded sample blocks.
+ * @param {number} count Total sample count.
+ * @param {number} rate Sampling frequency in Hz.
+ * @returns {Blob} WAV container bytes.
+ */
 function encodeWav(chunks, count, rate) {
   const buffer = new ArrayBuffer(44 + count * 2), view = new DataView(buffer);
   const text = (offset, value) => [...value].forEach((c, i) => view.setUint8(offset + i, c.charCodeAt(0)));
@@ -250,6 +355,11 @@ function encodeWav(chunks, count, rate) {
   }
   return new Blob([buffer], { type: "audio/wav" });
 }
+/**
+ * Stop microphone tracks and release the recording audio context.
+ * @param {Object} rec Active recorder state.
+ * @returns {Promise<void>|undefined} Context-close completion when a context exists.
+ */
 function closeMicrophone(rec) {
   clearInterval(rec.timer);
   rec.stream?.getTracks().forEach(track => track.stop());
@@ -257,6 +367,10 @@ function closeMicrophone(rec) {
   if (rec.node) rec.node.port.onmessage = null;
   return rec.context?.close().catch(() => {});
 }
+/**
+ * Finish the current capture, encode WAV and release microphone resources.
+ * @returns {Promise<void>} Resolves after capture shutdown.
+ */
 async function stopRecording() {
   if (!recording || stopping) return;
   stopping = true; const rec = recording; recording = null; controls();
@@ -339,6 +453,10 @@ $("refresh").addEventListener("click", refreshStatus);
 document.addEventListener("visibilitychange", () => { if (document.hidden) void stopRecording(); });
 window.addEventListener("pagehide", () => { pageHidden = true; void stopRecording(); });
 window.addEventListener("pageshow", () => { pageHidden = false; controls(); });
+/**
+ * Apply model/content mode changes to chat controls.
+ * @returns {void}
+ */
 function updateChatMode() {
   if ($("chat-mode").value === "text" || textOnlyModel()) {
     $("image").value = ""; $("image-preview").hidden = true;
@@ -351,6 +469,10 @@ function updateChatMode() {
   const limits = config?.model_limits?.[target];
   note("input-limit", limits ? tr("ui.input_limit", {limit: limits.max_input_tokens, context: limits.context_length}) : "");
 }
+/**
+ * Load UI configuration, initialize model controls and connect event handlers.
+ * @returns {Promise<void>} Resolves when the playground is initialized.
+ */
 async function init() {
 
   try {

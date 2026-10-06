@@ -6,6 +6,17 @@ from pathlib import Path
 
 
 def check_writable_directory(path: Path):
+    """Verify file creation and atomic rename in a service directory.
+
+    Args:
+        path (Path): Filesystem destination or diagnostic schema path.
+
+    Returns:
+        None: Removes temporary probes after the write check.
+
+    Raises:
+        RuntimeError: The service user cannot create or atomically rename a probe file.
+    """
     original = renamed = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -27,6 +38,14 @@ def check_writable_directory(path: Path):
 
 
 def main():
+    """Start the command-line entry point for this module.
+
+    Returns:
+        None: Runs the configured command until completion.
+
+    Raises:
+        RuntimeError: The Hailo home directory cannot be created.
+    """
     home = Path(os.path.expanduser("~"))
     try:
         hailo_home = home / ".hailo"
@@ -36,6 +55,7 @@ def main():
             f"Cannot create Hailo home {home / '.hailo'}: {exc}. Set a writable service HOME."
         ) from exc
     from .config import Settings
+
     settings = Settings.from_env()
     model_store = Path(settings.model_store)
     model_store.mkdir(parents=True, exist_ok=True)

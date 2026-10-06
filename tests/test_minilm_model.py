@@ -22,7 +22,7 @@ class Response:
         return False
 
     def read(self, size):
-        chunk = self.payload[self.offset:self.offset + size]
+        chunk = self.payload[self.offset : self.offset + size]
         self.offset += len(chunk)
         return chunk
 
@@ -65,10 +65,13 @@ def test_minilm_host_preparation_runs_encoder_and_normalizes_masked_output():
     model.segment = np.zeros((2, 384), dtype=np.float32)
     model.gamma = np.ones(384, dtype=np.float32)
     model.beta = np.zeros(384, dtype=np.float32)
-    model.tokenizer = SimpleNamespace(encode=lambda _: SimpleNamespace(
-        ids=[1, 2] + [0] * 126, attention_mask=[1, 1] + [0] * 126,
-        type_ids=[0] * 128,
-    ))
+    model.tokenizer = SimpleNamespace(
+        encode=lambda _: SimpleNamespace(
+            ids=[1, 2] + [0] * 126,
+            attention_mask=[1, 1] + [0] * 126,
+            type_ids=[0] * 128,
+        )
+    )
     buffers = []
 
     class Bindings:
@@ -76,9 +79,9 @@ def test_minilm_host_preparation_runs_encoder_and_normalizes_masked_output():
             return SimpleNamespace(set_buffer=lambda frame: buffers.append(frame))
 
         def output(self, name):
-            return SimpleNamespace(get_buffer=lambda: np.tile(
-                np.arange(384, dtype=np.float32), (1, 128, 1)
-            ))
+            return SimpleNamespace(
+                get_buffer=lambda: np.tile(np.arange(384, dtype=np.float32), (1, 128, 1))
+            )
 
     binding = Bindings()
     model.infer_model = SimpleNamespace(
@@ -103,13 +106,22 @@ def test_minilm_host_preparation_runs_encoder_and_normalizes_masked_output():
 def test_semantic_tool_retrieval_limits_tool_schemas():
     class Encoder:
         def embed(self, text):
-            return np.array([1., 0.]) if "lamp" in text else np.array([0., 1.])
+            return np.array([1.0, 0.0]) if "lamp" in text else np.array([0.0, 1.0])
 
-    tools = [{"type": "function", "function": {
-        "name": "lamp" if i == 0 else f"other_{i}", "description": "tool",
-        "parameters": {"type": "object"},
-    }} for i in range(15)]
-    selected, stats = retrieve_tools([{"role": "user", "content": "lamp"}], tools, encoder=Encoder())
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "lamp" if i == 0 else f"other_{i}",
+                "description": "tool",
+                "parameters": {"type": "object"},
+            },
+        }
+        for i in range(15)
+    ]
+    selected, stats = retrieve_tools(
+        [{"role": "user", "content": "lamp"}], tools, encoder=Encoder()
+    )
     assert selected[0]["function"]["name"] == "lamp"
     # A confident lexical hit is no longer padded with unrelated semantic
     # top-N results just to reach the old fixed 12-tool limit.

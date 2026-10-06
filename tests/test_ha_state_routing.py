@@ -64,7 +64,8 @@ TURN_ON = {
 def request(text, messages=None):
     return ChatRequest(
         model=LLM_MODEL,
-        messages=messages or [
+        messages=messages
+        or [
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": text},
         ],
@@ -74,27 +75,32 @@ def request(text, messages=None):
 
 def live_followup(text, arguments, payload):
     call_id = "call_live"
-    return request(text, messages=[
-        {"role": "system", "content": SYSTEM},
-        {"role": "user", "content": text},
-        {
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [{
-                "id": call_id,
-                "type": "function",
-                "function": {
-                    "name": "homeassistant__GetLiveContext",
-                    "arguments": json.dumps(arguments, ensure_ascii=False),
-                },
-            }],
-        },
-        {
-            "role": "tool",
-            "tool_call_id": call_id,
-            "content": json.dumps(payload, ensure_ascii=False),
-        },
-    ])
+    return request(
+        text,
+        messages=[
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": text},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": "homeassistant__GetLiveContext",
+                            "arguments": json.dumps(arguments, ensure_ascii=False),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": json.dumps(payload, ensure_ascii=False),
+            },
+        ],
+    )
 
 
 def test_living_room_light_state_uses_live_context_area_directly():
@@ -214,14 +220,16 @@ def test_live_followup_is_reduced_to_tiny_text_only_prompt_as_fallback():
         {
             "role": "assistant",
             "content": None,
-            "tool_calls": [{
-                "id": call_id,
-                "type": "function",
-                "function": {
-                    "name": "homeassistant__GetLiveContext",
-                    "arguments": json.dumps({"area": "Wohnzimmer", "domain": ["light"]}),
-                },
-            }],
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": "homeassistant__GetLiveContext",
+                        "arguments": json.dumps({"area": "Wohnzimmer", "domain": ["light"]}),
+                    },
+                }
+            ],
         },
         {
             "role": "tool",

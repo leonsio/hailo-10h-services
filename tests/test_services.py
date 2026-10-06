@@ -161,9 +161,7 @@ def test_litert_lm_model_routes_through_shared_chat_api_and_streams():
 
     async def exercise_runtime():
         await runtime.start()
-        payload = ChatRequest(
-            model=LLM_MODEL, messages=[{"role": "user", "content": "Hallo"}]
-        )
+        payload = ChatRequest(model=LLM_MODEL, messages=[{"role": "user", "content": "Hallo"}])
         assert await runtime.chat(payload) == "Gemma antwortet"
         chunks = [chunk async for chunk in runtime.stream(payload)]
         assert chunks == ["Gemma ", "antwortet"]
@@ -315,7 +313,8 @@ def test_auth_limits_and_unsupported_parameters():
                 "/v1/chat/completions",
                 json={"model": "wrong", "messages": [{"role": "user", "content": "hi"}]},
                 headers=headers,
-            ).status_code == 400
+            ).status_code
+            == 400
         )
         assert (
             client.post(
@@ -327,7 +326,9 @@ def test_auth_limits_and_unsupported_parameters():
 
 def test_playground_public_assets_keep_inference_authenticated():
     backend = FakeBackend()
-    with TestClient(create_app(settings(api_key="secret", max_audio_seconds=10), backend)) as client:
+    with TestClient(
+        create_app(settings(api_key="secret", max_audio_seconds=10), backend)
+    ) as client:
         page = client.get("/")
         assert page.status_code == 200 and 'lang="de"' in page.text
         assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
@@ -346,14 +347,24 @@ def test_playground_public_assets_keep_inference_authenticated():
         assert client.get("/ui/../config.py").status_code == 401
         payload = {"messages": [{"role": "user", "content": "Hallo"}]}
         assert client.post("/v1/chat/completions", json=payload).status_code == 401
-        assert client.post("/v1/audio/transcriptions", files={"file": ("voice.wav", wav())}).status_code == 401
+        assert (
+            client.post(
+                "/v1/audio/transcriptions", files={"file": ("voice.wav", wav())}
+            ).status_code
+            == 401
+        )
         assert not backend.calls
         headers = {"Authorization": "Bearer secret"}
         assert client.post("/v1/chat/completions", json=payload, headers=headers).status_code == 200
-        assert client.post(
-            "/v1/audio/transcriptions", files={"file": ("aufnahme.wav", wav(48000))},
-            data={"model": "whisper-base", "language": "de"}, headers=headers,
-        ).json()["text"] == "Hallo Welt"
+        assert (
+            client.post(
+                "/v1/audio/transcriptions",
+                files={"file": ("aufnahme.wav", wav(48000))},
+                data={"model": "whisper-base", "language": "de"},
+                headers=headers,
+            ).json()["text"]
+            == "Hallo Welt"
+        )
 
 
 def test_playground_config_without_key():
@@ -538,25 +549,32 @@ def test_mcp_protocol_and_tools():
         assert response.json()["result"]["content"][0]["text"] == "Hello world"
 
 
-@pytest.mark.parametrize("peer,networks,status", [
-    ("192.168.2.4", "192.168.2.4/32", 200),
-    ("::ffff:192.168.2.4", "192.168.2.4/32", 200),
-    ("192.168.2.5", "192.168.2.4/32", 401),
-    ("203.0.113.5", "192.168.0.0/16", 401),
-    ("192.168.2.4", "", 401),
-])
+@pytest.mark.parametrize(
+    "peer,networks,status",
+    [
+        ("192.168.2.4", "192.168.2.4/32", 200),
+        ("::ffff:192.168.2.4", "192.168.2.4/32", 200),
+        ("192.168.2.5", "192.168.2.4/32", 401),
+        ("203.0.113.5", "192.168.0.0/16", 401),
+        ("192.168.2.4", "", 401),
+    ],
+)
 def test_mcp_local_auth_bypass(peer, networks, status):
     config = settings(api_key="secret", mcp_hosts="testserver", mcp_no_auth_networks=networks)
     with TestClient(create_app(config, FakeBackend()), client=(peer, 1234)) as client:
         response = client.post(
-            "/mcp/", headers={"Accept": "application/json, text/event-stream",
-                              "X-Forwarded-For": "192.168.2.4"},
+            "/mcp/",
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "X-Forwarded-For": "192.168.2.4",
+            },
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
         )
         assert response.status_code == status, response.text
         assert client.get("/v1/models").status_code == 401
         assert client.post("/mcp-other").status_code == 401
         from starlette.websockets import WebSocketDisconnect
+
         with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect("/mcp/"):
                 pass
@@ -567,7 +585,8 @@ def test_keyless_mcp_keeps_host_and_body_limits():
     with TestClient(create_app(config, FakeBackend()), client=("192.168.2.4", 1234)) as client:
         assert client.post("/mcp/", content=b"x" * 2049).status_code == 413
         response = client.post(
-            "/mcp/", headers={"Host": "attacker.example", "Accept": "application/json, text/event-stream"},
+            "/mcp/",
+            headers={"Host": "attacker.example", "Accept": "application/json, text/event-stream"},
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
         )
         assert response.status_code == 421
@@ -591,7 +610,7 @@ def test_mqtt_dispatch_uses_same_runtime():
 
 
 def test_native_shared_creation_residency_and_partial_cleanup(monkeypatch, tmp_path):
-    monkeypatch.setattr("hailo_services.runtime.prepare_model_version", lambda: "5.4.0")
+    monkeypatch.setattr("hailo_services.backend_hailo.prepare_model_version", lambda: "5.4.0")
     minilm_hef = tmp_path / "minilm-l6-ruvector.hef"
     minilm_hef.write_bytes(b"compiled test fixture")
     events, params_seen = [], []
@@ -604,7 +623,7 @@ def test_native_shared_creation_residency_and_partial_cleanup(monkeypatch, tmp_p
         def close(self):
             events.append("minilm")
 
-    monkeypatch.setattr("hailo_services.runtime.MiniLM", FakeMiniLM)
+    monkeypatch.setattr("hailo_services.backend_hailo.MiniLM", FakeMiniLM)
 
     class Resource:
         def __init__(self, name):
@@ -638,7 +657,10 @@ def test_native_shared_creation_residency_and_partial_cleanup(monkeypatch, tmp_p
     }
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
-    monkeypatch.setattr("hailo_services.runtime.ModelManager.resolve", lambda self, model, kind=None, path=None: resolve(model, kind=kind))
+    monkeypatch.setattr(
+        "hailo_services.backend_hailo.ModelManager.resolve",
+        lambda self, model, kind=None, path=None: resolve(model, kind=kind),
+    )
     backend = HailoBackend(settings())
     backend.start()
     assert params_seen == ["SHARED"]
@@ -646,9 +668,16 @@ def test_native_shared_creation_residency_and_partial_cleanup(monkeypatch, tmp_p
         (VLM_MODEL, {"kind": "vlm"}),
         ("Whisper-Base", {"kind": "whisper"}),
     ]
-    assert [model for model, _ in resolved[2:]] == ["minilm-l6-ruvector", "minilm-tokenizer", "minilm-weights"]
-    assert backend.artifact_paths == {"minilm_hef": str(minilm_hef),
-                                    "minilm_tokenizer": "tokenizer", "minilm_weights": "weights"}
+    assert [model for model, _ in resolved[2:]] == [
+        "minilm-l6-ruvector",
+        "minilm-tokenizer",
+        "minilm-weights",
+    ]
+    assert backend.artifact_paths == {
+        "minilm_hef": str(minilm_hef),
+        "minilm_tokenizer": "tokenizer",
+        "minilm_weights": "weights",
+    }
     assert not events and backend.vlm and backend.whisper
     backend.close()
     assert events == ["minilm", "whisper", "vlm", "device"]
@@ -711,7 +740,7 @@ def test_vlm_preprocessing_context_cleanup_and_native_streaming():
                     {"type": "image_url", "image_url": {"url": snapshot()}},
                 ],
             }
-        ]
+        ],
     )
     streamed = []
     assert backend.chat(request, streamed.append) == "Hallo Welt"

@@ -1,3 +1,5 @@
+"""Bounded media decoding and native-compatible image/audio normalization."""
+
 import base64
 import io
 import math
@@ -12,6 +14,18 @@ Image.MAX_IMAGE_PIXELS = _MAX_IMAGE_PIXELS
 
 
 def decode_base64(value: str, limit: int) -> bytes:
+    """Decode base64 media or a data URL within a byte-size limit.
+
+    Args:
+        value (str): Input value inspected or normalized by this helper.
+        limit (int): Upper bound for bytes, input tokens or retained enum values.
+
+    Returns:
+        bytes: Validated media bytes.
+
+    Raises:
+        ValueError: Only base64 data URLs are supported.
+    """
     if value.startswith("data:"):
         header, value = value.split(",", 1)
         if ";base64" not in header:
@@ -29,6 +43,19 @@ def decode_base64(value: str, limit: int) -> bytes:
 
 def image_frame(value: str, limit: int, size=(336, 336)) -> np.ndarray:
     # URL fetching is deliberately excluded: callers supply their snapshot bytes.
+    """Decode bounded image bytes into a writable RGB model frame.
+
+    Args:
+        value (str): Input value inspected or normalized by this helper.
+        limit (int): Upper bound for bytes, input tokens or retained enum values.
+        size (tuple[int, int]): Target image width and height in pixels.
+
+    Returns:
+        np.ndarray: Contiguous uint8 frame in height-width-channel order.
+
+    Raises:
+        ValueError: Media encoding, byte/pixel limits or image decoding are invalid.
+    """
     try:
         with Image.open(io.BytesIO(decode_base64(value, limit))) as image:
             if image.width * image.height > _MAX_IMAGE_PIXELS:
@@ -44,6 +71,19 @@ def image_frame(value: str, limit: int, size=(336, 336)) -> np.ndarray:
 
 
 def normalize_audio(samples: np.ndarray, rate: int, max_seconds: int) -> np.ndarray:
+    """Convert bounded finite audio to contiguous 16 kHz mono float32.
+
+    Args:
+        samples (np.ndarray): Audio samples, mono or frames-by-channels.
+        rate (int): Input audio sampling rate in Hz.
+        max_seconds (int): Maximum accepted recording duration in seconds.
+
+    Returns:
+        np.ndarray: Little-endian mono samples clipped to [-1, 1].
+
+    Raises:
+        ValueError: Audio rate must be 8000..192000 Hz.
+    """
     if rate < 8000 or rate > 192000:
         raise ValueError("Audio rate must be 8000..192000 Hz")
     if samples.ndim == 2:
@@ -61,6 +101,18 @@ def normalize_audio(samples: np.ndarray, rate: int, max_seconds: int) -> np.ndar
 
 
 def audio_file(data: bytes, max_seconds: int) -> np.ndarray:
+    """Decode a supported audio container and normalize it for Whisper.
+
+    Args:
+        data (bytes): Encoded audio container bytes.
+        max_seconds (int): Maximum accepted recording duration in seconds.
+
+    Returns:
+        np.ndarray: 16 kHz mono float32 samples.
+
+    Raises:
+        ValueError: The audio container, rate, channels, duration or samples are invalid.
+    """
     try:
         with sf.SoundFile(io.BytesIO(data)) as audio:
             if audio.frames > audio.samplerate * max_seconds:
@@ -74,7 +126,17 @@ def audio_file(data: bytes, max_seconds: int) -> np.ndarray:
 
 
 def audio_metadata(data: bytes) -> dict:
-    """Read decoder-independent audio facts for logs without exposing audio content."""
+    """Read decoder-independent audio facts for logs without exposing audio content.
+
+    Args:
+        data (bytes): Encoded audio container bytes.
+
+    Returns:
+        dict: Container, codec, rate, channels, frames and duration.
+
+    Raises:
+        ValueError: Unsupported audio; use WAV, FLAC or OGG supported by libsndfile.
+    """
     try:
         info = sf.info(io.BytesIO(data))
     except (sf.LibsndfileError, RuntimeError) as exc:

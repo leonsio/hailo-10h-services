@@ -5,7 +5,8 @@ import sys
 from types import SimpleNamespace
 
 from hailo_services.config import LLM_MODEL
-from hailo_services.litert_optimizations import instrument_engine, successful_action_followup
+from hailo_services.diagnostics_litert import instrument_engine
+from hailo_services.ha_action_verification import successful_action_followup
 from hailo_services.runtime import LiteRTLMBackend
 from hailo_services.schemas import ChatRequest
 
@@ -27,14 +28,16 @@ def action_request(*, failed=None, response_type="action_done", speech=None):
             {
                 "role": "assistant",
                 "content": None,
-                "tool_calls": [{
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": "intent__HassTurnOff",
-                        "arguments": json.dumps({"area": "Küche", "domain": ["light"]}),
-                    },
-                }],
+                "tool_calls": [
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": "intent__HassTurnOff",
+                            "arguments": json.dumps({"area": "Küche", "domain": ["light"]}),
+                        },
+                    }
+                ],
             },
             {
                 "role": "tool",
@@ -51,7 +54,7 @@ def action_request(*, failed=None, response_type="action_done", speech=None):
 def test_successful_action_followup_skips_second_gemma_inference(caplog):
     backend = LiteRTLMBackend("/does/not/need/to/exist.litertlm", debug_log=True)
     request = action_request()
-    with caplog.at_level("DEBUG", logger="hailo_services.litert_optimizations"):
+    with caplog.at_level("DEBUG", logger="hailo_services.chat_litert"):
         result = backend.chat(request)
     assert result == "Erledigt."
     assert "tool_followup_fast_path request_id=fast-123" in caplog.text
@@ -74,11 +77,13 @@ def test_failed_or_query_tool_result_does_not_use_fast_path():
 
 def test_fast_path_requires_all_parallel_tool_results():
     request = action_request()
-    request.messages[-2]["tool_calls"].append({
-        "id": "call_missing",
-        "type": "function",
-        "function": {"name": "intent__HassTurnOff", "arguments": "{}"},
-    })
+    request.messages[-2]["tool_calls"].append(
+        {
+            "id": "call_missing",
+            "type": "function",
+            "function": {"name": "intent__HassTurnOff", "arguments": "{}"},
+        }
+    )
     assert successful_action_followup(request) is None
 
 
@@ -114,7 +119,7 @@ class FakeEngine:
 def test_wall_clock_timing_is_logged_without_native_benchmark(caplog):
     backend = SimpleNamespace(engine=FakeEngine(), debug_log=True)
     instrument_engine(backend)
-    with caplog.at_level("DEBUG", logger="hailo_services.litert_optimizations"):
+    with caplog.at_level("DEBUG", logger="hailo_services.diagnostics_litert"):
         with backend.engine.create_conversation(messages=[]) as conversation:
             assert conversation.send_message("hello") == {"content": "ok"}
     assert "gemma_timing request_id=-" in caplog.text
@@ -126,7 +131,7 @@ def test_wall_clock_timing_is_logged_without_native_benchmark(caplog):
 def test_exact_rendered_prompt_is_logged_in_debug(caplog):
     backend = SimpleNamespace(engine=FakeEngine(), debug_log=True)
     instrument_engine(backend)
-    with caplog.at_level("DEBUG", logger="hailo_services.litert_optimizations"):
+    with caplog.at_level("DEBUG", logger="hailo_services.diagnostics_litert"):
         with backend.engine.create_conversation(messages=[]) as conversation:
             rendered = conversation.render_message_to_string(
                 {"role": "user", "content": "schalte das Licht aus"}
@@ -168,7 +173,7 @@ def test_start_does_not_enable_native_benchmark(monkeypatch, tmp_path):
 
 
 def test_wall_metrics_are_collected_without_native_counts(monkeypatch):
-    from hailo_services.litert_optimizations import _REQUEST, _log_timing
+    from hailo_services.diagnostics_litert import _REQUEST, _log_timing
 
     metrics = {"input_tokens": 20, "input_tokens_source": "tokenizer"}
     monkeypatch.setattr(_REQUEST, "metrics", metrics, raising=False)
@@ -191,23 +196,34 @@ def test_wall_metrics_are_collected_without_native_counts(monkeypatch):
 def test_native_constraints_enabled_only_for_explicit_python_capability():
     class CapableEngine(FakeEngine):
         flags = []
+
         def create_conversation(self, enable_constrained_decoding=False, **kwargs):
             self.flags.append(enable_constrained_decoding)
             return self.conversation
 
     class LegacyEngine(FakeEngine):
         def create_conversation(self, **kwargs):
-            assert 'enable_constrained_decoding' not in kwargs
+            assert "enable_constrained_decoding" not in kwargs
             return self.conversation
 
     for engine, expected in [(CapableEngine(), True), (LegacyEngine(), False)]:
-        backend = LiteRTLMBackend('/unused.litertlm')
+        backend = LiteRTLMBackend("/unused.litertlm")
         backend.engine = engine
         backend.litert_lm = SimpleNamespace(Tool=object, SamplerConfig=lambda **kwargs: kwargs)
-        request = ChatRequest(model=LLM_MODEL, messages=[{'role': 'user', 'content': 'Hello'}],
-                              tools=[{'type': 'function', 'function': {
-                                  'name': 'test', 'parameters': {'type': 'object', 'properties': {}}}}])
-        assert backend.chat(request, tools_prepared=True) == 'ok'
-        assert request._metrics['constrained_decoding']['enabled'] is expected
+        request = ChatRequest(
+            model=LLM_MODEL,
+            messages=[{"role": "user", "content": "Hello"}],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "test",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+        )
+        assert backend.chat(request, tools_prepared=True) == "ok"
+        assert request._metrics["constrained_decoding"]["enabled"] is expected
         if expected:
             assert all(engine.flags)

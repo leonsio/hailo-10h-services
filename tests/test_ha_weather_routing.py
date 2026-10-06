@@ -186,19 +186,37 @@ def test_unavailable_environmental_data_reports_no_current_data():
 
 def test_multiple_weather_sources_remain_an_llm_decision():
     entities = [
-        {"name": name, "domain": "weather", "state": "sunny", "area": area,
-         "attributes": {"temperature": temperature, "temperature_unit": "°C"}}
-        for name, area, temperature in [("North weather", "North", 12), ("South weather", "South", 18)]
+        {
+            "name": name,
+            "domain": "weather",
+            "state": "sunny",
+            "area": area,
+            "attributes": {"temperature": temperature, "temperature_unit": "°C"},
+        }
+        for name, area, temperature in [
+            ("North weather", "North", 12),
+            ("South weather", "South", 18),
+        ]
     ]
     assert ha_weather_routing._weather_response(entities, "Wie ist das Wetter draußen?") is None
 
 
 def test_unavailable_weather_source_does_not_hide_available_environment_sensor():
     entities = [
-        {"name": "Weather", "domain": "weather", "state": "unavailable", "area": "Garden",
-         "attributes": {"temperature": 99, "temperature_unit": "°C"}},
-        {"name": "Ambient temperature", "domain": "sensor", "state": "12", "area": "Garden",
-         "attributes": {"device_class": "temperature", "unit_of_measurement": "°C"}},
+        {
+            "name": "Weather",
+            "domain": "weather",
+            "state": "unavailable",
+            "area": "Garden",
+            "attributes": {"temperature": 99, "temperature_unit": "°C"},
+        },
+        {
+            "name": "Ambient temperature",
+            "domain": "sensor",
+            "state": "12",
+            "area": "Garden",
+            "attributes": {"device_class": "temperature", "unit_of_measurement": "°C"},
+        },
     ]
     answer = ha_weather_routing._weather_response(entities, "Wie ist das Wetter draußen?")
     assert "12 °C" in answer
@@ -208,7 +226,8 @@ def test_unavailable_weather_source_does_not_hide_available_environment_sensor()
 def test_weather_initial_lookup_keeps_sensors_even_with_provider():
     arguments = ha_weather_routing._initial_live_arguments(
         [{"name": "Weather", "domain": "weather", "area": ""}],
-        "Wie ist das Wetter draußen?", kind="weather",
+        "Wie ist das Wetter draußen?",
+        kind="weather",
     )
     assert arguments == {"domain": ["weather", "sensor"]}
 
@@ -218,12 +237,24 @@ def test_ambiguous_weather_prompt_preserves_provider_measurements():
 
     request = ChatRequest(messages=[{"role": "user", "content": "Wie ist das Wetter?"}])
     entities = [
-        {"name": "North", "domain": "weather", "state": "cloudy", "area": "",
-         "attributes": {"temperature": 12, "humidity": 70, "temperature_unit": "°C"}},
-        {"name": "South", "domain": "weather", "state": "sunny", "area": "",
-         "attributes": {"temperature": 18, "humidity": 55, "temperature_unit": "°C"}},
+        {
+            "name": "North",
+            "domain": "weather",
+            "state": "cloudy",
+            "area": "",
+            "attributes": {"temperature": 12, "humidity": 70, "temperature_unit": "°C"},
+        },
+        {
+            "name": "South",
+            "domain": "weather",
+            "state": "sunny",
+            "area": "",
+            "attributes": {"temperature": 18, "humidity": 55, "temperature_unit": "°C"},
+        },
     ]
-    compact = ha_weather_routing._compact_environment_decision(request, entities, "Wetter?", "weather")
+    compact = ha_weather_routing._compact_environment_decision(
+        request, entities, "Wetter?", "weather"
+    )
     prompt = compact.messages[-1]["content"]
     assert '"temperature": 12' in prompt
     assert '"temperature": 18' in prompt
@@ -233,8 +264,13 @@ def test_ambiguous_weather_prompt_preserves_provider_measurements():
 
 def test_same_area_ambiguous_measurements_do_not_use_catalogue_order():
     entities = [
-        {"name": name, "domain": "sensor", "state": value, "area": "Garden",
-         "attributes": {"device_class": "temperature", "unit_of_measurement": "°C"}}
+        {
+            "name": name,
+            "domain": "sensor",
+            "state": value,
+            "area": "Garden",
+            "attributes": {"device_class": "temperature", "unit_of_measurement": "°C"},
+        }
         for name, value in [("Outdoor A", "12"), ("Outdoor B", "18")]
     ]
     for ordered in (entities, list(reversed(entities))):
