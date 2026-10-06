@@ -238,6 +238,7 @@ def test_yaml_example_covers_every_legacy_env_parameter(monkeypatch):
         'whisper': ('whisper_enabled', 'whisper_hef'),
         'hailo_llm': ('hailo_llm_enabled', 'hailo_llm_model', 'hailo_llm_release',
                       'hailo_llm_max_input_tokens'),
+        'vision': ('vision_enabled', 'vision_model', 'vision_release'),
         'minilm': ('minilm_enabled', 'minilm_hef_path'),
         'gemma': ('litert_enabled', 'litert_model_path', 'litert_max_input_tokens'),
     }.items():
