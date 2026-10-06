@@ -2,77 +2,98 @@
 
 `scripts/benchmark-qwen-ha.py` measures where Qwen2-VL stops being reliable on realistic Home Assistant text and tool-calling tasks as the prompt grows.
 
-The benchmark deliberately selects `Qwen2-VL-2B-Instruct` in every request and does **not** use the production `Static Context:` Home Assistant envelope. This prevents deterministic HA routing from answering the request before Qwen runs. The benchmark therefore measures Qwen itself, including the VLM prompt adapter and tokenizer budget.
+Every request explicitly selects `Qwen2-VL-2B-Instruct` and deliberately avoids the exact production `Static Context:` Home Assistant envelope. Deterministic HA routing therefore cannot answer the benchmark instead of Qwen.
 
 ## What is tested
 
-The built-in scenarios mirror common Home Assistant requests:
+The built-in scenarios cover:
 
-- set light brightness (`light__HassLightSet`)
-- set climate target temperature (`climate__HassClimateSetTemperature`)
-- set a cover position (`intent__HassSetPosition`)
-- query a live state (`homeassistant__GetLiveContext`)
-- start a vacuum (`vacuum__HassVacuumStart`)
-- read a current temperature from supplied HA-like state context without a tool call
+- light brightness with `light__HassLightSet`
+- climate target temperature with `climate__HassClimateSetTemperature`
+- cover position with `intent__HassSetPosition`
+- live-state lookup with `homeassistant__GetLiveContext`
+- vacuum start with `vacuum__HassVacuumStart`
+- direct reading of a supplied current temperature without a tool call
 
-The fixture contains representative rooms, devices and states similar to a real HA installation. It is not tied to a specific installation. Tool-call validation rejects unknown areas or device names, wrong tools, schema violations, wrong target values and extra unexpected arguments.
+The fixture uses representative Home Assistant entities and states, but production logic is not tied to these names.
 
-For tool scenarios the default request contains the expected tool plus two plausible distractor tools. `--all-tools` sends the full built-in tool set and stresses tool selection more aggressively.
+## Important: the default run is a baseline
 
-## Run
+The default `focused` mode sends only the tool required by the current task and only the relevant entities. This isolates Qwen's context/reasoning boundary from tool-selection complexity.
 
-```bash
-python3 scripts/benchmark-qwen-ha.py \
-  --url http://HOST:8090 \
-  --api-key YOUR_API_KEY
-```
-
-The API key can also be provided through `HAILO_API_KEY`; an explicit `--api-key` takes precedence.
-
-The default requested input-token levels are:
+The requested input-token targets are:
 
 ```text
-850,1000,1150,1300,1450,1550,1650,1725,1800,1900
+400,550,700,850,1000,1150,1300,1450,1600,1750
 ```
 
-These are sizing targets. Qwen's server-side tokenizer is authoritative. The report records both `input_tokens` and, when the service exposes it, `input_budget_tokens`. The latter includes the service's safety margin and is the best value to compare with the configured VLM input limit.
+They are sizing targets only. `input_budget_tokens` reported by the service is authoritative when available.
 
-For a more statistically useful run repeat every point several times:
+After the focused baseline you can separately increase tool complexity:
+
+```bash
+--tool-mode distractors
+--tool-mode all
+```
+
+`distractors` adds two plausible competing tools. `all` sends the full built-in benchmark tool set. Note that the service's MiniLM tool retrieval may still reduce that set before Qwen sees it; debug logs show the final tool list.
+
+`--full-catalogue` adds the complete base entity catalogue before the synthetic archive context. Use it only after the focused baseline.
+
+## Recommended first run
+
+Start with one scenario and low context levels:
 
 ```bash
 python3 scripts/benchmark-qwen-ha.py \
   --url http://HOST:8090 \
   --api-key YOUR_API_KEY \
-  --repeats 5
+  --tasks light_brightness \
+  --targets 300,400,500,600,700 \
+  --repeats 1
 ```
 
-To stress Qwen with all known benchmark tools:
+The API key may also be supplied through `HAILO_API_KEY`.
+
+If the baseline is stable, run all scenarios:
 
 ```bash
 python3 scripts/benchmark-qwen-ha.py \
   --url http://HOST:8090 \
   --api-key YOUR_API_KEY \
-  --all-tools \
   --repeats 3
 ```
 
-Run only selected scenarios:
+Then compare tool-selection complexity:
 
 ```bash
 python3 scripts/benchmark-qwen-ha.py \
   --url http://HOST:8090 \
   --api-key YOUR_API_KEY \
-  --tasks light_brightness,state_temperature \
-  --targets 900,1100,1300,1450,1550,1650,1725
+  --tool-mode distractors \
+  --repeats 3
 ```
+
+## Failure classification
+
+Model failures are benchmark results and do not make the script exit with status 1. Only preflight/execution failures stop the benchmark.
+
+The console now distinguishes, among others:
+
+- `model output: required tool call missing`
+- `model output: unavailable function`
+- `model output: invalid tool arguments`
+- `model output: invalid tool JSON`
+- `input token limit`
+- semantic validation failures such as `wrong target/value` or `hallucinated area/name`
+
+For successful HTTP responses, failed tool validation also prints the generated tool and arguments. HTTP failures print the server error text. This matters because the service can accept the input-token budget, run Qwen, and only then reject malformed model-generated tool output.
 
 ## Output
 
-The console prints one line per run with requested token level, measured token count, PASS/FAIL, duration and the validation reason. The output directory contains:
+The output directory contains:
 
-- `results.json` with the complete request, response, metrics and validation data
-- `results.csv` for plotting correctness and latency against input-token count
+- `results.json` with complete requests, successful responses, HTTP/server errors, metrics and validation data
+- `results.csv` with token counts, latency, HTTP status, validation reason and compact failure detail
 
-The summary reports the highest measured input-token count that still produced a correct answer for each scenario and the first requested level that failed.
-
-A failure is not limited to HTTP/context errors. It also includes a wrong tool, invalid JSON/tool arguments, schema violations, wrong values, or hallucinated room/device names. This makes it possible to find the **quality boundary before the hard context limit**, which is the relevant threshold for deciding whether a request should stay on the Qwen fast path or fall back to Gemma.
+The summary reports the highest measured input-token count that produced a correct result, the first failed target and a count of failure reasons per scenario.
