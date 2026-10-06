@@ -23,17 +23,6 @@ settings:
   max_body: 16777216
   max_audio_seconds: 120
 
-  # Resident YOLO object detection. ZMQ is unauthenticated, so bind to localhost
-  # unless Frigate runs on another trusted host/container and the port is firewalled.
-  vision_zmq_enabled: true
-  vision_zmq_endpoint: tcp://127.0.0.1:5555
-  vision_confidence: 0.4
-  vision_iou_threshold: 0.45
-  vision_max_detections: 20
-  vision_queue_size: 16
-  # Hailo scheduler priority inside the SHARED VDevice group. Higher values win.
-  vision_scheduler_priority: 1
-
   # MQTT: empty host disables the bridge. Credentials are plain strings.
   mqtt_host: ""
   mqtt_port: 1883
@@ -52,6 +41,28 @@ settings:
   model_release: auto  # Runtime-matched URLs; Qwen2 prefers v5.1.1.
   model_catalog: ""   # Optional absolute path to your own catalogue YAML.
   litert_max_num_tokens: 16384
+
+# Resident object detection. The selected YOLO HEF is loaded once and shared by
+# /v1/vision/detect and the Frigate ZMQ detector.
+vision:
+  enabled: false
+  # Model catalogue choices: yolov8n/s/m, yolov11n/s/m, yolo26n/s/m.
+  model: yolov11m
+  release: auto
+  # Instead of model/release, an explicit HEF may be selected with:
+  # path: /usr/local/hailo/resources/models/hailo10h/yolov11m.hef
+  confidence: 0.4
+  iou_threshold: 0.45
+  max_detections: 20
+  queue_size: 16
+  # Hailo scheduler priority inside the SHARED VDevice group. Higher values win.
+  scheduler_priority: 1
+  zmq:
+    enabled: true
+    # ZMQ is unauthenticated. Keep localhost unless Frigate runs on another
+    # trusted host/container and the port is protected by a firewall.
+    endpoint: tcp://127.0.0.1:5555
+
 models:
   vlm:
     enabled: true
@@ -68,13 +79,6 @@ models:
     model: Qwen2.5-1.5B-Instruct # Or another kind: llm entry from the catalogue.
     release: auto # Runtime-matched Hailo model-zoo release, or pin e.g. v5.4.0.
     max_input_tokens: 2048 # Manufacturer limit for the catalogue HEF LLMs.
-  vision:
-    # Resident YOLO shared by /v1/vision/detect and the Frigate ZMQ detector.
-    # Alternatives: yolov8n/s/m, yolov11n/s/m, yolo26n/s/m.
-    enabled: false
-    model: yolov11m
-    release: auto
-    # path: /usr/local/hailo/resources/models/hailo10h/yolov11m.hef
   minilm:
     enabled: true
     # path: /usr/local/hailo/resources/models/hailo10h/minilm-l6-ruvector.hef
