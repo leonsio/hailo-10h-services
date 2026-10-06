@@ -1,6 +1,6 @@
 """Pydantic request models and input validation for public APIs."""
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 
@@ -190,3 +190,41 @@ class VisionDetectRequest(BaseModel):
     image: str = Field(min_length=1)
     confidence: float | None = Field(default=None, ge=0, le=1)
     max_detections: int | None = Field(default=None, ge=1, le=100)
+
+
+class SpeechRequest(BaseModel):
+    """Validate CPU speech synthesis input and supported audio formats.
+
+    Attributes:
+        model (str): Public speech backend identifier.
+        input (str): Text to speak, bounded again by the configured service limit.
+        voice (str | None): Installed voice ID; omission uses the configured default.
+        language (str | None): Optional expected language; must match the selected voice.
+        response_format (str): WAV at the voice rate or mono PCM16LE at 24 kHz.
+        speed (float): Speaking speed, mapped to inverse Piper length_scale.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    model: Literal["piper"] = "piper"
+    input: str = Field(min_length=1, max_length=16384)
+    voice: str | None = Field(
+        default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"
+    )
+    language: str | None = Field(default=None, pattern=r"^[a-z]{2}(?:[-_][A-Z]{2})?$")
+    response_format: Literal["wav", "pcm"] = "wav"
+    speed: float = Field(default=1.0, ge=0.25, le=4.0, allow_inf_nan=False)
+
+    @field_validator("input")
+    @classmethod
+    def check_text(cls, value):
+        """Reject blank text before allocating synthesis work.
+
+        Args:
+            value (str): Text supplied by the client.
+
+        Returns:
+            str: Original nonblank text.
+        """
+        if not value.strip():
+            raise ValueError("Speech input must not be blank")
+        return value

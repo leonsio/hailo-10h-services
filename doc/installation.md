@@ -423,3 +423,56 @@ configuration files, so add these keys yourself. Check `/health.ha_assist` for
 `text_ready`/`vision_ready`. `/v1/models` includes `HA-Assist`; its availability
 is per target. See [request pipelines](pipelines.md) for deterministic handling,
 diagnostics and the guarantee of one generative target per request.
+
+## Piper CPU text-to-speech
+
+Native/LXC installation and Docker images include the optional `piper` Python
+extra. Piper is disabled by default and no voice is downloaded during service
+startup. Existing installations can install it in their service environment:
+
+```bash
+sudo /opt/hailo-10h-services/venv/bin/pip install 'piper-tts>=1.3,<2'
+sudo install -d -o hailo-services -g hailo-services /var/lib/hailo-10h-services/piper
+sudo -u hailo-services /opt/hailo-10h-services/venv/bin/python -m piper.download_voices \
+  --download-dir /var/lib/hailo-10h-services/piper de_DE-thorsten-medium
+```
+
+Set the following in `/etc/hailo-10h-services.yaml`, then restart the service:
+
+```yaml
+settings:
+  piper_enabled: true
+  piper_voice: de_DE-thorsten-medium
+  piper_voice_dir: /var/lib/hailo-10h-services/piper
+  piper_language: de_DE
+  piper_max_input_chars: 4096
+```
+
+Merge these keys into your existing `settings` block. Matching ENV overrides are
+`HAILO_PIPER_ENABLED`, `HAILO_PIPER_VOICE`, `HAILO_PIPER_VOICE_DIR`,
+`HAILO_PIPER_LANGUAGE` and `HAILO_PIPER_MAX_INPUT_CHARS`. Restart with
+`sudo systemctl restart hailo-10h-services` and inspect `/health` → `piper`.
+The update script installs Piper dependencies when Piper is enabled.
+
+Each installed voice requires both `<voice>.onnx` and `<voice>.onnx.json`.
+For English, for example, install `en_US-lessac-medium` and configure
+`piper_voice: en_US-lessac-medium` plus `piper_language: en_US`. The language
+must match the default voice metadata. Multiple installed voices can be selected
+by `voice` per API request; a single model remains resident and is replaced when
+the voice changes. A trusted absolute ONNX path is also allowed for the configured
+default, but clients can only select IDs from `piper_voice_dir`.
+
+For Docker, the default voice directory lives in the persistent `state` volume.
+After building the image, provision the voice there before enabling Piper:
+
+```bash
+docker compose run --rm --no-deps --entrypoint /opt/venv/bin/python hailo-services \
+  -m piper.download_voices --download-dir /var/lib/hailo-10h-services/piper \
+  de_DE-thorsten-medium
+docker compose up -d --build
+```
+
+Use the same YAML keys in `deploy/hailo-10h-services.yaml`. Keep voice files
+readable by the service account. Piper runs on CPU with CUDA disabled and uses
+no Hailo device/model resources. Voice licences vary; inspect the chosen voice's
+model card. See the [speech API](api.md#post-v1audiospeech) for request formats.

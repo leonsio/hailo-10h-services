@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /tmp/vendor /var/lib/apt/lists/*
 COPY pyproject.toml README.md /opt/source/
 COPY src /opt/source/src
-RUN /opt/venv/bin/pip install /opt/source \
+RUN /opt/venv/bin/pip install "/opt/source[piper]" \
     && if [ "$INSTALL_LITERT" = 1 ]; then /opt/venv/bin/pip install litert-lm; fi \
     && /opt/venv/bin/python -c 'from hailo_platform.genai import VLM, Speech2Text' \
     && mkdir -p /var/lib/hailo-10h-services /usr/local/hailo/resources/models/hailo10h

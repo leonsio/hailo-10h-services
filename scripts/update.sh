@@ -37,6 +37,11 @@ fi
 # untouched while replacing all hailo_services package files from this checkout.
 "${VENV}/bin/pip" install --upgrade --force-reinstall --no-deps "${SOURCE_DIR}"
 
+if HAILO_CONFIG=/etc/hailo-10h-services.yaml "${VENV}/bin/python" -c \
+  'from hailo_services.config import Settings; raise SystemExit(0 if Settings.from_env().piper_enabled else 1)'; then
+  "${VENV}/bin/pip" install 'piper-tts>=1.3,<2'
+fi
+
 # Keep the unit file in sync with the repository as part of every update.
 install -m 0644 "${SOURCE_DIR}/deploy/hailo-10h-services.service" \
   /etc/systemd/system/hailo-10h-services.service

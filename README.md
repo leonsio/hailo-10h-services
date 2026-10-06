@@ -21,6 +21,7 @@ they can coexist with compatible Hailo applications without per-request model re
 | Vision-language | Qwen2-VL-2B-Instruct, Qwen3-VL-2B-Instruct | `/v1/chat/completions`, MCP, WebSocket, MQTT |
 | Native Hailo LLM | Qwen, Llama, DeepSeek and other HEF LLMs from the model catalog | `/v1/chat/completions`, WebSocket, MQTT |
 | CPU LLM | Gemma 4 E2B through LiteRT-LM | `/v1/chat/completions`, WebSocket, MQTT |
+| Text-to-speech | Piper voices (CPU, configurable language) | `/v1/audio/speech` |
 | Speech-to-text | Whisper Tiny / Base / Small | `/v1/audio/transcriptions`, Wyoming, MCP |
 | Object detection | YOLOv8, YOLO11, YOLO26 | `/v1/vision/detect`, Frigate ZMQ |
 | HA routing / retrieval | [`HA-Assist`](#home-assistant-virtual-model), HassIL, MiniLM | OpenAI-compatible chat model |
@@ -230,6 +231,7 @@ and VLM requests are bounded by their compiled 2048-token contexts. A request ma
 |---|---|---|---|---|
 | HTTP | `:8090/v1/chat/completions` | Text, images, SSE, tools | — | — |
 | HTTP | `:8090/v1/audio/transcriptions` | — | File upload | — |
+| HTTP | `POST :8090/v1/audio/speech` | — | Text → Piper CPU speech (WAV/PCM) | — |
 | HTTP | `:8090/v1/vision/detect` | — | — | Base64/data-URL image |
 | HTTP | `/v1/models`, `/health` | Models/readiness | Models/readiness | Model/readiness |
 | Frigate ZMQ | configured `vision.zmq.endpoint` | — | — | Frigate detector protocol |
@@ -355,3 +357,10 @@ bash -n scripts/install.sh scripts/update.sh scripts/enable-https.sh
 Protocol/routing tests use simulated backends. Accelerator initialization, actual model
 quality, measured inference performance and Frigate end-to-end latency require target
 hardware testing.
+
+### Optional CPU speech output (Piper)
+
+Enable `settings.piper_enabled` after provisioning a local voice. The default
+is German `de_DE-thorsten-medium`; language follows the installed voice model.
+See [Piper installation](doc/installation.md#piper-cpu-text-to-speech) and the
+[`/v1/audio/speech` API](doc/api.md#post-v1audiospeech).

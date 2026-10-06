@@ -43,7 +43,7 @@ if ! "${SERVICE_DIR}/venv/bin/python" -c 'import hailo_platform.genai' 2>/dev/nu
   printf '%s\n' "${VENDOR_SITE}" > "${SERVICE_SITE}/hailort-vendor.pth"
 fi
 "${SERVICE_DIR}/venv/bin/pip" install --upgrade pip setuptools wheel
-"${SERVICE_DIR}/venv/bin/pip" install "${SOURCE_DIR}"
+"${SERVICE_DIR}/venv/bin/pip" install "${SOURCE_DIR}[piper]"
 if [[ ! -f /etc/hailo-10h-services.yaml ]]; then
   install -o root -g hailo-services -m 0640 "${SOURCE_DIR}/deploy/hailo-10h-services.yaml.example" /etc/hailo-10h-services.yaml
   SERVICE_KEY=$("${SERVICE_DIR}/venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(32))')

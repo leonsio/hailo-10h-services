@@ -40,6 +40,11 @@ class Settings:
         vision_max_detections (int): Maximum returned object-detection rows for HTTP requests.
         vision_queue_size (int): Maximum pending requests per chat/speech backend queue.
         vision_scheduler_priority (int): Hailo scheduler priority for the resident object detector.
+        piper_enabled (bool): Whether to initialize CPU text-to-speech.
+        piper_voice (str): Default installed voice ID or absolute ONNX path.
+        piper_voice_dir (str): Directory of locally provisioned Piper ONNX/JSON pairs.
+        piper_language (str): Expected default voice language, e.g. de_DE or en_US.
+        piper_max_input_chars (int): Maximum text length accepted by the speech service.
         litert_enabled (bool): Whether to initialize the CPU LiteRT-LM backend.
         host (str): HTTP listener bind address.
         port (int): HTTP API and UI listener port.
@@ -98,6 +103,11 @@ class Settings:
     vision_max_detections: int = 20
     vision_queue_size: int = 16
     vision_scheduler_priority: int = 1
+    piper_enabled: bool = False
+    piper_voice: str = "de_DE-thorsten-medium"
+    piper_voice_dir: str = "/var/lib/hailo-10h-services/piper"
+    piper_language: str = "de_DE"
+    piper_max_input_chars: int = 4096
     litert_enabled: bool = False
     host: str = "0.0.0.0"
     port: int = 8090
@@ -144,6 +154,10 @@ class Settings:
         Raises:
             ValueError: HA-Assist cannot route to itself.
         """
+        if not self.piper_voice.strip() or not self.piper_language.strip():
+            raise ValueError("Piper voice and language must not be empty")
+        if not 1 <= self.piper_max_input_chars <= 16384:
+            raise ValueError("piper_max_input_chars must be between 1 and 16384")
         if HA_ASSIST_MODEL in {self.ha_assist_text_model, self.ha_assist_vision_model}:
             raise ValueError("HA-Assist cannot route to itself")
         if not self.ha_assist_text_model.strip() or not self.ha_assist_vision_model.strip():

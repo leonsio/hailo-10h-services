@@ -15,6 +15,12 @@ settings:
   api_key: ""
   language: de
   service_language: de
+  # CPU text-to-speech; provision the ONNX/JSON voice pair before enabling.
+  piper_enabled: false
+  piper_voice: de_DE-thorsten-medium
+  piper_voice_dir: /var/lib/hailo-10h-services/piper
+  piper_language: de_DE
+  piper_max_input_chars: 4096
   debug_log: false
   # Only model="HA-Assist" applies HA routing, prompt compilation and verification.
   # This example uses Gemma/CPU for HA text and Qwen VLM/Hailo for images so both

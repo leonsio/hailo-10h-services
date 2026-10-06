@@ -21,7 +21,13 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    PlainTextResponse,
+    Response,
+    StreamingResponse,
+)
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -34,7 +40,8 @@ from .metrics import response_metrics, timestamp
 from .models import ModelManager
 from .protocols import LANGUAGES, MQTTBridge, WyomingServer, dispatch
 from .runtime import Runtime
-from .schemas import ChatRequest, TranscribeRequest, VisionDetectRequest
+from .schemas import ChatRequest, SpeechRequest, TranscribeRequest, VisionDetectRequest
+from .speech_piper import SpeechRuntime
 from .tool_calling import has_tool_context
 from .vision import COCO80, VisionRuntime
 from .vision_zmq import FrigateZmqServer
@@ -327,13 +334,16 @@ def completion(text, identifier, created, model):
     }
 
 
-def create_app(settings=None, backend=None, litert_backend=None, vision_backend=None):
+def create_app(
+    settings=None, backend=None, litert_backend=None, vision_backend=None, speech_backend=None
+):
     """Compose HTTP, MCP, Wyoming, MQTT and resident inference services.
 
     Args:
         settings (Settings): Validated service settings controlling enabled models and limits.
         backend (ChatBackend): Resident backend used for generation or context preparation.
         litert_backend (ChatBackend | None): Injected LiteRT backend; None creates one when enabled.
+        speech_backend (PiperBackend | None): Injectable CPU speech adapter.
         vision_backend (HailoVisionBackend | None): Injected detector backend; None uses the resident Hailo detector.
 
     Returns:
@@ -344,6 +354,7 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
     """
     settings = settings or Settings.from_env()
     runtime = Runtime(settings, backend, litert_backend)
+    speech = SpeechRuntime(settings, speech_backend)
     vision = VisionRuntime(settings, vision_backend)
     frigate_zmq = FrigateZmqServer(vision, settings)
     wyoming = WyomingServer(runtime, settings)
@@ -452,6 +463,7 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
         mqtt_task = None
         try:
             await runtime.start()  # Failure prevents all listeners from becoming ready.
+            await speech.start()
             await vision.start()
             await frigate_zmq.start()
             if settings.wyoming_port:
@@ -468,9 +480,11 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
                 mqtt_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await mqtt_task
+            await speech.close()
             await runtime.close()
 
     app = FastAPI(title="Hailo-10H Services", version="0.1.0", lifespan=lifespan)
+    app.state.speech = speech
     app.state.runtime = runtime
     app.state.vision = vision
     app.state.frigate_zmq = frigate_zmq
@@ -677,7 +691,12 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
             No application-specific exceptions are raised for valid inputs.
         """
         return JSONResponse(
-            {**runtime.status(), "vision": vision.status(), "mqtt_connected": mqtt.connected},
+            {
+                **runtime.status(),
+                "vision": vision.status(),
+                "piper": speech.status(),
+                "mqtt_connected": mqtt.connected,
+            },
             status_code=200
             if runtime.ready and (not settings.vision_enabled or vision.ready)
             else 503,
@@ -708,6 +727,11 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
             + (
                 [{"id": LLM_MODEL, "object": "model", "owned_by": "litert-lm"}]
                 if runtime.litert_ready
+                else []
+            )
+            + (
+                [{"id": "piper", "object": "model", "owned_by": "piper-cpu"}]
+                if speech.ready
                 else []
             )
             + (
@@ -970,6 +994,36 @@ def create_app(settings=None, backend=None, litert_backend=None, vision_backend=
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(events(), media_type="text/event-stream")
+
+    @app.post("/v1/audio/speech")
+    async def audio_speech(body: SpeechRequest):
+        """Generate CPU speech with an installed Piper voice.
+
+        Args:
+            body (SpeechRequest): Text, local voice, language, speed and output format.
+
+        Returns:
+            Response: Binary WAV or headerless mono PCM16LE at 24 kHz.
+
+        Raises:
+            HTTPException: Native speech synthesis fails.
+        """
+        started = time.perf_counter()
+        try:
+            data, content_type, rate = await speech.synthesize(body)
+        except (ValueError, BusyError, asyncio.TimeoutError):
+            raise
+        except Exception as exc:
+            _LOG.exception("Piper synthesis failed")
+            raise HTTPException(status_code=502, detail="Piper synthesis failed") from exc
+        return Response(
+            data,
+            media_type=content_type,
+            headers={
+                "X-Audio-Sample-Rate": str(rate),
+                "X-Inference-Ms": f"{(time.perf_counter() - started) * 1000:.3f}",
+            },
+        )
 
     @app.post("/v1/audio/transcriptions")
     async def transcribe(

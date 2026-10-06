@@ -10,6 +10,7 @@ MQTT and Frigate interfaces.
 |---|---|---|---|---|
 | HTTP | `POST :8090/v1/chat/completions` | Text, images, SSE, function tools | — | — |
 | HTTP | `POST :8090/v1/audio/transcriptions` | — | File upload | — |
+| HTTP | `POST :8090/v1/audio/speech` | — | Text → Piper CPU speech (WAV/PCM) | — |
 | HTTP | `POST :8090/v1/vision/detect` | — | — | Object detection |
 | HTTP | `GET :8090/v1/models` | Ready model IDs | Ready model ID | Ready detector ID |
 | HTTP | `GET :8090/health` | Backend/readiness status | Status | Status/ZMQ |
@@ -673,3 +674,44 @@ External references:
 - [Frigate object detectors](https://docs.frigate.video/configuration/object_detectors/)
 - [Wyoming protocol](https://github.com/OHF-Voice/wyoming)
 - [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
+
+## `POST /v1/audio/speech`
+
+CPU text-to-speech using Piper. Protected by the same Bearer API key and body
+limit as other `/v1` endpoints. Enable and provision Piper as described in
+[installation](installation.md#piper-cpu-text-to-speech).
+
+```bash
+curl --fail-with-body http://HOST:8090/v1/audio/speech \
+  -H "Authorization: Bearer $API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"piper","input":"Hallo! Das Licht im Wohnzimmer ist eingeschaltet.","voice":"de_DE-thorsten-medium","response_format":"wav","speed":1.0}' \
+  --output speech.wav
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `model` | `piper` | Only `piper` is currently supported. |
+| `input` | Required | Nonblank text; default limit 4096 characters, configurable via `piper_max_input_chars`. |
+| `voice` | Configured `piper_voice` | Installed voice ID without `.onnx`, e.g. `de_DE-thorsten-medium`. Client paths/download URLs are rejected. |
+| `language` | Selected voice language | Optional validation of the voice language, e.g. `de`, `de_DE`, `en_US`. Does not translate text or change the voice's language. |
+| `response_format` | `wav` | `wav`: PCM16 mono WAV at native voice rate. `pcm`: headerless signed PCM16 little-endian, mono, resampled to 24 kHz. |
+| `speed` | `1.0` | 0.25–4.0; higher values speak faster (`length_scale = 1 / speed`). |
+
+The response contains binary audio (`audio/wav` or `audio/pcm`), with
+`X-Audio-Sample-Rate` and `X-Inference-Ms` headers. Timing includes queue wait
+and synthesis; token counts and LLM TTFT do not apply. MP3, Opus, FLAC, AAC,
+SSE and streaming responses are not currently supported; unsupported request
+fields/formats are rejected with HTTP 422.
+
+Piper has its own bounded CPU queue (`queue_size`) and request deadline
+(`request_timeout`). A timed-out/disconnected request retains its queue slot
+until native work completes. Generated audio is limited by `max_audio_seconds`;
+split longer text across requests. HTTP 400 indicates invalid voice/language or
+configured input/audio limits; 503 means disabled/unavailable/full queue;
+504 means timeout; 502 means synthesis failure.
+
+`GET /health` includes a `piper` block with enabled/ready, CPU device, default
+voice/language, pending count and startup error. Piper startup failure does not
+stop other backends. `GET /v1/models` includes `piper` when ready. The existing
+Wyoming endpoint remains speech-to-text only; this change adds HTTP TTS.
