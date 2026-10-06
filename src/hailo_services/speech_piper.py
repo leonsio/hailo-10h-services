@@ -6,8 +6,11 @@ adapter can implement the same start/synthesize/close contract.
 
 import io
 import json
+import logging
 import re
+import time
 import wave
+from importlib.metadata import PackageNotFoundError, version
 from math import gcd
 from pathlib import Path
 
@@ -15,6 +18,8 @@ import numpy as np
 from scipy.signal import resample_poly
 
 from .speech_common import language_matches
+
+_LOG = logging.getLogger(__name__)
 
 
 def installed_voices(settings):
@@ -58,6 +63,7 @@ class PiperBackend:
         self.loaded_path = None
         self.language = None
         self.default_language = None
+        self.version = "unknown"
 
     def _path(self, voice=None):
         """Resolve an installed ID or the trusted configured default path.
@@ -105,10 +111,25 @@ class PiperBackend:
         if path != self.loaded_path:
             from piper import PiperVoice
 
+            started = time.perf_counter()
+            _LOG.info(
+                "Loading Piper voice device=cpu voice=%s language=%s model_path=%s",
+                path.stem,
+                language,
+                path,
+            )
             self.voice = None
             self.loaded_path = None
             self.voice = PiperVoice.load(str(path), use_cuda=False)
             self.loaded_path = path
+            _LOG.info(
+                "Piper voice loaded version=%s device=cpu voice=%s language=%s sample_rate_hz=%d load_ms=%.1f",
+                self.version,
+                path.stem,
+                language,
+                self.voice.config.sample_rate,
+                (time.perf_counter() - started) * 1000,
+            )
         self.language = language
 
     def start(self):
@@ -117,6 +138,16 @@ class PiperBackend:
         Returns:
             None: Keeps a CPU voice resident for subsequent requests.
         """
+        try:
+            self.version = version("piper-tts")
+        except PackageNotFoundError:
+            self.version = "unknown"
+        _LOG.info(
+            "Starting Piper TTS version=%s device=cpu default_voice=%s configured_language=%s",
+            self.version,
+            self.settings.piper_voice,
+            self.settings.piper_language,
+        )
         self._load(self._path(), self.settings.piper_language)
         self.default_language = self.language
 

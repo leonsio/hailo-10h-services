@@ -40,9 +40,17 @@ class SpeechRuntime:
             try:
                 await asyncio.get_running_loop().run_in_executor(self.executor, self.backend.start)
                 self.ready = True
+                _LOG.info(
+                    "Piper TTS ready queue_size=%d max_input_chars=%d max_audio_seconds=%d",
+                    self.settings.queue_size,
+                    self.settings.piper_max_input_chars,
+                    self.settings.max_audio_seconds,
+                )
             except Exception as exc:
                 self.error = f"{type(exc).__name__}: {exc}"
                 _LOG.exception("Piper startup failed; other backends remain available")
+        else:
+            _LOG.info("Piper TTS disabled (piper_enabled=false)")
 
     def _completed(self, future):
         """Release capacity only after native synthesis actually completes.

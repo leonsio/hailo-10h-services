@@ -485,3 +485,8 @@ then reload its **Wyoming Protocol** integration in Home Assistant. Select
 **hailo-piper** as the text-to-speech provider in the Assist voice assistant and
 choose the installed voice. There is no separate TTS port or API key for Wyoming.
 See [Wyoming STT and TTS](api.md#home-assistant-wyoming-stt-and-tts).
+
+Piper emits INFO startup logs with the installed `piper-tts` version, CPU device,
+default voice, configured/actual language, ONNX path, sample rate and load time.
+Successful startup logs queue/input/audio limits; disabled Piper logs
+`Piper TTS disabled`. Switching voices logs the newly loaded voice and language.
