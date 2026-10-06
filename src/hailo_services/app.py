@@ -31,8 +31,10 @@ from .metrics import response_metrics, timestamp
 from .models import ModelManager
 from .protocols import LANGUAGES, MQTTBridge, WyomingServer, dispatch
 from .runtime import BusyError, LiteRTInferenceError, Runtime
-from .schemas import ChatRequest, TranscribeRequest
+from .schemas import ChatRequest, TranscribeRequest, VisionDetectRequest
 from .tool_calling import has_tool_context
+from .vision import COCO80, VisionRuntime
+from .vision_zmq import FrigateZmqServer
 
 _LOG = logging.getLogger(__name__)
 _WEB = Path(__file__).with_name("web")
@@ -202,9 +204,11 @@ def completion(text, identifier, created, model):
     }
 
 
-def create_app(settings=None, backend=None, litert_backend=None):
+def create_app(settings=None, backend=None, litert_backend=None, vision_backend=None):
     settings = settings or Settings.from_env()
     runtime = Runtime(settings, backend, litert_backend)
+    vision = VisionRuntime(settings, vision_backend)
+    frigate_zmq = FrigateZmqServer(vision, settings)
     wyoming = WyomingServer(runtime, settings)
     mqtt = MQTTBridge(runtime, settings)
     mcp = MCPServer("Hailo-10H", version="0.1.0")
@@ -261,6 +265,8 @@ def create_app(settings=None, backend=None, litert_backend=None):
         mqtt_task = None
         try:
             await runtime.start()  # Failure prevents all listeners from becoming ready.
+            await vision.start()
+            await frigate_zmq.start()
             if settings.wyoming_port:
                 await wyoming.start()
             if settings.mqtt_host:
@@ -268,6 +274,8 @@ def create_app(settings=None, backend=None, litert_backend=None):
             async with mcp.session_manager.run():
                 yield
         finally:
+            await frigate_zmq.close()
+            await vision.close()
             await wyoming.close()
             if mqtt_task:
                 mqtt_task.cancel()
@@ -277,6 +285,8 @@ def create_app(settings=None, backend=None, litert_backend=None):
 
     app = FastAPI(title="Hailo-10H Services", version="0.1.0", lifespan=lifespan)
     app.state.runtime = runtime
+    app.state.vision = vision
+    app.state.frigate_zmq = frigate_zmq
     app.state.mqtt = mqtt
     app.add_middleware(AccessAndSizeLimit, settings=settings)
 
@@ -310,6 +320,7 @@ def create_app(settings=None, backend=None, litert_backend=None):
             "vision_models": ([settings.vlm_model] if settings.vlm_enabled else [])
             + ([HA_ASSIST_MODEL] if settings.ha_assist_enabled and settings.vlm_enabled
                and settings.ha_assist_vision_model == settings.vlm_model else []),
+            "object_detection": vision.status(),
             "ha_assist_model": HA_ASSIST_MODEL,
             "ha_assist": runtime.status()["ha_assist"],
             "model_limits": runtime.model_limits,
@@ -362,8 +373,8 @@ def create_app(settings=None, backend=None, litert_backend=None):
     @app.get("/health")
     async def health():
         return JSONResponse(
-            {**runtime.status(), "mqtt_connected": mqtt.connected},
-            status_code=200 if runtime.ready else 503,
+            {**runtime.status(), "vision": vision.status(), "mqtt_connected": mqtt.connected},
+            status_code=200 if runtime.ready and (not settings.vision_enabled or vision.ready) else 503,
         )
 
     @app.get("/v1/models")
@@ -373,10 +384,58 @@ def create_app(settings=None, backend=None, litert_backend=None):
             "data": [
                 {"id": model, "object": "model", "owned_by": "hailo"}
                 for model in runtime.hailo_chat_models + ([settings.stt_model] if settings.whisper_enabled else [])
-            ] + ([{"id": LLM_MODEL, "object": "model", "owned_by": "litert-lm"}]
+            ] + ([{"id": settings.vision_model_id, "object": "model", "owned_by": "hailo"}]
+                 if vision.ready else [])
+            + ([{"id": LLM_MODEL, "object": "model", "owned_by": "litert-lm"}]
                  if runtime.litert_ready else [])
             + ([{"id": HA_ASSIST_MODEL, "object": "model", "owned_by": "hailo-services"}]
                if settings.ha_assist_enabled else []),
+        }
+
+    @app.post("/v1/vision/detect")
+    async def vision_detect(request: VisionDetectRequest, http_request: Request):
+        if not vision.ready:
+            raise HTTPException(503, "Vision model is disabled or not ready")
+        if request.model and request.model not in {
+            settings.vision_model, settings.vision_model_id, Path(settings.vision_model).name
+        }:
+            raise HTTPException(400, f"Unknown vision model: {request.model}")
+        started = time.perf_counter()
+        width, height, raw = await vision.detect_base64(
+            request.image, request.confidence, request.max_detections
+        )
+        detections = []
+        for row in raw:
+            class_id = int(row[0])
+            confidence = float(row[1])
+            if confidence <= 0:
+                continue
+            ymin, xmin, ymax, xmax = (float(value) for value in row[2:6])
+            detections.append({
+                "class_id": class_id,
+                "label": COCO80[class_id] if 0 <= class_id < len(COCO80) else str(class_id),
+                "confidence": confidence,
+                "box": {"x_min": xmin, "y_min": ymin, "x_max": xmax, "y_max": ymax},
+                "box_pixels": {
+                    "x_min": max(0, min(width, round(xmin * width))),
+                    "y_min": max(0, min(height, round(ymin * height))),
+                    "x_max": max(0, min(width, round(xmax * width))),
+                    "y_max": max(0, min(height, round(ymax * height))),
+                },
+            })
+        request_id = http_request.scope.get("state", {}).get("request_id", "-")
+        _debug(settings,
+               "protocol=http operation=vision_detect request_id=%s model=%s detections=%d inference_ms=%.1f",
+               request_id, settings.vision_model_id, len(detections),
+               (time.perf_counter() - started) * 1000)
+        return {
+            "id": "vision-" + uuid.uuid4().hex,
+            "object": "vision.detection",
+            "created": int(time.time()),
+            "model": settings.vision_model_id,
+            "image": {"width": width, "height": height},
+            "detections": detections,
+            "metrics": response_metrics({}, http_request.scope["state"]),
         }
 
     @app.post("/v1/chat/completions")
