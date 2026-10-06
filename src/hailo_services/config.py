@@ -15,6 +15,7 @@ class Settings:
     model_store: str = "/usr/local/hailo/resources/models/hailo10h"
     model_release: str = "auto"
     vlm_release: str = "auto"
+    hailo_llm_release: str = "auto"
     vlm_max_input_tokens: int = 2048
     hailo_llm_max_input_tokens: int = 2048
     vlm_enabled: bool = True
@@ -107,9 +108,10 @@ class Settings:
                         raise ValueError(f"models.{role} does not allow max_input_tokens")
                     values[limit_key] = selection["max_input_tokens"]
                 if "release" in selection:
-                    if role != "vlm":
+                    release_key = {"vlm": "vlm_release", "hailo_llm": "hailo_llm_release"}.get(role)
+                    if release_key is None:
                         raise ValueError(f"models.{role} does not allow release")
-                    values["vlm_release"] = selection["release"]
+                    values[release_key] = selection["release"]
                 enabled, model_key = roles[role]
                 if "enabled" in selection:
                     values[enabled] = selection["enabled"]
