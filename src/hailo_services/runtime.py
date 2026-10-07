@@ -68,17 +68,29 @@ class Runtime:
         self.litert_ready = False
         self.litert_error = None
 
-    async def start(self):
-        """Initialize resident resources or start the configured transport listener.
+    async def start_hailo(self):
+        """Initialize the resident Hailo backends without starting CPU models.
 
         Returns:
-            None: Marks the service ready after successful initialization.
+            None: Marks the Hailo runtime ready after successful initialization.
 
         Notes:
-            No application-specific exceptions are raised for valid inputs.
+            This phase intentionally excludes LiteRT-LM so callers can load every
+            Hailo-10H resident model before allocating CPU model resources.
         """
         await asyncio.get_running_loop().run_in_executor(self.executor, self.backend.start)
         self.ready = True
+
+    async def start_cpu(self):
+        """Initialize optional CPU-backed models after Hailo startup completes.
+
+        Returns:
+            None: Marks LiteRT-LM ready when configured and successfully initialized.
+
+        Notes:
+            LiteRT-LM startup failures remain non-fatal so initialized Hailo models
+            stay available exactly as they did before startup was split into phases.
+        """
         if self.litert_backend is not None:
             try:
                 await asyncio.get_running_loop().run_in_executor(
@@ -88,6 +100,19 @@ class Runtime:
             except Exception as exc:
                 self.litert_error = f"{type(exc).__name__}: {exc}"
                 _LOG.exception("LiteRT-LM startup failed; Hailo models remain available")
+
+    async def start(self):
+        """Initialize Hailo resources followed by optional CPU resources.
+
+        Returns:
+            None: Marks configured resident resources ready after initialization.
+
+        Notes:
+            This compatibility entry point preserves the previous public lifecycle
+            while exposing separate startup phases to the application orchestrator.
+        """
+        await self.start_hailo()
+        await self.start_cpu()
 
     def submit(self, function, *args, executor=None, litert=False):
         """Schedule native work without releasing queue capacity on client timeout.
@@ -241,13 +266,13 @@ class Runtime:
 
         Args:
             function (Callable[..., Any]): Synchronous work executed on the backend owner thread.
-            *args (Any): Positional arguments forwarded to the native operation.
+            *args (Any): Positional arguments forwarded to the submitted LiteRT callable.
 
         Returns:
             Any: Result returned by the submitted LiteRT callable.
 
         Raises:
-            BusyError: The LiteRT backend is unavailable or its queue is full.
+            BusyError: The LiteRT backend is unavailable or its owner queue is full.
             asyncio.TimeoutError: The client deadline expires; native work remains shielded.
         """
         future = self.submit(function, *args, executor=self.litert_executor, litert=True)
