@@ -1,0 +1,76 @@
+{
+  "model": "HA-Assist",
+  "stream": false,
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a voice assistant for Home Assistant. When controlling Home Assistant always call the intent tools. When controlling an area, prefer passing just area name and domain.\n\nStatic Context:\n- names: Stehlampe\n  domain: light\n  areas: Wohnzimmer\n\nAntworte auf Deutsch."
+    },
+    {
+      "role": "user",
+      "content": "Schalte das Licht im Wohnzimmer auf 70%"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "light__HassLightSet",
+        "description": "Sets the brightness percentage or color of a light",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "area": {
+              "type": "string"
+            },
+            "domain": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "light"
+                ]
+              }
+            },
+            "brightness": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "color": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "intent__HassTurnOff",
+        "description": "Turns off/closes a device or entity",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "area": {
+              "type": "string"
+            },
+            "domain": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
+

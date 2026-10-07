@@ -119,6 +119,81 @@ user turn and drops subsequent messages. Diagnosis always reports
 `generative_calls=0` and `tools_executed=0`; whether production would need a
 model is shown by `metrics.ha_route.would_inference_calls`.
 
+### Small Python diagnosis client
+
+The standalone [scripts/diagnose_ha.py](../scripts/diagnose_ha.py) needs only
+Python 3.10+ and its standard library. Update/switch to this branch and run it
+from the repository directory. Supply a complete captured HA OpenAI request as
+`ha-request.json`, including system catalogue, messages and tool schemas.
+
+```bash
+python3 scripts/diagnose_ha.py \
+  --url http://HOST:8090 \
+  --api-key YOUR_API_KEY \
+  --request ha-request.json \
+  --prompt "Schalte das Licht in Wohnzimer auf 90%" \
+  --output diagnosis-result.json
+```
+
+Omit `--api-key` if authentication is disabled. Alternatively set
+`HAILO_API_KEY` in the environment. The URL may be the service root,
+its `/v1` base or the full diagnosis endpoint. HTTPS uses normal certificate
+verification; install/trust your service CA for a self-signed deployment.
+
+Use [the synthetic example](../scripts/examples/ha-diagnosis-request.json)
+if you do not yet have a captured request:
+
+```bash
+python3 scripts/diagnose_ha.py \
+  --url http://HOST:8090 \
+  --request scripts/examples/ha-diagnosis-request.json \
+  --prompt "Schalte das Licht in Wohnzimer auf 90%"
+```
+
+The example defines a fictional living-room light, not your real installation.
+It tests recognition against that supplied catalogue. For real target/ability
+validation, replace it with the actual request from your HA integration.
+The service must have HA-Assist and its configured backend enabled.
+
+The script always sets `model=HA-Assist` and `stream=false` and only posts
+to `/v1/ha-assist/diagnose`. With `--prompt`, it replaces the most recent user
+message and removes later assistant/tool messages. Without `--prompt`, it
+retains the complete history so tool-result follow-ups can be diagnosed too.
+Each invocation rereads the original file, so independent test replacements
+do not accumulate. No Home Assistant access token is needed.
+
+Output includes proposed calls, candidate evidence, intended inference count,
+stage timings and the complete prepared model input. `--json` prints the full
+JSON instead of the readable report; `--output` saves the full JSON in either
+mode. A failed HTTP request exits with status 1 and prints the server error
+(401: API key, 404: deployed branch/URL, 422: request schema). The script does
+not redirect authenticated requests; supply the final service address.
+
+### Calling endpoints directly
+
+```bash
+# Current readiness / loaded models (add authorization when configured).
+curl -sS http://HOST:8090/health
+curl -sS http://HOST:8090/v1/models
+
+# Diagnosis without generation or device execution.
+curl --fail-with-body -sS http://HOST:8090/v1/ha-assist/diagnose \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  --data-binary @scripts/examples/ha-diagnosis-request.json
+```
+
+For real HA diagnosis, substitute your complete `ha-request.json` after setting
+`model=HA-Assist` and `stream=false`. Omit the authorization header when no
+key is configured.
+
+`POST /v1/chat/completions` accepts the same envelope and **does generate**
+when needed. It returns text or proposed tool calls; an HTTP replay by itself
+does not execute those calls in HA. The normal HA integration executes returned
+calls using its permissions. An explicit physical model such as Gemma or Qwen
+bypasses HA-Assist recognition. Diagnosis measures preparation, not inference
+TTFT or final native prompt token counts.
+
 ### Test prompts and acceptance criteria
 
 Replace example rooms/devices with actual exposed catalogue names. Misspell those
@@ -226,3 +301,4 @@ all returned actions.
 - [Assist Canonicalizer](https://github.com/luuquangvu/assist-canonicalizer):
   independent ranking signals, bounded candidate indexes and explicit confidence
   gates as design references. This implementation does not vendor those projects.
+
