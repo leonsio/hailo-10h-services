@@ -25,6 +25,9 @@ _ACTION_TO_STATE = {
 }
 _VERIFY_DOMAINS = {"light", "switch"}
 _DEFAULT_VERIFY_ATTEMPTS = 2
+# Backward-compatible settle interval for the legacy direct LiteRT HA path.
+# HA-Assist itself uses Settings.ha_assist_verify_delay.
+_VERIFY_SETTLE_SECONDS = 0.4
 
 
 def _arguments(call):
@@ -250,7 +253,9 @@ def _live_calls_since_user(messages):
     for message in messages[start:]:
         if message.get("role") != "assistant":
             continue
-        count += sum(1 for call in message.get("tool_calls") or [] if _tool_name(call) == _LIVE_TOOL)
+        count += sum(
+            1 for call in message.get("tool_calls") or [] if _tool_name(call) == _LIVE_TOOL
+        )
     return count
 
 
@@ -347,9 +352,7 @@ def _live_tool_available(request):
     Returns:
         bool: Whether GetLiveContext is available on this request.
     """
-    return any(
-        tool.get("function", {}).get("name") == _LIVE_TOOL for tool in (request.tools or [])
-    )
+    return any(tool.get("function", {}).get("name") == _LIVE_TOOL for tool in (request.tools or []))
 
 
 def _verify_decision(initial, verify_attempt):
@@ -479,9 +482,7 @@ def _needs_live_tool(messages, settings=None):
     entities = _live_entities(live)
     if not entities:
         return False
-    mismatches = [
-        entity for entity in entities if entity["state"] != initial["expected_state"]
-    ]
+    mismatches = [entity for entity in entities if entity["state"] != initial["expected_state"]]
     return bool(mismatches) and _live_calls_since_user(messages) < verify_limit
 
 

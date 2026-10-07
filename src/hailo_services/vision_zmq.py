@@ -61,9 +61,13 @@ class FrigateZmqServer:
         _LOG.info("Frigate ZMQ detector listening on %s", self.settings.vision_zmq_endpoint)
 
     async def _monitor(self):
-        """Log transport connections independently of detector requests."""
-        from zmq.utils.monitor import parse_monitor_message
+        """Log transport connections independently of detector requests.
+
+        Returns:
+            None: Runs until cancelled or until the monitor socket fails.
+        """
         import zmq
+        from zmq.utils.monitor import parse_monitor_message
 
         names = {
             zmq.EVENT_ACCEPTED: "connected",
@@ -76,7 +80,8 @@ class FrigateZmqServer:
                 endpoint = event["endpoint"].decode("utf-8", errors="replace")
                 _LOG.debug(
                     "protocol=zmq event=%s endpoint=%s",
-                    names.get(event["event"], str(event["event"])), endpoint,
+                    names.get(event["event"], str(event["event"])),
+                    endpoint,
                 )
             except asyncio.CancelledError:
                 raise
@@ -122,7 +127,9 @@ class FrigateZmqServer:
             started = time.perf_counter()
             _LOG.debug(
                 "protocol=zmq event=request_received request_id=%s frames=%d bytes=%d",
-                request_id, len(frames), sum(len(frame) for frame in frames),
+                request_id,
+                len(frames),
+                sum(len(frame) for frame in frames),
             )
             try:
                 if not frames:
@@ -140,7 +147,10 @@ class FrigateZmqServer:
                     )
                     _LOG.debug(
                         "protocol=zmq event=model_response request_id=%s model=%s available=%s duration_ms=%.1f",
-                        request_id, model_name, available, (time.perf_counter() - started) * 1000,
+                        request_id,
+                        model_name,
+                        available,
+                        (time.perf_counter() - started) * 1000,
                     )
                     continue
                 if header.get("model_data"):
@@ -155,7 +165,8 @@ class FrigateZmqServer:
                     )
                     _LOG.debug(
                         "protocol=zmq event=model_upload_rejected request_id=%s duration_ms=%.1f",
-                        request_id, (time.perf_counter() - started) * 1000,
+                        request_id,
+                        (time.perf_counter() - started) * 1000,
                     )
                     continue
                 if len(frames) != 2:
@@ -175,8 +186,12 @@ class FrigateZmqServer:
                 # Frigate's detector shared-memory contract is exactly (20, 6).
                 _LOG.debug(
                     "protocol=zmq event=inference_start request_id=%s model=%s shape=%s dtype=%s tensor_bytes=%d pending=%s",
-                    request_id, self.settings.vision_model_id, shape, dtype,
-                    len(frames[1]), self.vision.pending,
+                    request_id,
+                    self.settings.vision_model_id,
+                    shape,
+                    dtype,
+                    len(frames[1]),
+                    getattr(self.vision, "pending", 0),
                 )
                 inference_started = time.perf_counter()
                 detections = await self.vision.detect_array(tensor, maximum=20)
@@ -193,8 +208,11 @@ class FrigateZmqServer:
                     active = detections[detections[:, 1] > 0]
                     _LOG.debug(
                         "protocol=zmq event=inference_response request_id=%s detections=%d inference_ms=%.1f duration_ms=%.1f response_bytes=%d results=%s",
-                        request_id, len(active), inference_ms,
-                        (time.perf_counter() - started) * 1000, detections.nbytes,
+                        request_id,
+                        len(active),
+                        inference_ms,
+                        (time.perf_counter() - started) * 1000,
+                        detections.nbytes,
                         active.tolist(),
                     )
             except asyncio.CancelledError:
@@ -204,7 +222,8 @@ class FrigateZmqServer:
                 # keeping REP state intact is more useful than breaking the detector loop.
                 _LOG.exception(
                     "protocol=zmq event=request_failed request_id=%s duration_ms=%.1f",
-                    request_id, (time.perf_counter() - started) * 1000,
+                    request_id,
+                    (time.perf_counter() - started) * 1000,
                 )
                 zeros = np.zeros((20, 6), dtype=np.float32)
                 try:

@@ -111,12 +111,34 @@ class HailoBackend:
                 )
         from hailo_platform import VDevice
 
+        try:
+            from hailo_platform import HailoSchedulingAlgorithm
+        except ImportError:
+            HailoSchedulingAlgorithm = None
+
         params = VDevice.create_params()
         params.group_id = "SHARED"  # Mandatory, intentionally not configurable.
+        scheduling = "binding-default"
+        if HailoSchedulingAlgorithm is not None:
+            params.scheduling_algorithm = HailoSchedulingAlgorithm.ROUND_ROBIN
+            scheduling = "ROUND_ROBIN"
+        else:
+            _LOG.warning(
+                "HailoSchedulingAlgorithm is unavailable in this binding; "
+                "the SHARED VDevice will use the binding default scheduler"
+            )
         try:
             if params.group_id != "SHARED":
                 raise RuntimeError("Hailo binding did not preserve mandatory group_id=SHARED")
-            _LOG.info("Creating Hailo VDevice with effective group_id=%s", params.group_id)
+            _LOG.info(
+                "Creating Hailo VDevice group_id=%s scheduling=%s", params.group_id, scheduling
+            )
+            if self.settings.vision_enabled and self.settings.vision_scheduler_priority <= 16:
+                _LOG.warning(
+                    "vision_scheduler_priority=%d does not outrank Hailo normal priority 16; "
+                    "use 31 for latency-sensitive Frigate detection during GenAI inference",
+                    self.settings.vision_scheduler_priority,
+                )
             self.device = VDevice(params)
             if self.settings.vlm_enabled:
                 from hailo_platform.genai import VLM
@@ -134,7 +156,11 @@ class HailoBackend:
             if self.settings.minilm_enabled:
                 self.minilm = MiniLM(self.device, self.artifact_paths["minilm_hef"], manager)
                 self.artifact_paths.update(self.minilm.artifacts)
-            _LOG.info("All models initialized; VDevice group_id=SHARED; paths=%s", self.paths)
+            _LOG.info(
+                "All models initialized; VDevice group_id=SHARED scheduling=%s; paths=%s",
+                scheduling,
+                self.paths,
+            )
         except BaseException:
             self.close()
             raise
@@ -289,17 +315,46 @@ class HailoBackend:
                         if emit and not has_tool_context(request):
                             emit(chunk)
             raw_output = "".join(output).strip()
+            inference_ms = (time.perf_counter() - started) * 1000
             record(
                 request._metrics,
-                inference_ms=(time.perf_counter() - started) * 1000,
+                inference_ms=inference_ms,
                 ttft_ms=first_chunk_ms,
                 ttft_source="first_text_chunk" if first_chunk_ms is not None else None,
             )
             count_output(request._metrics, getattr(model, "tokenize", None), raw_output)
             result = parse_response(raw_output, request)
+            debug_json(
+                _LOG,
+                self.settings.debug_log,
+                f"final_{kind}_response",
+                {
+                    "model": request.model,
+                    "inference_ms": round(inference_ms, 1),
+                    "ttft_ms": round(first_chunk_ms, 1) if first_chunk_ms is not None else None,
+                    "input_tokens": request._metrics.get("input_tokens"),
+                    "output_tokens": request._metrics.get("output_tokens"),
+                    "response": result,
+                },
+                request_id=request._request_id,
+            )
             if emit and has_tool_context(request):
                 emit(result)
             return result
+        except Exception as exc:
+            debug_json(
+                _LOG,
+                self.settings.debug_log,
+                f"final_{kind}_error",
+                {
+                    "model": request.model,
+                    "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                },
+                request_id=request._request_id,
+            )
+            raise
         finally:
             model.clear_context()
 

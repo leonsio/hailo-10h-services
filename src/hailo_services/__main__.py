@@ -6,6 +6,7 @@ import uvicorn
 
 from .app import create_app
 from .config import Settings
+from .logging_utils import install_inline_data_redaction
 
 
 def main():
@@ -20,6 +21,7 @@ def main():
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
+    install_inline_data_redaction()
     settings = Settings.from_env()
     if settings.debug_log:
         logging.getLogger("hailo_services").setLevel(logging.DEBUG)
