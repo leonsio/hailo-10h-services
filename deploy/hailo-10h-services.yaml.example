@@ -77,8 +77,9 @@ vision:
   iou_threshold: 0.45
   max_detections: 20
   queue_size: 16
-  # Hailo scheduler priority inside the SHARED VDevice group. Higher values win.
-  scheduler_priority: 1
+  # Hailo scheduler priority inside the SHARED VDevice group (0..31).
+  # 31 keeps latency-sensitive Frigate/YOLO work above normal-priority GenAI work.
+  scheduler_priority: 31
   zmq:
     enabled: true
     # ZMQ is unauthenticated. Keep localhost unless Frigate runs on another
