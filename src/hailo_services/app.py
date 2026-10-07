@@ -463,9 +463,16 @@ def create_app(
         """
         mqtt_task = None
         try:
-            await runtime.start()  # Failure prevents all listeners from becoming ready.
-            await speech.start()
+            _LOG.info("Startup phase 1/2: loading resident Hailo-10H models")
+            await runtime.start_hailo()  # Failure prevents all listeners from becoming ready.
             await vision.start()
+            _LOG.info("Startup phase 1/2 complete: resident Hailo-10H models initialized")
+
+            _LOG.info("Startup phase 2/2: loading CPU models")
+            await runtime.start_cpu()
+            await speech.start()
+            _LOG.info("Startup phase 2/2 complete: CPU model initialization finished")
+
             await frigate_zmq.start()
             if settings.wyoming_port:
                 await wyoming.start()
