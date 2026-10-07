@@ -557,7 +557,7 @@ def create_app(
                 [FRIGATE_ASSIST_MODEL]
                 if settings.frigate_assist_enabled
                 and settings.vlm_enabled
-                and settings.frigate_assist_vision_model == settings.vlm_model
+                and settings.frigate_vision_model == settings.vlm_model
                 else []
             ),
             "object_detection": vision.status(),

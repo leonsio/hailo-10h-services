@@ -331,7 +331,7 @@ def compile_request(request, settings, tools, images):
             "If an interval or target is ambiguous ask for clarification. "
             "Omission markers mean partial results, not complete coverage."
         )
-        if settings.frigate_assist_text_model != LLM_MODEL and (
+        if settings.frigate_text_model != LLM_MODEL and (
             tools or any(m.get("role") == "tool" or m.get("tool_calls") for m in request.messages)
         ):
             # Native Hailo tool adapters parse JSON for every tool-aware round,

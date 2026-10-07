@@ -492,16 +492,18 @@ class Runtime:
                 "enabled": self.settings.frigate_assist_enabled,
                 "experimental": True,
                 "model": FRIGATE_ASSIST_MODEL,
-                "text_model": self.settings.frigate_assist_text_model,
-                "vision_model": self.settings.frigate_assist_vision_model,
+                "text_model": self.settings.frigate_text_model,
+                "vision_model": self.settings.frigate_vision_model,
                 "text_ready": bool(
                     self.settings.frigate_assist_enabled
                     and (
-                        self.settings.frigate_assist_text_model == LLM_MODEL
+                        self.settings.frigate_text_model == LLM_MODEL
                         and self.litert_ready
-                        or self.settings.frigate_assist_text_model
-                        == self.settings.hailo_llm_model_id
+                        or self.settings.frigate_text_model == self.settings.hailo_llm_model_id
                         and self.settings.hailo_llm_enabled
+                        and self.ready
+                        or self.settings.frigate_text_model == self.settings.vlm_model
+                        and self.settings.vlm_enabled
                         and self.ready
                     )
                 ),
@@ -509,7 +511,7 @@ class Runtime:
                     self.settings.frigate_assist_enabled
                     and self.ready
                     and self.settings.vlm_enabled
-                    and self.settings.frigate_assist_vision_model == self.settings.vlm_model
+                    and self.settings.frigate_vision_model == self.settings.vlm_model
                 ),
             },
             "litert_lm": {

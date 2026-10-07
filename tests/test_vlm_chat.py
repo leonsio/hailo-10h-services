@@ -483,3 +483,60 @@ def test_vlm_http_metrics_survive_prompt_copy_and_are_isolated_per_request():
         assert second["output_tokens"] == 0
         assert "ttft_ms" not in second
         assert metrics["output_tokens"] == 2
+
+
+@pytest.mark.parametrize("model", ["Qwen2-VL-2B-Instruct", "Qwen3-VL-2B-Instruct"])
+def test_frigate_vlm_text_target_uses_native_tools_and_summary_contract(model):
+    b = backend(model, text='{"content":"Based on the supplied results."}')
+    native = b.vlm
+    body = {
+        "model": "Frigate-Assist",
+        "tools": [tool("search_objects")],
+        "tool_choice": "auto",
+        "messages": [{"role": "user", "content": "Explain camera events"}],
+    }
+    with TestClient(create_app(b.settings, b)) as client:
+        response = client.post("/v1/chat/completions", json=body)
+        assert response.status_code == 200, response.text
+        assert (
+            response.json()["choices"][0]["message"]["content"] == "Based on the supplied results."
+        )
+        assert len(native.calls) == 1
+        metrics = response.json()["metrics"]
+        assert metrics["frigate_route"]["backend_model"] == model
+        assert metrics["input_budget_tokens"] < 2048
+        body["messages"] += [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "profile",
+                        "type": "function",
+                        "function": {"name": "search_objects", "arguments": '{"zone":"local"}'},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "profile", "content": '{"events":[]}'},
+        ]
+        summary = client.post("/v1/chat/completions", json=body)
+        assert summary.status_code == 200, summary.text
+        assert (
+            summary.json()["choices"][0]["message"]["content"] == "Based on the supplied results."
+        )
+        assert summary.json()["metrics"]["frigate_route"]["reason"] == "tool_summary"
+        assert len(native.calls) == 2
+
+
+def test_frigate_vlm_text_target_cannot_raise_native_token_budget():
+    b = backend(tokens=2048)
+    native = b.vlm
+    body = {
+        "model": "Frigate-Assist",
+        "max_input_tokens": 4096,
+        "messages": [{"role": "user", "content": "Explain camera events"}],
+    }
+    with TestClient(create_app(b.settings, b)) as client:
+        response = client.post("/v1/chat/completions", json=body)
+        assert response.status_code == 400, response.text
+        assert not native.calls

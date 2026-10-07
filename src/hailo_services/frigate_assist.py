@@ -31,22 +31,25 @@ def prepare(settings, request):
     started = time.perf_counter()
     images = has_images(request)
     tools, direct, reason = plan(request, settings, images)
-    target = settings.frigate_assist_vision_model if images else settings.frigate_assist_text_model
+    target = settings.frigate_vision_model if images else settings.frigate_text_model
     # Compilation validates the entire active round even for deterministic calls.
     prepared = compile_request(request, settings, tools, images)
     if direct is None:
         if images and (not settings.vlm_enabled or target != settings.vlm_model):
-            raise ValueError("Frigate-Assist image requests require the configured enabled VLM")
+            raise ValueError(
+                f"Frigate-Assist image target {target!r} must match the enabled VLM "
+                f"{settings.vlm_model!r}; configure frigate_assist_vision_model or leave it empty"
+            )
         if not images:
-            allowed = set()
+            allowed = {settings.vlm_model} if settings.vlm_enabled else set()
             if settings.litert_enabled or settings.litert_model_path:
                 allowed.add(LLM_MODEL)
             if settings.hailo_llm_enabled:
                 allowed.add(settings.hailo_llm_model_id)
             if target not in allowed:
                 raise ValueError(
-                    f"Frigate-Assist text target {target!r} is not an enabled LLM; "
-                    "configure frigate_assist_text_model and enable its backend; no VLM fallback"
+                    f"Frigate-Assist text target {target!r} is not an enabled LLM/VLM; "
+                    "configure frigate_assist_text_model and enable its backend; explicit unavailable targets do not fall back"
                 )
     prepared = prepared.model_copy(
         update={

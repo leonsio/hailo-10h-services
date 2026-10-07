@@ -595,9 +595,12 @@ that may add parameters not part of this gateway's supported request schema.
 
 Use `model: "Frigate-Assist"` at `/v1/chat/completions` for Frigate-specific
 preparation. Recognized requests return deterministic client-executed tools;
-other text requests use `frigate_assist_text_model` (default: Gemma/LiteRT-LM on CPU;
-an enabled native Hailo LLM can also be selected), and image requests use the enabled
-`frigate_assist_vision_model` with a short observation task and no tools. Direct native models
+other text requests use `frigate_assist_text_model` (an enabled Gemma, native Hailo LLM,
+or the enabled VLM), and image requests use `frigate_assist_vision_model` with a short
+observation task and no tools. Both omitted or empty selections resolve to the selected
+native VLM; Gemma must be explicitly selected. An explicit image target conflicting
+with the enabled VLM is rejected when loading configuration. Explicit unavailable
+text targets do not fall back. VLM text requests obey the native VLM token/context limits. Direct native models
 and `HA-Assist` retain their own preparation behavior.
 
 Only `Frigate-Assist` accepts Frigate's optional `stream_options` object:

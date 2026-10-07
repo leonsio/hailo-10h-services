@@ -140,7 +140,11 @@ class LLM:
 @pytest.fixture
 def service():
     settings = Settings(
-        litert_enabled=True, wyoming_port=0, minilm_enabled=False, whisper_enabled=False
+        litert_enabled=True,
+        frigate_assist_text_model=LLM_MODEL,
+        wyoming_port=0,
+        minilm_enabled=False,
+        whisper_enabled=False,
     )
     backend, llm = Backend(settings), LLM()
     with TestClient(create_app(settings, backend, llm)) as client:
@@ -829,7 +833,10 @@ def test_oversized_vision_constraints_fail_clearly():
 
 def test_no_text_backend_fallback_and_disabled_proxy():
     with pytest.raises(ValueError, match="not an enabled LLM"):
-        prepare(Settings(), ChatRequest(**payload("Explain a camera concept")))
+        prepare(
+            Settings(frigate_assist_text_model=LLM_MODEL),
+            ChatRequest(**payload("Explain a camera concept")),
+        )
     with pytest.raises(ValueError, match="disabled"):
         prepare(Settings(frigate_assist_enabled=False), ChatRequest(**payload()))
 
@@ -898,7 +905,7 @@ def test_text_and_vision_targets_are_selected_independently_before_native_startu
     assert direct is None and vision.model == VLM_MODEL
 
 
-@pytest.mark.parametrize("target", [VLM_MODEL, "unknown"])
+@pytest.mark.parametrize("target", ["unknown", "Qwen3-VL-2B-Instruct"])
 def test_invalid_or_wrong_role_text_target_is_rejected(target):
     with pytest.raises(ValueError, match="not an enabled LLM"):
         prepare(
@@ -913,7 +920,6 @@ def test_invalid_or_wrong_role_text_target_is_rejected(target):
         ("frigate_assist_text_model", FRIGATE_ASSIST_MODEL),
         ("frigate_assist_text_model", "HA-Assist"),
         ("frigate_assist_vision_model", FRIGATE_ASSIST_MODEL),
-        ("frigate_assist_text_model", "  "),
     ],
 )
 def test_invalid_proxy_target_configuration(key, target):
@@ -935,3 +941,80 @@ def test_no_invented_instruction_from_an_old_image_question():
     prepared, direct = prepare(Settings(), ChatRequest(**body))
     assert direct is None
     assert "Old question" not in str(prepared.messages)
+
+
+@pytest.mark.parametrize("model", ["Qwen2-VL-2B-Instruct", "Qwen3-VL-2B-Instruct"])
+@pytest.mark.parametrize("selection", ["", "  ", None, "explicit"])
+def test_vlm_only_defaults_and_explicit_text_selection(model, selection):
+    selected = model if selection == "explicit" else selection
+    settings = Settings(
+        vlm_hef=model,
+        frigate_assist_text_model=selected,
+        frigate_assist_vision_model=selected,
+        wyoming_port=0,
+    )
+    body = payload("Explain a camera concept")
+    prepared, direct = prepare(settings, ChatRequest(**body))
+    assert direct is None and prepared.model == model
+    assert settings.frigate_text_model == settings.frigate_vision_model == model
+    assert prepared.tools and "return ONLY JSON" in prepared.messages[0]["content"]
+    backend = Backend(settings)
+    with TestClient(create_app(settings, backend)) as client:
+        status = client.get("/health").json()["frigate_assist"]
+        assert status["text_model"] == status["vision_model"] == model
+        assert status["text_ready"] and status["vision_ready"]
+        assert FRIGATE_ASSIST_MODEL in client.get("/ui/config").json()["vision_models"]
+        response = client.post("/v1/chat/completions", json=body)
+        assert response.status_code == 200, response.text
+        assert len(backend.calls) == 1 and backend.calls[0].model == model
+
+
+def test_enabled_gemma_does_not_override_an_omitted_frigate_target():
+    settings = Settings(litert_enabled=True, vlm_hef="Qwen3-VL-2B-Instruct")
+    prepared, direct = prepare(settings, ChatRequest(**payload("Explain a camera concept")))
+    assert direct is None and prepared.model == settings.vlm_model
+
+
+def test_disabled_default_vlm_and_explicit_unavailable_targets_do_not_fall_back():
+    with pytest.raises(ValueError, match="not an enabled LLM/VLM"):
+        prepare(
+            Settings(vlm_enabled=False, litert_enabled=True),
+            ChatRequest(**payload("Explain a camera concept")),
+        )
+    with pytest.raises(ValueError, match="not an enabled LLM/VLM"):
+        prepare(
+            Settings(frigate_assist_text_model=LLM_MODEL),
+            ChatRequest(**payload("Explain a camera concept")),
+        )
+
+
+def test_yaml_empty_targets_resolve_to_loaded_vlm(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "settings:\n  frigate_assist_text_model:\n  frigate_assist_vision_model: ''\nmodels:\n  vlm:\n    enabled: true\n    model: Qwen3-VL-2B-Instruct\n"
+    )
+    monkeypatch.setenv("HAILO_CONFIG", str(path))
+    settings = Settings.from_env()
+    assert settings.frigate_text_model == settings.frigate_vision_model == "Qwen3-VL-2B-Instruct"
+
+
+@pytest.mark.parametrize(
+    "loaded,target",
+    [
+        ("Qwen3-VL-2B-Instruct", "Qwen2-VL-2B-Instruct"),
+        ("Qwen2-VL-2B-Instruct", "Qwen3-VL-2B-Instruct"),
+    ],
+)
+def test_conflicting_frigate_image_target_is_rejected_at_configuration_load(loaded, target):
+    with pytest.raises(ValueError, match="does not match the enabled VLM"):
+        Settings(vlm_hef=loaded, frigate_assist_vision_model=target)
+
+
+def test_yaml_conflicting_vision_target_rejected_at_startup(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "settings:\n  frigate_assist_vision_model: Qwen2-VL-2B-Instruct\nmodels:\n  vlm:\n    enabled: true\n    model: Qwen3-VL-2B-Instruct\n"
+    )
+    monkeypatch.setenv("HAILO_CONFIG", str(path))
+    with pytest.raises(ValueError, match="does not match the enabled VLM"):
+        Settings.from_env()

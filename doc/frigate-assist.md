@@ -2,7 +2,7 @@
 
 `Frigate-Assist` is a virtual OpenAI-compatible model at `/v1/chat/completions`.
 It has no model weights of its own. It prepares Frigate requests before routing
-text to the configured **LLM** (default: Gemma / LiteRT-LM on CPU), or images to
+text to the configured **LLM or VLM** (default: the selected resident VLM), or images to
 the configured resident **Hailo VLM**.
 It never swaps resident models and does not change the preparation of requests
 addressed directly to Gemma, Qwen, or `HA-Assist`.
@@ -100,12 +100,42 @@ Direct Qwen requests retain their existing API behavior; the Frigate-specific
 
 ### Choosing the text and vision backends
 
-`frigate_assist_text_model` and `frigate_assist_vision_model` work like the separate
-HA-Assist target settings. A text target must be an enabled LLM: either
-`gemma-4-E2B-it` on CPU or the enabled native Hailo LLM's exact catalogue ID. The
-vision target must match the enabled native VLM. There is no fallback to another
-model if the selected target is unavailable, and virtual-model targets are rejected.
+Both `frigate_assist_text_model` and `frigate_assist_vision_model` default to
+empty selections. If omitted, empty, whitespace-only or YAML null, each resolves
+to the native VLM selected in `models.vlm.model`. This applies even when Gemma is
+enabled: choosing Gemma requires `frigate_assist_text_model: gemma-4-E2B-it` explicitly.
+HA-Assist's defaults are unchanged.
+
+The text target may be the enabled CPU Gemma, an enabled native Hailo LLM, or the
+exact ID of the enabled VLM. With only a VLM enabled, both text and image inference
+use that resident model; deterministic requests still avoid inference. For example:
+
+```yaml
+settings:
+  frigate_assist_text_model: ""  # Omit, leave empty, or explicitly select Qwen3-VL-2B-Instruct
+  frigate_assist_vision_model: ""  # Automatically follows models.vlm.model
+models:
+  vlm:
+    enabled: true
+    model: Qwen3-VL-2B-Instruct
+    max_input_tokens: 2048
+```
+
+An explicit image target must match the enabled native VLM. A conflicting ID is
+rejected while loading configuration, before startup. An explicit text target is
+never silently replaced if its backend is disabled or unavailable. Virtual-model
+targets are rejected. When the VLM is disabled and no text target is selected,
+generative text requests fail rather than choosing an enabled Gemma implicitly.
 Deterministic calls do not require either generative target to be loaded.
+
+Text routed to a VLM keeps text-specific prompt compilation, history and tool
+selection; it does not receive the image-only observation prompt. The native VLM
+adapter enforces its actual tokenizer/template budget, `models.vlm.max_input_tokens`,
+context capacity and reserved output tokens, including tools and history. A larger
+request `max_input_tokens` or `frigate_assist_text_chars` cannot raise these limits.
+Required context exceeding the budget is rejected. Tool-aware summaries use the
+native JSON response contract. VLM text reasoning and tool selection remain
+experimental and can be less reliable than the explicitly selected Gemma backend.
 
 For a current text-only Hailo profile, for example:
 
@@ -172,15 +202,15 @@ example). Requests may lower the selected backend's token ceiling but not raise 
 | Recognized event query with last N minutes/hours, today/yesterday or a start clock time | Calculate the local interval and return `get_recap` (otherwise `search_objects`) | 0 |
 | Known live camera query | Return `get_live_context` for the exact camera ID | 0 |
 | Exact supported setting/cancellation instruction | Return the schema-validated action | 0 |
-| Text reasoning or event summary | Compile text/history and selected schemas | 1 configured LLM call |
+| Text reasoning or event summary | Compile text/history and selected schemas | 1 configured LLM/VLM call |
 | Successful canonical empty `get_recap` result | Report that no activity was returned for the requested period | 0 |
 | Recognized named last-sighting query | Search `sub_label` directly, with `limit: 1` when supported | 0 |
 | Request containing image parts | Focus on observable image contents; no tools | 1 VLM call |
 
 The service **returns** tools; **Frigate executes** them and submits the results in
 the next request. The proxy does not call Frigate's API, read its database, or cache
-camera states. Each generative request uses one backend with no fallback. Text never
-falls back to a VLM if its configured LLM is unavailable. `/health.frigate_assist` reports independent
+camera states. Each generative request uses one backend with no fallback. An explicitly selected LLM never
+falls back to a VLM if unavailable. `/health.frigate_assist` reports independent
 text and vision readiness; the virtual model's appearance in `/v1/models` does not
 mean that both targets are ready.
 
@@ -224,7 +254,7 @@ supports conservative exact forms such as:
 More complex setting changes, creating watches/exports, wildcard actions, or unclear
 targets remain unsupported. The camera must come from the request's catalogue.
 Frigate still enforces permissions and user approval for actions. This proxy does
-not bypass those checks. Subsequent action results are summarized by the configured LLM rather
+not bypass those checks. Subsequent action results are summarized by the configured text model rather
 than interpreted as proof of success before Frigate returns them.
 
 ### Example: “Was ist passiert, während ich weg war?”
@@ -239,7 +269,7 @@ than interpreted as proof of success before Frigate returns them.
    Unknown profiles, invalid clocks or inconsistent timestamps lead to clarification.
 5. `get_recap` receives local ISO strings such as `2026-10-07T17:00:00`, without an
    invented `Z` suffix or timezone conversion.
-6. The configured LLM summarizes the actual returned activity, including any partial-result markers.
+6. The configured text model summarizes the actual returned activity, including any partial-result markers.
 
 The proxy cannot recover a full profile history that Frigate did not send. Multiple
 absences or changing profiles within an absence may require an explicit time range.
