@@ -270,6 +270,8 @@ detectors:
   hailo10h:
     type: zmq
     endpoint: tcp://HAILO_SERVICE_HOST:5555
+    request_timeout_ms: 5000
+    linger_ms: 0
 
 model:
   model_type: yolo-generic
@@ -281,6 +283,20 @@ model:
   path: /config/models/yolov11m.hef
   labelmap_path: /labelmap/coco-80.txt
 ```
+
+Use `tcp://HAILO_SERVICE_HOST:5555` for a remote service; replace the host placeholder
+with its address (for example, `tcp://192.168.1.9:5555`). `ipc://` uses a local
+socket path and cannot connect to the TCP listener.
+
+| Frigate parameter | Example value | Meaning |
+| --- | --- | --- |
+| `request_timeout_ms` | `5000` | Allow up to 5 seconds for a request; use this initial value for diagnosis, then tune against measured inference times. |
+| `linger_ms` | `0` | Discard pending unsent messages when the socket closes instead of waiting. |
+| `model.path` | `/config/models/yolov11m.hef` | Use a path without leading whitespace; its basename must identify the resident model. |
+
+These timeout and linger options belong to the **Frigate detector configuration**,
+not the service-side `vision.zmq` settings.
+
 
 The basename in `model.path` must match the selected service model, for example
 `yolov11m.hef`. The file is only needed by Frigate if the remote detector reports that
