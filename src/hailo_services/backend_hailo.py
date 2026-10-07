@@ -117,9 +117,7 @@ class HailoBackend:
         try:
             if params.group_id != "SHARED":
                 raise RuntimeError("Hailo binding did not preserve mandatory group_id=SHARED")
-            _LOG.info(
-                "Creating Hailo VDevice group_id=%s scheduling=ROUND_ROBIN", params.group_id
-            )
+            _LOG.info("Creating Hailo VDevice group_id=%s scheduling=ROUND_ROBIN", params.group_id)
             if self.settings.vision_enabled and self.settings.vision_scheduler_priority <= 16:
                 _LOG.warning(
                     "vision_scheduler_priority=%d does not outrank Hailo normal priority 16; "
