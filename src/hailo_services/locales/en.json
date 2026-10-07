@@ -50,7 +50,8 @@
     "device.singular": "device",
     "device.plural": "devices",
     "measurement.value": "The {noun} is {value}.",
-    "prompt.reply_language": "Answer in English."
+    "prompt.reply_language": "Answer in English.",
+    "ha_plan.unsupported_action": "The selected target does not support this action according to the supplied device catalogue."
   },
   "ui": {
     "ui_0": "API key missing or invalid.",

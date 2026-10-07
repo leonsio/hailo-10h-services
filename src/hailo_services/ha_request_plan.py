@@ -94,12 +94,56 @@ def canonical_request(request, settings):
     if len(text) > 512:
         return request
     before = _catalogue.cache_info()
-    entities = catalogue(request.messages)
+    entities = getattr(request, "_ha_catalogue", None)
+    if entities is None:
+        entities = catalogue(request.messages)
     after = _catalogue.cache_info()
-    values = sorted({e[k] for e in entities for k in ("name", "area") if e[k]})
     original = text
     repairs = []
     target_candidates = []
+    if settings.ha_assist_fuzzy_enabled:
+        # Generic domain words are separate from catalogue slots. Short action
+        # words (on/off/not) are deliberately excluded from spelling repair.
+        from rapidfuzz.distance import Levenshtein
+
+        from .ha_state_routing import _DOMAIN_WORDS, _has_action_verb
+
+        generic = set().union(*_DOMAIN_WORDS.values())
+        for word in re.findall(r"\w+", text):
+            if _has_action_verb(normalize_matching(word)):
+                continue
+            candidates = [
+                v
+                for v in generic
+                if len(v) >= 5 and len(word) >= 5 and Levenshtein.distance(word.casefold(), v) == 1
+            ]
+            if word.casefold() not in generic and len(candidates) == 1:
+                text = re.sub(r"\b" + re.escape(word) + r"\b", candidates[0], text)
+                repairs.append({"input": word, "resolved": candidates[0], "source": "domain_word"})
+    from .ha_state_routing import _query_domain
+
+    hint = _query_domain(normalize_matching(text))
+    exact_areas = {
+        e["area"]
+        for e in entities
+        if e["area"] and f" {normalize_matching(e['area'])} " in f" {normalize_matching(text)} "
+    }
+    if settings.ha_assist_fuzzy_enabled:
+        from .ha_catalogue import resolve_aliases
+
+        text, alias_repairs, alias_candidates = resolve_aliases(text, entities, hint)
+        repairs.extend(alias_repairs)
+        target_candidates.extend(alias_candidates)
+        exact_areas = {
+            e["area"]
+            for e in entities
+            if e["area"] and f" {normalize_matching(e['area'])} " in f" {normalize_matching(text)} "
+        }
+    scoped = [e for e in entities if not hint or e["domain"] == hint]
+    values = sorted(
+        {e["area"] for e in scoped if e["area"]}
+        | {e["name"] for e in scoped if not exact_areas or e["area"] in exact_areas}
+    )
     if settings.ha_assist_fuzzy_enabled:
         # Orthographic aliases are accepted only when they map uniquely.
         aliases = {}
@@ -158,24 +202,6 @@ def canonical_request(request, settings):
                                 )
                                 if item not in target_candidates:
                                     target_candidates.append(item)
-        # Generic domain words are separate from catalogue slots. Short action
-        # words (on/off/not) are deliberately excluded from spelling repair.
-        from rapidfuzz.distance import Levenshtein
-
-        from .ha_state_routing import _DOMAIN_WORDS, _has_action_verb
-
-        generic = set().union(*_DOMAIN_WORDS.values())
-        for word in re.findall(r"\w+", text):
-            if _has_action_verb(normalize_matching(word)):
-                continue
-            candidates = [
-                v
-                for v in generic
-                if len(v) >= 5 and len(word) >= 5 and Levenshtein.distance(word.casefold(), v) == 1
-            ]
-            if word.casefold() not in generic and len(candidates) == 1:
-                text = re.sub(r"\b" + re.escape(word) + r"\b", candidates[0], text)
-                repairs.append({"input": word, "resolved": candidates[0], "source": "domain_word"})
     normalized = normalize_matching(text)
     from .ha_state_routing import _query_domain
 
@@ -193,7 +219,21 @@ def canonical_request(request, settings):
 
     if not numeric and domain in ("light", "cover") and _has_action_verb(normalized):
         numeric = re.findall(r"\b(?:auf|to|на)\s+(\d{1,3})\s*[.!?]?$", text, re.I)
+    from .ha_state_routing import _DOMAIN_WORDS
+
+    domain_names = set().union(*_DOMAIN_WORDS.values())
+    explicit_names = sorted(
+        {
+            e["name"]
+            for e in entities
+            if (not domain or e["domain"] == domain)
+            and (not areas or e["area"] in areas)
+            and normalize_matching(e["name"]) not in domain_names
+            and f" {normalize_matching(e['name'])} " in f" {normalized} "
+        }
+    )
     plan = {
+        "name": explicit_names[0] if len(explicit_names) == 1 else None,
         "original": original,
         "canonical": text,
         "repairs": repairs,
@@ -215,6 +255,28 @@ def canonical_request(request, settings):
         if numeric and domain == "cover"
         else _deterministic_capability(text)
     )
+    property_name = {
+        "light.brightness": "brightness",
+        "cover.position": "position",
+        "climate.temperature": "temperature",
+    }.get(plan["action"])
+    members = [
+        e
+        for e in entities
+        if (not plan["area"] or e["area"] == plan["area"])
+        and (not plan["name"] or e["name"] == plan["name"])
+        and (not domain or e["domain"] == domain)
+    ]
+    if (
+        property_name
+        and (plan["area"] or plan["name"])
+        and not target_candidates
+        and any(
+            e.get("capabilities") is not None and property_name not in e["capabilities"]
+            for e in members
+        )
+    ):
+        plan["unsupported_property"] = property_name
     if text != original:
         messages = copy.deepcopy(request.messages)
         content = messages[user_index]["content"]
@@ -247,6 +309,8 @@ def target_clarification(request):
         No application-specific exceptions are raised for valid inputs.
     """
     plan = getattr(request, "_ha_plan", {})
+    if plan.get("unsupported_property"):
+        return t("ha_plan.unsupported_action")
     if plan.get("target_resolution") == "llm":
         return None
     text = normalize_matching(latest_user_text(request.messages))
@@ -314,10 +378,14 @@ def validate_action(request, name, args):
         return True
     entities = getattr(request, "_ha_catalogue", None) or catalogue(request.messages)
     if not entities:
-        return True  # Clients without a catalogue are still checked against their schema.
+        return (
+            request.ha_context is None
+        )  # An explicitly empty exposed catalogue permits no actions.
     plan = getattr(request, "_ha_plan", {})
     area = plan.get("area")
     domain = plan.get("domain")
+    if plan.get("name") and args.get("name") != plan["name"]:
+        return False
     given_domains = args.get("domain")
     if domain and given_domains is not None:
         if (given_domains if isinstance(given_domains, list) else [given_domains]) != [domain]:
@@ -351,12 +419,23 @@ def validate_action(request, name, args):
             and not any(e["area"] == args["area"] and e["name"] == args["name"] for e in entities)
         ):
             return False
+    selected_area = area or args.get("area")
     members = [
         e
         for e in entities
-        if (not area or e["area"] == area) and (not domain or e["domain"] == domain)
+        if (not selected_area or e["area"] == selected_area)
+        and (not domain or e["domain"] == domain)
     ]
-    if args.get("name") and not any(e["name"] == args["name"] for e in members):
+    if args.get("area") and not members:
+        return False
+    if args.get("name"):
+        members = [e for e in members if e["name"] == args["name"]]
+    if args.get("name") and not members:
+        return False
+    written = set(args) - {"area", "name", "domain"}
+    if any(
+        e.get("capabilities") is not None and not written <= set(e["capabilities"]) for e in members
+    ):
         return False
     if area and not args.get("area") and not args.get("name"):
         return False

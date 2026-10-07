@@ -290,7 +290,12 @@ def test_german_user_request_reduces_irrelevant_ha_tools_and_entity_enums():
     assert selected[0]["function"]["parameters"]["properties"]["entity_id"]["enum"] == [
         "light.wohnzimmer_stehlampe",
     ]
-    assert stats == {"tools_before": 3, "tools_after": 1, "enum_values_removed": 3}
+    assert isinstance(stats["tool_index_cache_hit"], bool)
+    assert {key: stats[key] for key in ("tools_before", "tools_after", "enum_values_removed")} == {
+        "tools_before": 3,
+        "tools_after": 1,
+        "enum_values_removed": 3,
+    }
     # Input schemas are copied; requests can be safely retried with the original.
     assert len(tools[0]["function"]["parameters"]["properties"]["entity_id"]["enum"]) == 4
 

@@ -6,6 +6,38 @@ supports Frigate's ZeroMQ detector protocol. This document describes the interna
 source layout; [api.md](api.md) specifies the public interfaces and
 [installation.md](installation.md) describes deployment.
 
+## Hardware and service placement
+
+```text
+                                            HTTP / OpenAI-compatible
+                                     +---- /v1/chat/completions
+                                     |     /v1/audio/transcriptions
+                                     |     /v1/vision/detect
+                                     |
+                   Home Assistant ---+---- Wyoming / MCP
+                   Frigate ----------+---- ZMQ detector
+                   Other clients ----+---- WebSocket / MQTT
+                                     |
+                                     v
+        +----------------------------------------------------------+
+        |                    Hailo-10H-Services                    |
+        |                                                          |
+        | +----------------------+  +----------------------------+ |
+        | |         CPU          |  |         Hailo-10H          | |
+        | |                      |  |                            | |
+        | |      HA-Assist       |  |   Qwen VLM or Hailo LLM    | |
+        | |  Gemma / LiteRT-LM   |  |  Whisper / MiniLM / YOLO   | |
+        | |        Piper         |  |      (VDevice SHARED)      | |
+        | +----------------------+  +----------------------------+ |
+        +----------------------------+-----------------------------+
+                                     |
+                             Raspberry Pi 5/CM5
+```
+
+The HailoRT 5.4.0 resident GenAI choice is VLM **or** native Hailo LLM;
+CPU Gemma can run alongside either. The hardware label describes this deployment;
+request recognition remains independent of any specific HA catalogue.
+
 ## Naming and ownership
 
 `backend_<runtime>.py` owns native resources and synchronous model execution.
@@ -269,3 +301,4 @@ native model is still owned and released by `backend_hailo.py` on the existing
 Hailo owner thread and SHARED VDevice; the extraction creates no additional device
 or independent Whisper scheduler. Wyoming translates transport events and never
 loads model-specific runtimes itself. No compatibility modules are introduced.
+

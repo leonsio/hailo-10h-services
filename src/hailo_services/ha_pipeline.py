@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 import uuid
 
 from jsonschema import ValidationError, validate
@@ -269,6 +270,10 @@ def _valid_direct(request, response):
     Notes:
         No application-specific exceptions are raised for valid inputs.
     """
+    from .ha_request_plan import validate_action
+
+    if not isinstance(response, dict):
+        return True
     tools = {tool["function"]["name"]: tool["function"] for tool in request.tools or []}
     query = normalize_matching(latest_user_text(request.messages))
     for call in response.get("tool_calls", []):
@@ -280,7 +285,10 @@ def _valid_direct(request, response):
         ):
             return False
         try:
-            validate(json.loads(call["function"]["arguments"]), tools[name].get("parameters", {}))
+            args = json.loads(call["function"]["arguments"])
+            validate(args, tools[name].get("parameters", {}))
+            if not validate_action(request, name, args):
+                return False
         except (ValidationError, ValueError):
             return False
     return True
@@ -306,9 +314,13 @@ def _prepare_boundary(backend, request, next_stage):
         return request
     if not is_home_assistant_request(request):
         return request
+    history_started = time.perf_counter()
     request = task_history(
         request, encoder=backend.minilm, embedding_cache=backend._retrieval_embedding_cache
     )
+    request._metrics.setdefault("ha_stages_ms", {})["history"] = (
+        time.perf_counter() - history_started
+    ) * 1000
     if backend.settings.debug_log:
         _LOG.debug(
             "event=ha_history request_id=%s json=%s",
@@ -322,7 +334,12 @@ def _prepare_boundary(backend, request, next_stage):
         from .ha_intents import deterministic_intent
         from .ha_request_plan import canonical_request, target_clarification, tool_failure
 
+        phase_started = time.perf_counter()
         request = canonical_request(request, backend.settings)
+        request._metrics.setdefault("ha_stages_ms", {})["canonicalize"] = (
+            time.perf_counter() - phase_started
+        ) * 1000
+        phase_started = time.perf_counter()
         if backend.settings.debug_log and getattr(request, "_ha_plan", None):
             _LOG.debug(
                 "event=ha_plan request_id=%s json=%s",
@@ -349,7 +366,11 @@ def _prepare_boundary(backend, request, next_stage):
                     reason="validated",
                     arguments=json.loads(direct["tool_calls"][0]["function"]["arguments"]),
                 )
+        request._metrics["ha_stages_ms"]["intent_recognition"] = (
+            time.perf_counter() - phase_started
+        ) * 1000
         request._metrics["ha_intent"] = intent_trace
+        phase_started = time.perf_counter()
         if direct is not None and getattr(request, "_ha_plan", None):
             request._ha_plan["action"] = (
                 request._ha_plan.get("action") or direct["tool_calls"][0]["function"]["name"]
@@ -381,6 +402,9 @@ def _prepare_boundary(backend, request, next_stage):
             from .ha_prompt_compiler import compile_ha_prompt
 
             prepared, _ = compile_ha_prompt(request, request)
+        request._metrics["ha_stages_ms"]["context_and_prompt"] = (
+            time.perf_counter() - phase_started
+        ) * 1000
         if needs_inference(prepared):
             messages = [dict(message) for message in prepared.messages]
             if messages[0].get("role") == "system" and isinstance(messages[0].get("content"), str):

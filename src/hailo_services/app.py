@@ -822,6 +822,26 @@ def create_app(
             "metrics": response_metrics({}, http_request.scope["state"]),
         }
 
+    @app.post("/v1/ha-assist/diagnose")
+    async def ha_diagnose(request: ChatRequest, http_request: Request):
+        """Explain preparation without invoking a generative backend or executing tools.
+
+        Args:
+            request: HA-Assist request with stream disabled.
+            http_request: HTTP request carrying the diagnostic correlation ID.
+
+        Returns:
+            dict: Candidate scores, proposed response and prepared messages/tools.
+
+        Raises:
+            ValueError: Invalid diagnostic model or tool/history input.
+            BusyError: The owner-thread preparation queue is unavailable.
+        """
+        from .ha_diagnostics import diagnose
+
+        request._request_id = http_request.scope.get("state", {}).get("request_id", "-")
+        return await runtime.call(diagnose, runtime.backend, request)
+
     @app.post("/v1/chat/completions")
     async def chat(request: ChatRequest, http_request: Request):
         """Return an OpenAI completion or SSE stream with request metrics.

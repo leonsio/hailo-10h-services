@@ -31,6 +31,8 @@ settings:
   ha_assist_fuzzy_enabled: true
   ha_assist_fuzzy_threshold: 90.0
   ha_assist_fuzzy_margin: 8.0
+  ha_assist_sentence_fuzzy_enabled: true
+  ha_assist_sentence_threshold: 94.0
   ha_wait_messages: true
   queue_size: 8
   request_timeout: 180

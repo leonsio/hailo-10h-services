@@ -708,6 +708,8 @@ def compile_ha_prompt(source_request, prepared_request, *, encoder=None, embeddi
             )
             and (not domain or e["domain"] == domain)
         ]
+    if intent_plan.get("name"):
+        relevant = [e for e in relevant if e["name"] == intent_plan["name"]]
     tools = _filter_tools(prepared_request.tools, capability)
     compact_tools = [_compact_tool(tool, capability, domain, area, relevant) for tool in tools]
     if active_tools:

@@ -95,6 +95,9 @@ def prepare(backend, request):
     object.__setattr__(request, "_ha_request", True)
     object.__setattr__(request, "_response_language", language)
     with using_language(language):
+        from .ha_catalogue import prepare_catalogue
+
+        request = prepare_catalogue(request)
         if images:
             # Never let a text-only shortcut answer a question about the image.
             prepared = (
@@ -108,7 +111,11 @@ def prepare(backend, request):
             decision = (
                 action_verification_response(prepared) if request.tool_choice != "none" else None
             )
-            if decision and decision["kind"] == "verify":
+            if (
+                decision
+                and decision["kind"] == "verify"
+                and not getattr(request, "_ha_diagnostic", False)
+            ):
                 time.sleep(_VERIFY_SETTLE_SECONDS)
                 request._metrics["ha_verify_settle_ms"] = _VERIFY_SETTLE_SECONDS * 1000
             fast = (

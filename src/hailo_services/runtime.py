@@ -425,9 +425,12 @@ class Runtime:
         Notes:
             No application-specific exceptions are raised for valid inputs.
         """
+        from .diagnostics import cache_status
+
         return {
             "ready": self.ready,
             "group_id": "SHARED",
+            "cache": cache_status(self.backend, self.litert_backend),
             "pending": self.pending,
             "model_limits": self.model_limits,
             "default_text_model": self.default_text_model,

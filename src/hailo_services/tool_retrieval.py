@@ -8,10 +8,12 @@ user turn. The optional encoder runs MiniLM on the Hailo accelerator.
 from __future__ import annotations
 
 import copy
+import json
 import math
 import re
 import unicodedata
 from collections import Counter
+from functools import lru_cache
 
 from .i18n import lexicon, normalize_matching
 
@@ -160,6 +162,36 @@ _ROUTING_KEYWORDS = {
 }
 
 
+@lru_cache(maxsize=64)
+def _tool_index(language, serialized):
+    """Cache immutable lexical schema features, not live state or selected actions.
+
+    Args:
+        language: Locale partition; identical schemas in different languages stay separate.
+        serialized: Complete canonical schema JSON; any tool/enum change invalidates the key.
+
+    Returns:
+        tuple: Immutable tool-field tokens and corpus frequencies; bounded by entry/key limits.
+    """
+    tools = json.loads(serialized)
+    fields = []
+    for tool in tools:
+        fn = tool.get("function", {})
+        fields.append(
+            (
+                _tokens(fn.get("name", "")),
+                _tokens(fn.get("description", "")),
+                _tokens(_ROUTING_KEYWORDS.get(fn.get("name", "").rsplit("__", 1)[-1], "")),
+                _tokens(fn.get("parameters", {})),
+            )
+        )
+    frequency = Counter(word for parts in fields for word in set().union(*parts))
+
+    return tuple(tuple(frozenset(words) for words in parts) for parts in fields), tuple(
+        frequency.items()
+    )
+
+
 def _corpus_scores(query, tools):
     """Score tools with field weights and inverse corpus frequency.
 
@@ -173,18 +205,12 @@ def _corpus_scores(query, tools):
     Notes:
         No application-specific exceptions are raised for valid inputs.
     """
-    fields = []
-    for tool in tools:
-        fn = tool.get("function", {})
-        fields.append(
-            (
-                _tokens(fn.get("name", "")),
-                _tokens(fn.get("description", "")),
-                _tokens(_ROUTING_KEYWORDS.get(fn.get("name", "").rsplit("__", 1)[-1], "")),
-                _tokens(fn.get("parameters", {})),
-            )
-        )
-    frequency = Counter(word for parts in fields for word in set().union(*parts))
+    from .i18n import current_language
+
+    serialized = json.dumps(tools, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    build = _tool_index if len(serialized) <= 65536 else _tool_index.__wrapped__
+    fields, frequency_items = build(current_language(), serialized)
+    frequency = dict(frequency_items)
 
     def score(parts):
         """Compute weighted rare-term overlap for one tool.
@@ -534,7 +560,9 @@ def retrieve_tools(
                 "enum_pruning": [],
             }
         )
+    before_index = _tool_index.cache_info()
     scores = _corpus_scores(query, tools)
+    index_hit = _tool_index.cache_info().hits > before_index.hits
     ranked = [(scores[index], tool["function"]["name"], tool) for index, tool in enumerate(tools)]
     kept_names = {
         call.get("function", {}).get("name")
@@ -616,6 +644,7 @@ def retrieve_tools(
             chosen.append(tool)
 
     stats = {
+        "tool_index_cache_hit": index_hit,
         "tools_before": len(tools),
         "tools_after": len(chosen),
         "enum_values_removed": 0,

@@ -9,6 +9,7 @@ MQTT and Frigate interfaces.
 | Protocol | Endpoint / port | VLM / LLM | Whisper | YOLO |
 |---|---|---|---|---|
 | HTTP | `POST :8090/v1/chat/completions` | Text, images, SSE, function tools | — | — |
+| HTTP | `POST :8090/v1/ha-assist/diagnose` | HA preparation diagnosis; no generative calls or tool execution | — | — |
 | HTTP | `POST :8090/v1/audio/transcriptions` | — | File upload | — |
 | HTTP | `POST :8090/v1/audio/speech` | — | Text → Piper CPU speech (WAV/PCM) | — |
 | HTTP | `POST :8090/v1/vision/detect` | — | — | Object detection |
@@ -453,6 +454,8 @@ settings:
   ha_assist_text_model: gemma-4-E2B-it
   ha_assist_vision_model: Qwen2-VL-2B-Instruct
   ha_assist_fuzzy_enabled: true
+  ha_assist_sentence_fuzzy_enabled: true
+  ha_assist_sentence_threshold: 94.0
 
 models:
   vlm:
@@ -481,7 +484,7 @@ Home Assistant request to an LLM:
 
 - exact/deterministic HA intent, state, measurement and action-result paths are tried
   first;
-- conservative fuzzy correction is limited to known catalogue slots;
+- conservative fuzzy slot correction and protected official-template recovery are validated with HassIL and the client schemas;
 - irrelevant entities/tools/history are removed before generation;
 - MiniLM may rank relevant HA context but does not generate the answer;
 - only ambiguous/general requests reach the configured text backend;
@@ -756,3 +759,65 @@ installed voices, allows speed adjustment, retains generated audio and displays
 request/response timestamps, total duration, server processing time, sample rate
 and file size. Generated files can be played or downloaded; clear the TTS history
 to release them. The API key entered in the Playground also authenticates TTS.
+
+
+## `POST /v1/ha-assist/diagnose`
+
+Accepts the same request as chat, with `model: "HA-Assist"` and `stream: false`.
+Uses the existing authentication and owner-thread queue. It may perform MiniLM
+embedding retrieval, but never invokes LLM/VLM generation or executes a tool.
+`proposed_response` contains the deterministic text or proposed tool calls, or
+`null` for a request that would need inference. `metrics.ha_route` reports actual
+`inference_calls: 0` plus hypothetical `would_inference_calls`. `ha_plan`,
+`ha_intent`, and `ha_stages_ms` explain targets, sentence candidates, protection
+rules and preparation timings. Original requests remain unmodified.
+
+```bash
+curl -sS http://HOST:8090/v1/ha-assist/diagnose \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer YOUR_API_KEY' \
+  --data-binary @ha-request.json
+```
+
+`prepared_request` contains the complete messages and tool schemas **after HA
+preparation, before the native chat template and input-token budget**. It is not a
+claim about the final native prompt or token count. Existing debug events
+`final_gemma_request` / native Hailo prompt events remain authoritative for the
+prompt actually used by production inference.
+
+## Optional structured exposed catalogue
+
+HA-Assist clients may add `ha_context` to chat or diagnosis requests:
+
+```json
+{
+  "version": "catalogue-revision-17",
+  "entities": [{
+    "entity_id": "light.reading",
+    "name": "Reading light",
+    "domain": "light",
+    "area": "Library",
+    "aliases": ["Sofa light"],
+    "area_aliases": ["Reading room"],
+    "floor": "First floor",
+    "device_class": "light",
+    "capabilities": ["brightness"]
+  }]
+}
+```
+
+Only include entities exposed to this conversation. The structured catalogue
+replaces the legacy static catalogue for this request, even if its version string
+is unchanged; legacy clients continue to work without it. Aliases resolve to
+canonical client target names. IDs, floor and device class remain rich catalogue
+metadata; this does not add floor-target tools absent from the client schema.
+`capabilities` describes supported writable properties: omitted/null means
+unknown; `[]` means no property-setting capability. Known unsupported adjustments
+are rejected before inference. An explicitly empty catalogue permits no device
+control. Live state fields are deliberately not accepted in this metadata cache.
+Physical-model requests do not apply this metadata to routing or prompts.
+
+`GET /health` now includes `cache`: bounded static tool/template cache counts,
+MiniLM embedding counts, observed Hailo context snapshot methods and the current
+backend isolation policy. No state snapshot methods are called by this inspection.
+See [HA recognition and caching](ha-recognition.md) for policy and SDK findings.

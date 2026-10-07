@@ -1,10 +1,56 @@
 """Pydantic request models and input validation for public APIs."""
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 
 from .config import VLM_MODEL
+
+CatalogueText = Annotated[str, Field(min_length=1, max_length=256, pattern=r"^[^\r\n]+$")]
+
+
+class HAEntity(BaseModel):
+    """Describe one entity explicitly exposed by the requesting HA client.
+
+    Attributes:
+        name: Canonical client tool target name.
+        domain: Home Assistant integration domain.
+        area: Canonical room name, or empty for an unassigned entity.
+        entity_id: Optional stable identifier, retained for validation and diagnostics.
+        aliases: Configured HA names, not generated spelling variants.
+        area_aliases: Configured room aliases.
+        floor: Optional floor name.
+        device_class: Optional HA device class.
+        capabilities: Supported writable properties; None means not supplied.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    name: CatalogueText
+    domain: str = Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=64)
+    area: str = Field(default="", max_length=256, pattern=r"^[^\r\n]*$")
+    entity_id: str | None = Field(
+        default=None, max_length=256, pattern=r"^[a-z][a-z0-9_]*\.[a-z0-9_]+$"
+    )
+    aliases: list[CatalogueText] = Field(default_factory=list, max_length=32)
+    area_aliases: list[CatalogueText] = Field(default_factory=list, max_length=32)
+    floor: CatalogueText | None = None
+    device_class: CatalogueText | None = None
+    capabilities: (
+        list[Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=64)]] | None
+    ) = Field(default=None, max_length=32)
+
+
+class HAContext(BaseModel):
+    """Carry an optional versioned exposed catalogue without cached live values.
+
+    Attributes:
+        version: Caller-supplied catalogue revision; content remains authoritative.
+        entities: Only entities exposed to this Assist conversation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    version: str | None = Field(default=None, max_length=128)
+    entities: list[HAEntity] = Field(max_length=4096)
 
 
 class ChatRequest(BaseModel):
@@ -23,6 +69,7 @@ class ChatRequest(BaseModel):
         language (str | None): Language code; None uses the configured or detected language.
         tools (list[dict[str, Any]] | None): Client-provided OpenAI function schemas.
         tool_choice (str | dict[str, Any] | None): Tool choice. Default: None.
+        ha_context (HAContext | None): Optional exposed metadata used exclusively by HA-Assist.
         parallel_tool_calls (bool): Whether multi-target output may expand into parallel function calls. Default: True.
     """
 
@@ -42,6 +89,7 @@ class ChatRequest(BaseModel):
     tools: list[dict[str, Any]] | None = Field(default=None, max_length=128)
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool = True
+    ha_context: HAContext | None = None
 
     @field_validator("tools")
     @classmethod

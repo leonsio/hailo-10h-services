@@ -34,28 +34,29 @@ own actions.
 ## Architecture
 
 ```text
-                         HTTP / OpenAI-compatible
-                  ┌──── /v1/chat/completions
-                  │     /v1/audio/transcriptions
-                  │     /v1/vision/detect
-                  │
-Home Assistant ───┼──── Wyoming / MCP
-Frigate ──────────┼──── ZMQ detector
-Other clients ────┼──── WebSocket / MQTT
-                  │
-                  ▼
-        ┌──────────────────────────────┐
-        │       Hailo-10H-Services     │
-        │                              │
-        │ Qwen VLM  OR  Hailo LLM      │ ← HailoRT 5.4.0
-        │ Whisper       YOLO            │
-        │ MiniLM                        │
-        │          VDevice SHARED       │
-        │                              │
-        │ Gemma 4 E2B ── LiteRT / CPU  │
-        └──────────────┬───────────────┘
-                       │
-                   Hailo-10H
+                                            HTTP / OpenAI-compatible
+                                     +---- /v1/chat/completions
+                                     |     /v1/audio/transcriptions
+                                     |     /v1/vision/detect
+                                     |
+                   Home Assistant ---+---- Wyoming / MCP
+                   Frigate ----------+---- ZMQ detector
+                   Other clients ----+---- WebSocket / MQTT
+                                     |
+                                     v
+        +----------------------------------------------------------+
+        |                    Hailo-10H-Services                    |
+        |                                                          |
+        | +----------------------+  +----------------------------+ |
+        | |         CPU          |  |         Hailo-10H          | |
+        | |                      |  |                            | |
+        | |      HA-Assist       |  |   Qwen VLM or Hailo LLM    | |
+        | |  Gemma / LiteRT-LM   |  |  Whisper / MiniLM / YOLO   | |
+        | |        Piper         |  |      (VDevice SHARED)      | |
+        | +----------------------+  +----------------------------+ |
+        +----------------------------+-----------------------------+
+                                     |
+                             Raspberry Pi 5/CM5
 ```
 
 The **VLM/LLM choice above applies only to Hailo GenAI models**. The software contains
@@ -230,6 +231,7 @@ and VLM requests are bounded by their compiled 2048-token contexts. A request ma
 | Protocol | Endpoint / port | Chat / VLM / LLM | STT | YOLO detection |
 |---|---|---|---|---|
 | HTTP | `:8090/v1/chat/completions` | Text, images, SSE, tools | — | — |
+| HTTP | `POST :8090/v1/ha-assist/diagnose` | HA candidates, proposed calls and prepared prompt; no generation/execution | — | — |
 | HTTP | `:8090/v1/audio/transcriptions` | — | File upload | — |
 | HTTP | `POST :8090/v1/audio/speech` | — | Text → Piper CPU speech (WAV/PCM) | — |
 | HTTP | `:8090/v1/vision/detect` | — | — | Base64/data-URL image |
@@ -367,3 +369,4 @@ See [Piper installation](doc/installation.md#piper-cpu-text-to-speech) and the
 
 The Playground includes a Piper TTS test with installed voice selection, speed,
 WAV playback/download and retained request timings. Piper must be enabled and ready.
+

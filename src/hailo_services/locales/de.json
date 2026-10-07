@@ -50,7 +50,8 @@
     "device.singular": "Gerät",
     "device.plural": "Geräte",
     "measurement.value": "Die {noun} beträgt {value}.",
-    "prompt.reply_language": "Antworte auf Deutsch."
+    "prompt.reply_language": "Antworte auf Deutsch.",
+    "ha_plan.unsupported_action": "Das ausgewählte Ziel unterstützt diese Aktion laut übermitteltem Gerätekatalog nicht."
   },
   "ui": {
     "ui_0": "API-Schlüssel fehlt oder ist ungültig.",
