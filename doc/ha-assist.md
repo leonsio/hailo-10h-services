@@ -187,6 +187,8 @@ The recommended HA-Assist text+image profile is therefore:
 settings:
   ha_assist_text_model: gemma-4-E2B-it
   ha_assist_vision_model: Qwen2-VL-2B-Instruct
+  ha_assist_verify_attempts: 2
+  ha_assist_verify_delay: 0.5
 
 models:
   vlm:
@@ -282,8 +284,73 @@ the relevant context.
 ### Action-result verification
 
 When Home Assistant sends back a tool result, HA-Assist can verify/format known results
-and acknowledgements without a second generative call. Active tool-call/result
-relationships are preserved while older unrelated history may be removed.
+and acknowledgements without a generative call. For simple `light` and `switch`
+`HassTurnOn`/`HassTurnOff` actions, verification is deliberately separated from action
+execution because `response_type: action_done` means that Home Assistant accepted and
+processed the action; it does not guarantee that every integration has already
+published the new entity state.
+
+The verification sequence is:
+
+```text
+HassTurnOn / HassTurnOff
+        │
+        ▼
+Home Assistant tool result
+        │
+        ├─ data.failed not empty ──► report action failure immediately
+        │
+        └─ action_done + success
+                 │
+                 ▼
+        wait ha_assist_verify_delay
+                 │
+                 ▼
+          GetLiveContext #1
+                 │
+          expected state?
+           │           │
+          yes          no
+           │           │
+        success   attempts left?
+                       │
+                 wait + GetLiveContext again
+```
+
+The controls are normal service settings:
+
+| Setting | Default | Meaning |
+|---|---:|---|
+| `ha_assist_verify_attempts` | `2` | Maximum number of `GetLiveContext` state reads after a successful verifiable action. `0` disables state verification. Valid range: 0–10. |
+| `ha_assist_verify_delay` | `0.5` | Seconds to wait before **each** verification read. Valid range: 0–30 seconds. |
+
+With the defaults, the first state read occurs roughly 0.5 seconds after the action and
+the second roughly 1.0 second after it. This gives integrations whose state propagation
+lags behind the physical action time to converge before HA-Assist judges the reported
+state.
+
+A stale or mismatching state **never causes HA-Assist to resend the original action**.
+It causes only another `GetLiveContext` call while verification attempts remain. This
+avoids duplicate service calls to devices whose physical state changed correctly but
+whose Home Assistant state event arrived late.
+
+The final result distinguishes two cases:
+
+- if Home Assistant reports one or more entries in `data.failed`, the action itself is
+  reported as failed and the failed targets are named when available;
+- if Home Assistant accepted the action but the live state still differs after all
+  verification reads, the response begins with the normal completion acknowledgement
+  and then reports that those devices have not yet reached the requested **reported**
+  state. This is a state-confirmation problem, not an action-execution failure.
+
+Each tool call/result exchange is a separate OpenAI-compatible chat round trip. Home
+Assistant therefore sends another `/v1/chat/completions` request for each verification
+read, including the active tool history required by the protocol. The service compacts
+that request before any model-bound prompt is created; verification itself remains
+fully deterministic and performs zero LLM/VLM inference calls.
+
+Active tool-call/result relationships are preserved while older unrelated history may
+be removed.
 
 ## Step 4: select only relevant tools and context
 
@@ -377,11 +444,12 @@ token and does not call HA services directly.
 
 | User request | HA-Assist path | Generative calls |
 |---|---|---:|
-| `Turn off the living-room light` | HassIL → schema-validated tool call | 0 |
+| `Turn off the living-room light` | HassIL → schema-validated tool call → optional delayed state verification | 0 |
 | `Set the living-room lights to 70%` | absolute-value fast path → validated tool | 0 |
 | `Is the kitchen light on?` | live-state selection → direct answer | 0 when unambiguous |
 | `What is the living-room temperature?` | measurement selection → direct answer | 0 when unambiguous |
-| successful prior action result | deterministic result verification/acknowledgement | 0 when recognized |
+| successful prior on/off action result | delayed `GetLiveContext` verification/acknowledgement | 0 |
+| explicit failed action target | deterministic action-failure response | 0 |
 | `Make the living room more comfortable` | retrieve context/tools → minimal prompt → text backend | 1 |
 | `What is the capital of France?` | minimal general text request → text backend | 1 |
 | image + `What can you see?` | image path → configured VLM | 1 |
@@ -417,6 +485,8 @@ Non-streaming HA-Assist responses expose diagnostics in `metrics` when applicabl
 | `ha_plan` | canonicalized request, catalogue corrections, resolved area/domain/value |
 | `ha_intent` | HassIL exact/fuzzy candidates, slots and timing |
 | `ha_validation` | generated action validation results |
+| `ha_verify` | verification kind/attempt plus configured maximum attempts and delay when action-state verification is active |
+| `ha_verify_settle_ms` | actual configured pre-read delay recorded for a verification request |
 
 A deterministic route reports zero generative inference work rather than inventing LLM
 token usage.
