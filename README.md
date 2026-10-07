@@ -50,9 +50,9 @@ own actions.
         | +----------------------+  +----------------------------+ |
         | |         CPU          |  |         Hailo-10H          | |
         | |                      |  |                            | |
-        | | HA-Assist            |  | Qwen VLM OR Hailo LLM      | |
+        | | HA-Assist            |  | Qwen VLM or Hailo LLM      | |
         | | Gemma / LiteRT-LM    |  | Whisper / MiniLM / YOLO    | |
-        | | Piper                |  | VDevice SHARED             | |
+        | | Piper                |  |      (VDevice SHARED)      | |
         | +----------------------+  +----------------------------+ |
         +----------------------------+-----------------------------+
                                      |
