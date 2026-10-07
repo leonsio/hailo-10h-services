@@ -246,10 +246,9 @@ calls are rejected before being emitted in a stream.
 The proxy does not expose writable tools to generative inference. This first version
 supports conservative exact forms such as:
 
-- `Schalte die Erkennung für Kamera <friendly name or ID> aus`
-- `Schalte die Aufnahme für Kamera <friendly name or ID> ein`
 - `Turn detection for camera <friendly name or ID> off`
-- `Stop camera watch` / `Stoppe die Überwachung`
+- `Turn recording for camera <friendly name or ID> on`
+- `Stop camera watch`
 
 More complex setting changes, creating watches/exports, wildcard actions, or unclear
 targets remain unsupported. The camera must come from the request's catalogue.
@@ -257,12 +256,12 @@ Frigate still enforces permissions and user approval for actions. This proxy doe
 not bypass those checks. Subsequent action results are summarized by the configured text model rather
 than interpreted as proof of success before Frigate returns them.
 
-### Example: “Was ist passiert, während ich weg war?”
+### Example: “What happened while I was away?”
 
 1. The proxy returns `get_profile_status` without running a model.
 2. Frigate returns `active_profile`, `profiles`, and `last_activated` timestamps.
 3. The proxy recognizes absence profiles only by the configured exact names
-   (`away,abwesend` by default). Add custom names such as `Urlaub` yourself.
+   (`away,abwesend` by default). Add custom names such as `vacation` yourself.
 4. A completed absence runs from the latest known absence activation to activation
    of the current non-away profile, only if that end follows departure and is not
    later than the supplied server clock. An active away profile ends at that clock.
@@ -278,10 +277,10 @@ other wording uses the compact LLM path and remains experimental.
 
 ### Named last-sighting queries
 
-`Wann wurde Leo zuletzt gesehen?` and `When was Alex last seen?` search the literal
-name as `sub_label`, without an invented camera, generic `label: person`, or
-semantic search for the name. The explicit clarification `Ich meine die Person
-"Leo" wann wurde es zuletzt erkannt?` is also recognized. Names are not hardcoded
+`When was Alex last seen?` searches the literal name as `sub_label`, without an
+invented camera, generic `label: person`, or semantic search for the name.
+A clarification such as `I mean the person "Alex": when were they last detected?`
+can provide context for the experimental reasoning path. Names are not hardcoded
 to a user's setup. Frigate's historical event search defaults to newest-first;
 the proxy requests `limit: 1` if the supplied tool schema supports it. Returned
 data is summarized by the selected LLM, preserving supplied local time strings.
@@ -294,7 +293,7 @@ those constraints.
 
 ### Relative event time windows and follow-ups
 
-`Zeige mir die Ereignisse der letzten Stunde` is handled directly: with a supplied
+`Show me the events from the last hour` is handled directly: with a supplied
 Frigate clock of `2026-10-07 at 10:02:08 PM`, the tool receives
 `after: 2026-10-07T21:02:08` and `before: 2026-10-07T22:02:08`. No model calculates
 dates, no camera filter is invented, and no semantic search for the word "event"
@@ -304,14 +303,14 @@ Returned results are then summarized by the selected LLM.
 
 Recognized narrow German/English event forms cover the last N minutes/hours
 (between one minute and 31 days), today, yesterday, and a start time such as
-`Zeige die Ereignisse ab heute 06:00 Uhr bis jetzt`. Midnight crossings are
-calculated directly. A time-only follow-up such as `ab 06:00 Uhr bis jetzt`
+`Show me the events from 06:00 until now`. Midnight crossings are
+calculated directly. A time-only follow-up such as `from 06:00 until now`
 inherits the preceding event question through consecutive time clarifications,
 without taking dates from an assistant's suggestions. An unrelated question ends
 this inheritance. Filtered or more complex questions still use the experimental
 LLM path; this recognizer does not silently discard extra requested filters.
 
-`von heute morgen bis jetzt` has no defined start hour. The proxy asks specifically
+`from this morning until now` has no defined start hour. The proxy asks specifically
 which hour the user means rather than silently assuming midnight or 06:00. Missing
 or invalid server clocks also require clarification. The proxy uses the clock in
 Frigate's request, including if Frigate reuses an older conversation clock; it does
@@ -342,7 +341,7 @@ poorly followed by Qwen2. Use a separate stronger description provider where nee
 Prompt instructions reduce hallucination pressure but cannot eliminate hallucinations.
 “Camera status” is clarified: the supplied live-context tool provides images and
 detections, not a complete technical camera-health report.
-The short reply `das aktuelle Kamerabild` / `the current camera image` selects
+The short reply `the current camera image` selects
 `get_live_context` directly when exactly one camera is supplied. With multiple
 cameras the proxy asks for a camera name. A named unknown camera is never replaced
 with the sole available camera.
@@ -398,8 +397,8 @@ Cancel the running chat or reload/start a new conversation to recover the UI.
 The proxy cannot cancel or reset Frigate's internal tool execution. A service-side
 HTTP 200 alone does not demonstrate that the entire Frigate chat turn completed.
 Successful empty recap results are answered without a model; error, partial or
-unknown result shapes keep the normal summary path. Requests such as `Pass auf
-die Haustür auf und sag mir Bescheid, wenn jemand kommt` are recognized as currently
+unknown result shapes keep the normal summary path. Requests such as
+`Watch the front door and notify me when someone arrives` are recognized as currently
 unsupported watch requests and receive a direct explanation, rather than a model
 offering monitoring without creating a job.
 

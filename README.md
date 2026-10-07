@@ -24,8 +24,7 @@ they can coexist with compatible Hailo applications without per-request model re
 | Text-to-speech | Piper voices (CPU, configurable language) | `/v1/audio/speech`, Wyoming |
 | Speech-to-text | Whisper Tiny / Base / Small | `/v1/audio/transcriptions`, Wyoming, MCP |
 | Object detection | YOLOv8, YOLO11, YOLO26 | `/v1/vision/detect`, Frigate ZMQ |
-| HA routing / retrieval | [`HA-Assist`](#home-assistant-virtual-model), HassIL, MiniLM | OpenAI-compatible chat model |
-| Frigate chat / descriptions | [`Frigate-Assist`](doc/frigate-assist.md), experimental proxy | Deterministic tools, configurable LLM/VLM targets |
+| HA / Frigate routing | [HA](#home-assistant-virtual-model)/[Frigate-Assist](doc/frigate-assist.md), deterministic tools, LLM/VLM routing | OpenAI-compatible chat; Frigate experimental |
 
 Native Hailo LLMs run directly through `hailo_platform.genai.LLM`; **Ollama is not
 required**. The service owns model loading, input budgeting, queues and validated tool
@@ -51,7 +50,7 @@ own actions.
         | +----------------------+  +----------------------------+ |
         | |         CPU          |  |         Hailo-10H          | |
         | |                      |  |                            | |
-        | |      HA-Assist       |  |   Qwen VLM or Hailo LLM    | |
+        | |  HA/Frigate-Assist   |  |   Qwen VLM or Hailo LLM    | |
         | |  Gemma / LiteRT-LM   |  |  Whisper / MiniLM / YOLO   | |
         | |        Piper         |  |      (VDevice SHARED)      | |
         | +----------------------+  +----------------------------+ |
