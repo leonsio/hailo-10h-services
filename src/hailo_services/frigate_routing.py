@@ -397,6 +397,29 @@ def plan(request, settings, images):
                 "absence_profile",
             )
     # Technical health is not equivalent to a live image/detection status.
+    live_reply = question.casefold() in {
+        "das aktuelle kamerabild",
+        "das kamerabild",
+        "das aktuelle livebild",
+        "the current camera image",
+        "the live image",
+    }
+    if live_reply and "get_live_context" in names and not results:
+        if len(cameras) == 1:
+            return (
+                [t for t in tools if t["function"]["name"] == "get_live_context"],
+                _call(request, "get_live_context", {"camera": next(iter(cameras))}),
+                "live_image_reply",
+            )
+        return (
+            tools,
+            (
+                "Welche Kamera meinst du? Bitte nenne den Kameranamen."
+                if german
+                else "Which camera do you mean? Please provide its name."
+            ),
+            "camera_clarification",
+        )
     if (
         re.fullmatch(
             r"(?:wie ist der aktuelle status meiner kameras|(?:wie ist der )?(?:kamera|kameras)[ -]?status|what is (?:the )?(?:current )?status of my cameras|camera status)",

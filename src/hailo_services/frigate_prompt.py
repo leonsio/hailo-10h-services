@@ -5,6 +5,7 @@ import json
 import re
 
 from .config import LLM_MODEL
+from .i18n import detect_language, language_code
 from .tool_calling import native_messages
 
 TOOL_HINTS = {
@@ -250,6 +251,23 @@ def compile_request(request, settings, tools, images):
         )
         if latest_user == last_image and preceding and synthetic_frame:
             question = preceding[-1] + "\n" + question
+        # Frigate's synthetic English caption must not determine the answer language.
+        human_question = preceding[-1] if synthetic_frame and preceding else question
+        fallback = (
+            "en"
+            if re.search(r"\b(describe|show|what|image|visible)\b", human_question, re.I)
+            else settings.service_language
+        )
+        language = language_code(request.language or detect_language(human_question, fallback))
+        if synthetic_frame and language == "de":
+            caption_text = text_content(caption)
+            match = re.fullmatch(
+                r"Here is the current live image from camera '([^']+)'.", caption_text
+            )
+            if match:
+                question = question.replace(
+                    caption_text, f"Aktuelles Livebild der Kamera '{match[1]}'."
+                )
         # Keep the latest image-bearing message (all frames in that message),
         # not old images from earlier questions. Never invent a fresh frame.
         parts = [
@@ -273,8 +291,18 @@ def compile_request(request, settings, tools, images):
             "Be brief. Say when something is unclear or not visible. Never invent identities, "
             "intentions, off-screen events, times or camera health. An image cannot prove what "
             "happened during an absence. No tool calls. Follow an explicitly requested output format."
-            " Answer in the user's language."
+            " Report a person only if a human body is clearly visible; do not infer people from objects or shadows."
+            " Answer in "
+            + {"de": "German", "en": "English", "ru": "Russian"}[language]
+            + ". Use at most two short sentences unless a specific output format requires more."
         )
+        if language == "de":
+            system = (
+                "Antworte auf Deutsch. Beschreibe nur klar sichtbare Objekte und Handlungen, höchstens zwei kurze Sätze. "
+                "Nenne Personen nur bei klar erkennbarem menschlichem Körper; keine Personen aus Gegenständen oder Schatten ableiten. "
+                "Bei Unklarheit sage das ausdrücklich. Keine erfundenen Identitäten, Absichten, Ereignisse außerhalb des Bildes, Zeiten oder Kamerazustände. "
+                "Ein Bild belegt keine Ereignisse während einer Abwesenheit. Keine Werkzeugaufrufe. Ein ausdrücklich verlangtes Ausgabeformat hat Vorrang."
+            )
         # Historical images are explicitly labelled, never passed off as a fresh live view.
         if last_image < latest_user:
             task = "Image from earlier conversation, not a new live frame.\n" + task

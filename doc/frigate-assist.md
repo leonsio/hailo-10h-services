@@ -291,6 +291,24 @@ poorly followed by Qwen2. Use a separate stronger description provider where nee
 Prompt instructions reduce hallucination pressure but cannot eliminate hallucinations.
 “Camera status” is clarified: the supplied live-context tool provides images and
 detections, not a complete technical camera-health report.
+The short reply `das aktuelle Kamerabild` / `the current camera image` selects
+`get_live_context` directly when exactly one camera is supplied. With multiple
+cameras the proxy asks for a camera name. A named unknown camera is never replaced
+with the sole available camera.
+
+The vision prompt specifies the answer language explicitly (the optional request
+`language`, otherwise the human question and service-language fallback). Frigate's
+synthetic English live-frame caption does not choose the language; for German
+requests it is rewritten into a short German caption. Observations are limited to
+two short sentences unless an explicit format requires more. The prompt asks the
+model to report people only when a human body is clearly visible, rather than
+inferring people from objects or shadows. This is a generation instruction, not
+a verified person detector; night/infrared scenes can still be misinterpreted.
+`get_live_context` requests Frigate's current processed camera frame rather than
+searching for the latest historical detection. That frame/context can lag behind a
+later live-view screenshot. Compare the tool's context timestamp and the actual
+attached frame before treating differing observations as hallucinations. Empty
+tracked detections alone do not prove that no person is visible in an image.
 
 ## Streaming and diagnostics
 

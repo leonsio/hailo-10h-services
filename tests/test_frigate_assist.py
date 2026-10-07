@@ -273,7 +273,9 @@ def test_live_tool_then_image_routes_to_vlm(service):
     assert compiled.model == VLM_MODEL and not compiled.tools and compiled.tool_choice is None
     assert len(compiled.messages) == 2
     assert "Was ist gerade" in compiled.messages[1]["content"][0]["text"]
-    assert "Never invent" in compiled.messages[0]["content"]
+    assert "Keine erfundenen" in compiled.messages[0]["content"]
+    assert "Antworte auf Deutsch" in compiled.messages[0]["content"]
+    assert "Here is the current live image" not in compiled.messages[1]["content"][0]["text"]
     assert "Generic instructions" not in str(compiled.messages)
 
 
@@ -296,6 +298,42 @@ def test_image_description_without_tools_and_zero_temperature(service):
     assert result.json()["model"] == FRIGATE_ASSIST_MODEL
     assert backend.calls[0].temperature == 0.01
     assert not llm.calls
+
+
+def test_live_image_short_reply_single_and_multiple_cameras(service):
+    client, backend, llm = service
+    body = payload("Wie ist der aktuelle Status meiner Kameras?")
+    first = message(client.post("/v1/chat/completions", json=body))
+    body["messages"] += [first, {"role": "user", "content": "das aktuelle Kamerabild"}]
+    result = message(client.post("/v1/chat/completions", json=body))
+    assert "Welche Kamera" in result["content"]
+    body["messages"][0]["content"] = SYSTEM.split("  - Garden")[0]
+    result = message(client.post("/v1/chat/completions", json=body))
+    assert name_and_args(result) == ("get_live_context", {"camera": "front_door"})
+    assert not llm.calls and not backend.calls
+
+
+@pytest.mark.parametrize(
+    ("language", "instruction"),
+    [("de", "Antworte auf Deutsch"), ("en", "Answer in English"), ("ru", "Answer in Russian")],
+)
+def test_vision_explicit_language_overrides_caption(service, language, instruction):
+    client, backend, _ = service
+    body = payload("Describe the live image", language=language)
+    body["messages"].append(
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Here is the current live image from camera 'front_door'.",
+                },
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,ZmFrZQ=="}},
+            ],
+        }
+    )
+    message(client.post("/v1/chat/completions", json=body))
+    assert instruction in backend.calls[0].messages[0]["content"]
 
 
 def test_native_chat_is_not_compiled(service):
