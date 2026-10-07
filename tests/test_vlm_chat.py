@@ -56,6 +56,31 @@ def request(**kwargs):
     return ChatRequest(messages=[{"role": "user", "content": "Hallo"}], **kwargs)
 
 
+def test_frigate_native_vlm_observation_returns_plain_text_without_tool_json():
+    b = backend("Qwen2-VL-2B-Instruct", text="A car is visible.")
+    native = b.vlm
+    payload = {
+        "model": "Frigate-Assist",
+        "tool_choice": "auto",
+        "tools": [tool()],
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe only visible objects."},
+                    image(),
+                ],
+            }
+        ],
+    }
+    with TestClient(create_app(b.settings, b)) as client:
+        response = client.post("/v1/chat/completions", json=payload)
+        assert response.status_code == 200, response.text
+        assert response.json()["choices"][0]["message"]["content"] == "A car is visible."
+        assert len(native.calls) == 1
+        assert "Functions:" not in str(native.calls[0]["prompt"])
+
+
 @pytest.mark.parametrize("model", ["Qwen2-VL-2B-Instruct", "Qwen3-VL-2B-Instruct"])
 def test_zero_vlm_temperature_rejected_before_native_generation(model):
     b = backend(model)

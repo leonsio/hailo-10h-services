@@ -96,6 +96,47 @@ def request(model="Qwen2.5-1.5B-Instruct", **kwargs):
     )
 
 
+def test_frigate_native_hailo_final_summary_has_json_contract_and_preserves_usage():
+    b = backend(frigate_assist_text_model="Qwen2.5-1.5B-Instruct")
+    native = b.llm
+    native.text = '{"content":"A person was detected at the gate."}'
+    payload = {
+        "model": "Frigate-Assist",
+        "messages": [
+            {"role": "user", "content": "Summarize these events"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_recap",
+                        "type": "function",
+                        "function": {
+                            "name": "get_recap",
+                            "arguments": '{"after":"2026-10-07T17:00:00","before":"2026-10-07T20:00:00"}',
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_recap",
+                "content": '{"events":[{"description":"Person at gate"}]}',
+            },
+        ],
+    }
+    with TestClient(create_app(b.settings, b)) as client:
+        response = client.post("/v1/chat/completions", json=payload)
+        assert response.status_code == 200, response.text
+        assert (
+            response.json()["choices"][0]["message"]["content"]
+            == "A person was detected at the gate."
+        )
+        assert response.json()["usage"]["prompt_tokens"] > 0
+        assert len(native.calls) == 1
+        assert '{"content":"your answer"}' in native.calls[0]["prompt"]
+
+
 def tool():
     return {
         "type": "function",

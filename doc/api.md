@@ -595,8 +595,9 @@ that may add parameters not part of this gateway's supported request schema.
 
 Use `model: "Frigate-Assist"` at `/v1/chat/completions` for Frigate-specific
 preparation. Recognized requests return deterministic client-executed tools;
-other text requests use Gemma/LiteRT-LM on CPU, and image requests use the enabled
-resident VLM with a short observation task and no tools. Direct native models
+other text requests use `frigate_assist_text_model` (default: Gemma/LiteRT-LM on CPU;
+an enabled native Hailo LLM can also be selected), and image requests use the enabled
+`frigate_assist_vision_model` with a short observation task and no tools. Direct native models
 and `HA-Assist` retain their own preparation behavior.
 
 Only `Frigate-Assist` accepts Frigate's optional `stream_options` object:
@@ -615,6 +616,12 @@ named providers can separate `descriptions` and `chat`, or combine both roles wi
 this virtual model. No embeddings are provided. See [Frigate-Assist](frigate-assist.md)
 for provider YAML, absence recap examples, supported commands, image/JSON limits,
 and diagnostic fields.
+
+Frigate's optional `provider_options.context_size` is a local planning hint, not
+the prepared backend input limit. The proxy examples omit the former `2048`
+override: inbound prompts can be larger than the native model context and are
+compiled before native token budgeting. The hint also affects Frigate's review
+frame selection and some UI gates; see the dedicated documentation for details.
 
 ## Home Assistant Wyoming STT and TTS
 

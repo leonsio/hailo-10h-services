@@ -269,7 +269,7 @@ def test_live_tool_then_image_routes_to_vlm(service):
     message(client.post("/v1/chat/completions", json=body))
     assert not llm.calls and len(backend.calls) == 1
     compiled = backend.calls[0]
-    assert compiled.model == VLM_MODEL and not compiled.tools and compiled.tool_choice == "none"
+    assert compiled.model == VLM_MODEL and not compiled.tools and compiled.tool_choice is None
     assert len(compiled.messages) == 2
     assert "Was ist gerade" in compiled.messages[1]["content"][0]["text"]
     assert "Never invent" in compiled.messages[0]["content"]
@@ -531,10 +531,97 @@ def test_oversized_vision_constraints_fail_clearly():
 
 
 def test_no_text_backend_fallback_and_disabled_proxy():
-    with pytest.raises(ValueError, match="require Gemma"):
+    with pytest.raises(ValueError, match="not an enabled LLM"):
         prepare(Settings(), ChatRequest(**payload("Explain a camera concept")))
     with pytest.raises(ValueError, match="disabled"):
         prepare(Settings(frigate_assist_enabled=False), ChatRequest(**payload()))
+
+
+def test_native_hailo_text_target_routes_through_hailo_and_reports_health():
+    settings = Settings(
+        vlm_enabled=False,
+        hailo_llm_enabled=True,
+        hailo_llm_model="Qwen3-1.7B-Instruct",
+        frigate_assist_text_model="Qwen3-1.7B-Instruct",
+        litert_enabled=True,
+        minilm_enabled=False,
+        whisper_enabled=False,
+        wyoming_port=0,
+    )
+    backend, gemma = Backend(settings), LLM()
+    with TestClient(create_app(settings, backend, gemma)) as client:
+        health = client.get("/health").json()["frigate_assist"]
+        assert health["text_model"] == "Qwen3-1.7B-Instruct" and health["text_ready"]
+        assert not health["vision_ready"]
+        response = client.post("/v1/chat/completions", json=payload("Zeige alle Autos heute"))
+        message(response)
+        assert len(backend.calls) == 1 and not gemma.calls
+        assert backend.calls[0].model == "Qwen3-1.7B-Instruct"
+        assert response.json()["metrics"]["frigate_route"]["backend_model"] == "Qwen3-1.7B-Instruct"
+        assert not getattr(backend.calls[0], "_ha_assist", False)
+
+
+def test_native_hailo_target_readiness_does_not_follow_unrelated_gemma():
+    settings = Settings(
+        frigate_assist_text_model="Qwen3-1.7B-Instruct",
+        litert_enabled=True,
+        minilm_enabled=False,
+        whisper_enabled=False,
+        wyoming_port=0,
+    )
+    backend, gemma = Backend(settings), LLM()
+    with TestClient(create_app(settings, backend, gemma)) as client:
+        assert not client.get("/health").json()["frigate_assist"]["text_ready"]
+        response = client.post("/v1/chat/completions", json=payload("Explain a camera concept"))
+        assert response.status_code == 400 and "not an enabled LLM" in response.text
+        assert not backend.calls and not gemma.calls
+
+
+def test_text_and_vision_targets_are_selected_independently_before_native_startup():
+    # Planning for a future compatible runtime; this does not bypass HailoRT's
+    # actual startup compatibility guard or claim current simultaneous support.
+    settings = Settings(
+        hailo_llm_enabled=True,
+        hailo_llm_model="Qwen3-1.7B-Instruct",
+        frigate_assist_text_model="Qwen3-1.7B-Instruct",
+    )
+    text, direct = prepare(settings, ChatRequest(**payload("Explain a camera concept")))
+    assert direct is None and text.model == "Qwen3-1.7B-Instruct"
+    image = payload()
+    image["messages"] = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Describe this car"},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,ZmFrZQ=="}},
+            ],
+        }
+    ]
+    vision, direct = prepare(settings, ChatRequest(**image))
+    assert direct is None and vision.model == VLM_MODEL
+
+
+@pytest.mark.parametrize("target", [VLM_MODEL, "unknown"])
+def test_invalid_or_wrong_role_text_target_is_rejected(target):
+    with pytest.raises(ValueError, match="not an enabled LLM"):
+        prepare(
+            Settings(litert_enabled=True, frigate_assist_text_model=target),
+            ChatRequest(**payload("Explain a camera concept")),
+        )
+
+
+@pytest.mark.parametrize(
+    "key,target",
+    [
+        ("frigate_assist_text_model", FRIGATE_ASSIST_MODEL),
+        ("frigate_assist_text_model", "HA-Assist"),
+        ("frigate_assist_vision_model", FRIGATE_ASSIST_MODEL),
+        ("frigate_assist_text_model", "  "),
+    ],
+)
+def test_invalid_proxy_target_configuration(key, target):
+    with pytest.raises(ValueError):
+        Settings(**{key: target})
 
 
 def test_no_invented_instruction_from_an_old_image_question():

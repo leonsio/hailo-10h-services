@@ -4,6 +4,7 @@ import copy
 import json
 import re
 
+from .config import LLM_MODEL
 from .tool_calling import native_messages
 
 TOOL_HINTS = {
@@ -290,7 +291,7 @@ def compile_request(request, settings, tools, images):
             {"role": "system", "content": system},
             {"role": "user", "content": [{"type": "text", "text": task}, *parts]},
         ]
-        tools, choice = [], "none"
+        tools, choice = [], None
     else:
         system = (
             "Answer Frigate questions concisely in the user's language, using only supplied data. "
@@ -302,6 +303,12 @@ def compile_request(request, settings, tools, images):
             "If an interval or target is ambiguous ask for clarification. "
             "Omission markers mean partial results, not complete coverage."
         )
+        if settings.frigate_assist_text_model != LLM_MODEL and (
+            tools or any(m.get("role") == "tool" or m.get("tool_calls") for m in request.messages)
+        ):
+            # Native Hailo tool adapters parse JSON for every tool-aware round,
+            # including a final summary after completed client calls.
+            system += '\nFor a final answer without a function call, return ONLY JSON: {"content":"your answer"}.'
         if clock:
             system += "\nServer local time: " + clock
         if cameras:
@@ -343,7 +350,7 @@ def compile_request(request, settings, tools, images):
             messages.append(message)
         choice = request.tool_choice
         if not tools and choice not in ("required",) and not isinstance(choice, dict):
-            choice = "none"
+            choice = None
     prepared = request.model_copy(
         update={
             "messages": messages,

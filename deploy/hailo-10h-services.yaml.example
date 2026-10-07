@@ -40,9 +40,10 @@ settings:
   # after the action before the second state read, allowing slow integrations to settle.
   ha_assist_verify_delay: 0.5
   ha_wait_messages: true
-  # Experimental Frigate chat/description proxy. Text goes to Gemma/CPU;
+  # Experimental Frigate chat/description proxy. Text uses a configurable LLM;
   # images go to the enabled VLM. Native chat prompts are unaffected.
   frigate_assist_enabled: true
+  frigate_assist_text_model: gemma-4-E2B-it
   frigate_assist_vision_model: Qwen2-VL-2B-Instruct
   frigate_assist_max_events: 12
   frigate_assist_text_chars: 10000

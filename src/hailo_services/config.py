@@ -58,6 +58,7 @@ class Settings:
         service_language (str): Fallback language for HA routing, generated replies and notifications.
         ha_assist_enabled (bool): Whether to expose the virtual HA-Assist model.
         frigate_assist_enabled (bool): Whether to expose experimental Frigate-Assist.
+        frigate_assist_text_model (str): Enabled native LLM for text reasoning and summaries.
         frigate_assist_vision_model (str): Enabled native VLM for image observation.
         frigate_assist_max_events (int): Maximum records per compacted tool-result list.
         frigate_assist_text_chars (int): Preparation ceiling for required text and tools.
@@ -131,6 +132,7 @@ class Settings:
     service_language: str = "de"
     ha_assist_enabled: bool = True
     frigate_assist_enabled: bool = True
+    frigate_assist_text_model: str = LLM_MODEL
     frigate_assist_vision_model: str = VLM_MODEL
     frigate_assist_max_events: int = 12
     frigate_assist_text_chars: int = 10000
@@ -177,10 +179,16 @@ class Settings:
         """
         if not self.piper_voice.strip() or not self.piper_language.strip():
             raise ValueError("Piper voice and language must not be empty")
-        if self.frigate_assist_vision_model in {HA_ASSIST_MODEL, FRIGATE_ASSIST_MODEL}:
-            raise ValueError("Frigate-Assist must route to a native VLM")
-        if not self.frigate_assist_vision_model.strip():
-            raise ValueError("Frigate-Assist vision model must not be empty")
+        if {self.frigate_assist_text_model, self.frigate_assist_vision_model} & {
+            HA_ASSIST_MODEL,
+            FRIGATE_ASSIST_MODEL,
+        }:
+            raise ValueError("Frigate-Assist must route to native LLM/VLM models")
+        if (
+            not self.frigate_assist_text_model.strip()
+            or not self.frigate_assist_vision_model.strip()
+        ):
+            raise ValueError("Frigate-Assist target model IDs must not be empty")
         if not 1 <= self.frigate_assist_max_events <= 100:
             raise ValueError("Frigate-Assist max events must be between 1 and 100")
         if not 1000 <= self.frigate_assist_text_chars <= 20000:

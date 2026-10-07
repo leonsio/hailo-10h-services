@@ -2,7 +2,8 @@
 
 `Frigate-Assist` is a virtual OpenAI-compatible model at `/v1/chat/completions`.
 It has no model weights of its own. It prepares Frigate requests before routing
-text to **Gemma / LiteRT-LM on CPU**, or images to the configured resident **Hailo VLM**.
+text to the configured **LLM** (default: Gemma / LiteRT-LM on CPU), or images to
+the configured resident **Hailo VLM**.
 It never swaps resident models and does not change the preparation of requests
 addressed directly to Gemma, Qwen, or `HA-Assist`.
 
@@ -25,6 +26,7 @@ Enable the local CPU Gemma backend and the resident Hailo VLM:
 ```yaml
 settings:
   frigate_assist_enabled: true
+  frigate_assist_text_model: gemma-4-E2B-it
   frigate_assist_vision_model: Qwen2-VL-2B-Instruct
   frigate_assist_max_events: 12
   frigate_assist_text_chars: 10000
@@ -46,6 +48,7 @@ models:
 
 Use the path of your existing Gemma artifact. Restart the service after changing
 settings. The equivalent environment names are `HAILO_FRIGATE_ASSIST_ENABLED`,
+`HAILO_FRIGATE_ASSIST_TEXT_MODEL`,
 `HAILO_FRIGATE_ASSIST_VISION_MODEL`, `HAILO_FRIGATE_ASSIST_MAX_EVENTS`,
 `HAILO_FRIGATE_ASSIST_TEXT_CHARS`, `HAILO_FRIGATE_ASSIST_VISION_CHARS` and
 `HAILO_FRIGATE_ASSIST_AWAY_PROFILES`.
@@ -62,15 +65,13 @@ genai:
     roles:
       - descriptions
       - chat
-    provider_options:
-      context_size: 2048
 ```
 
 The base URL includes `/v1`; do not append `/chat/completions`. Keep an existing
-embeddings provider or Frigate's local semantic-search model. `context_size: 2048`
-is a conservative value for the vision backend in this example, not a promise that
-every chat fits. The service applies the real selected backend's token limit after
-compilation. Enable object/review description generation separately in Frigate;
+embeddings provider or Frigate's local semantic-search model. No `context_size`
+override is required for this proxy example; see the distinction below. The service
+applies the real selected backend's token limit after compilation. Enable
+object/review description generation separately in Frigate;
 assigning a provider role does not enable every description feature automatically.
 
 To try chat separately while keeping a working description provider:
@@ -91,13 +92,75 @@ genai:
     model: Frigate-Assist
     roles:
       - chat
-    provider_options:
-      context_size: 2048
 ```
 
 Each role must belong to only one provider. Chat may be omitted altogether.
 Direct Qwen requests retain their existing API behavior; the Frigate-specific
 `stream_options` extension described below is accepted only by `Frigate-Assist`.
+
+### Choosing the text and vision backends
+
+`frigate_assist_text_model` and `frigate_assist_vision_model` work like the separate
+HA-Assist target settings. A text target must be an enabled LLM: either
+`gemma-4-E2B-it` on CPU or the enabled native Hailo LLM's exact catalogue ID. The
+vision target must match the enabled native VLM. There is no fallback to another
+model if the selected target is unavailable, and virtual-model targets are rejected.
+Deterministic calls do not require either generative target to be loaded.
+
+For a current text-only Hailo profile, for example:
+
+```yaml
+settings:
+  frigate_assist_text_model: Qwen3-1.7B-Instruct
+  frigate_assist_vision_model: Qwen2-VL-2B-Instruct
+models:
+  hailo_llm:
+    enabled: true
+    model: Qwen3-1.7B-Instruct
+  vlm:
+    enabled: false
+```
+
+This example supports text only: its configured vision target is not loaded.
+HailoRT/GenAI 5.4.0 currently prevents loading native Hailo LLM and VLM together;
+the existing startup checks and resident-model lifecycle still enforce that limit.
+Gemma/CPU plus VLM/Hailo remains the current text-and-image profile. The proxy no
+longer hardcodes Gemma, so a future runtime supporting resident Hailo LLM+VLM can
+use both target settings without rewriting Frigate-Assist routing. Availability
+and runtime compatibility must still be verified for that future deployment.
+
+### What Frigate's `context_size` means
+
+`genai.<provider>.provider_options.context_size` is an **optional Frigate-side
+planning hint**. The OpenAI provider consumes it locally and excludes it from API
+requests. It does not set `max_input_tokens`, change a HEF's capacity, or increase
+Gemma's memory/context allowance.
+
+There are two different sizes with a proxy:
+
+| Size | Where it is handled |
+|---|---|
+| Incoming Frigate envelope: general instructions, catalogue, tools, results and images | Proxy compilation, bounded HTTP body and preparation limits |
+| Actual prepared prompt plus tool schemas and image reserves | Selected native LLM/VLM's token budget, after compilation |
+
+The incoming envelope can therefore be larger than 2048/4096 model tokens, as with
+HA-Assist. Setting Frigate's hint to the VLM's 2048 tokens unnecessarily conflates
+these layers; it is **not required** for `Frigate-Assist`. The examples leave the
+override out. The inspected Frigate OpenAI provider falls back to 8192 for an
+unknown non-GPT model without reported `max_model_len`; this is Frigate's estimate,
+not an advertised 8192-token native context for the proxy.
+
+The hint still changes Frigate behavior. Review descriptions use it to plan the
+number of input frames after reserving prompt/response space. In the inspected dev
+version, the UI also requires at least 32000 to enable manual review-description
+regeneration. Omitting the override does not remove those Frigate-side gates.
+Do not claim an arbitrarily large context merely to enable such a feature: more
+frames and complex review JSON may exceed this experimental proxy's capabilities.
+Content Frigate omits before sending cannot be recovered by the proxy.
+
+The actual safety limits remain `models.gemma.max_input_tokens` (4096 by default),
+`models.hailo_llm.max_input_tokens`, and `models.vlm.max_input_tokens` (2048 in the
+example). Requests may lower the selected backend's token ceiling but not raise it.
 
 ## Processing a request
 
@@ -108,13 +171,13 @@ Direct Qwen requests retain their existing API behavior; the Frigate-specific
 | Missing/ambiguous absence interval | Ask for start/end time | 0 |
 | Known live camera query | Return `get_live_context` for the exact camera ID | 0 |
 | Exact supported setting/cancellation instruction | Return the schema-validated action | 0 |
-| Text reasoning or event summary | Compile text/history and selected schemas | 1 Gemma call |
+| Text reasoning or event summary | Compile text/history and selected schemas | 1 configured LLM call |
 | Request containing image parts | Focus on observable image contents; no tools | 1 VLM call |
 
 The service **returns** tools; **Frigate executes** them and submits the results in
 the next request. The proxy does not call Frigate's API, read its database, or cache
 camera states. Each generative request uses one backend with no fallback. Text never
-falls back to Qwen if Gemma is unavailable. `/health.frigate_assist` reports independent
+falls back to a VLM if its configured LLM is unavailable. `/health.frigate_assist` reports independent
 text and vision readiness; the virtual model's appearance in `/v1/models` does not
 mean that both targets are ready.
 
@@ -131,7 +194,7 @@ Tool descriptions are shortened and schema annotations removed. Required fields,
 types, enums, ranges, and other validation constraints remain intact. Read tools are
 selected by question category, for example historical search, live context, or
 similarity. Unknown categories keep the available read tools rather than guessing
-one tool. Native Gemma token counting remains the final budget check.
+one tool. Native LLM token counting remains the final budget check.
 
 Result lists retain at most `frigate_assist_max_events` entries per list. Omitted
 record counts are explicit. Long strings/nested data receive omission markers;
@@ -152,7 +215,7 @@ supports conservative exact forms such as:
 More complex setting changes, creating watches/exports, wildcard actions, or unclear
 targets remain unsupported. The camera must come from the request's catalogue.
 Frigate still enforces permissions and user approval for actions. This proxy does
-not bypass those checks. Subsequent action results are summarized by Gemma rather
+not bypass those checks. Subsequent action results are summarized by the configured LLM rather
 than interpreted as proof of success before Frigate returns them.
 
 ### Example: “Was ist passiert, während ich weg war?”
@@ -167,12 +230,12 @@ than interpreted as proof of success before Frigate returns them.
    Unknown profiles, invalid clocks or inconsistent timestamps lead to clarification.
 5. `get_recap` receives local ISO strings such as `2026-10-07T17:00:00`, without an
    invented `Z` suffix or timezone conversion.
-6. Gemma summarizes the actual returned activity, including any partial-result markers.
+6. The configured LLM summarizes the actual returned activity, including any partial-result markers.
 
 The proxy cannot recover a full profile history that Frigate did not send. Multiple
 absences or changing profiles within an absence may require an explicit time range.
 The deterministic recognizer covers a small set of German/English question forms;
-other wording uses the compact Gemma path and remains experimental.
+other wording uses the compact LLM path and remains experimental.
 
 ### Image preparation and descriptions
 
@@ -223,5 +286,7 @@ and latency on the Raspberry Pi/Hailo device; automated tests use backend double
 - [Frigate named GenAI providers and roles](https://docs.frigate.video/configuration/genai/genai_config/)
 - [Frigate OpenAI provider source](https://github.com/blakeblackshear/frigate/blob/dev/frigate/genai/plugins/openai.py)
 - [Frigate chat tool/result format](https://github.com/blakeblackshear/frigate/blob/dev/frigate/api/chat.py)
+- [Frigate review frame budgeting](https://github.com/blakeblackshear/frigate/blob/dev/frigate/data_processing/post/review_descriptions.py)
+- [Frigate review regeneration UI gate](https://github.com/blakeblackshear/frigate/blob/dev/web/src/hooks/use-review-descriptions.ts)
 - [Service APIs](api.md)
 - [HA-Assist](ha-assist.md)

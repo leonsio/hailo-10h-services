@@ -25,7 +25,7 @@ they can coexist with compatible Hailo applications without per-request model re
 | Speech-to-text | Whisper Tiny / Base / Small | `/v1/audio/transcriptions`, Wyoming, MCP |
 | Object detection | YOLOv8, YOLO11, YOLO26 | `/v1/vision/detect`, Frigate ZMQ |
 | HA routing / retrieval | [`HA-Assist`](#home-assistant-virtual-model), HassIL, MiniLM | OpenAI-compatible chat model |
-| Frigate chat / descriptions | [`Frigate-Assist`](doc/frigate-assist.md), experimental proxy | Deterministic tools, Gemma text, Hailo vision |
+| Frigate chat / descriptions | [`Frigate-Assist`](doc/frigate-assist.md), experimental proxy | Deterministic tools, configurable LLM/VLM targets |
 
 Native Hailo LLMs run directly through `hailo_platform.genai.LLM`; **Ollama is not
 required**. The service owns model loading, input budgeting, queues and validated tool
@@ -252,8 +252,9 @@ Frigate configuration, tool calling, metrics and Home Assistant details.
 
 For optional GenAI chat and descriptions, select the virtual **`Frigate-Assist`**
 model. It removes Frigate's generic prompt overhead, selects read tools, handles
-recognized requests deterministically, and routes text to Gemma/CPU and images to
-the resident VLM. **Chat is experimental and only conditionally usable.** Frigate
+recognized requests deterministically, and routes text to a selected LLM (default: Gemma/CPU) and images to
+the resident VLM. Both LLM/VLM targets are configurable, as with HA-Assist.
+**Chat is experimental and only conditionally usable.** Frigate
 can use separate providers for descriptions and chat, or both roles can be tried
 through this proxy. See [Frigate-Assist configuration and limitations](doc/frigate-assist.md).
 
