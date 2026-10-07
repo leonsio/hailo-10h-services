@@ -494,6 +494,8 @@ settings:
   ha_assist_fuzzy_enabled: true
   ha_assist_sentence_fuzzy_enabled: true
   ha_assist_sentence_threshold: 94.0
+  ha_assist_verify_attempts: 2
+  ha_assist_verify_delay: 0.5
 
 models:
   vlm:
@@ -532,6 +534,36 @@ Home Assistant request to an LLM:
 A deterministic answer or tool call performs **zero generative model requests**.
 Physical model IDs bypass these HA-specific steps. Home Assistant supplies tool schemas
 and executes returned calls; the gateway never needs an HA access token.
+
+### Action verification
+
+For successful `intent__HassTurnOn` / `intent__HassTurnOff` actions on `light` and
+`switch` targets, HA-Assist can verify the reported state with delayed
+`homeassistant__GetLiveContext` calls. This is intended for integrations where the
+physical device changes immediately but the entity state reaches Home Assistant only
+after a short propagation delay.
+
+| Setting | Environment override | Default | Range / behavior |
+|---|---|---:|---|
+| `ha_assist_verify_attempts` | `HAILO_HA_ASSIST_VERIFY_ATTEMPTS` | `2` | 0–10 state reads; `0` disables verification |
+| `ha_assist_verify_delay` | `HAILO_HA_ASSIST_VERIFY_DELAY` | `0.5` | 0–30 seconds before each state read |
+
+With two attempts and a 0.5-second delay, verification reads occur roughly 0.5 and
+1.0 seconds after the action. If a read still reports the old state, HA-Assist issues
+another **GetLiveContext** read while attempts remain; it does **not** resend the
+original `HassTurnOn`/`HassTurnOff` action.
+
+Home Assistant action results and state verification are intentionally distinguished:
+
+- `data.failed` containing a target is an execution failure and is reported immediately;
+- `action_done` with no failed targets means the action was accepted; if all configured
+  verification reads still report a different state, the final response preserves the
+  successful action acknowledgement and separately reports the unconfirmed state.
+
+Tool execution remains client-mediated. Each action or verification tool result is sent
+back by Home Assistant in a subsequent OpenAI-compatible request, so multiple verify
+attempts produce multiple `/v1/chat/completions` round trips. They remain deterministic
+and do not invoke the configured LLM/VLM.
 
 A native Hailo LLM can be selected as `ha_assist_text_model`, but on HailoRT 5.4.0 the
 VLM must then be disabled. The service does not dynamically unload/reload models to
@@ -658,8 +690,10 @@ responses include request timing. Available fields depend on backend support.
 
 `HA-Assist` additionally records routing/history/intent/validation details such as
 `ha_route`, `ha_history`, `ha_plan`, `ha_intent` and `ha_validation` when applicable.
-A deterministic path reports zero generative input/output/inference work rather than
-inventing model usage.
+Action verification adds `ha_verify` with the current verification decision/attempt,
+configured maximum attempts and delay; verification requests also expose
+`ha_verify_settle_ms`. A deterministic path reports zero generative
+input/output/inference work rather than inventing model usage.
 
 Unavailable metrics are omitted or displayed as unavailable; complete HTTP duration is
 not substituted for TTFT.
@@ -675,6 +709,8 @@ settings:
   ha_assist_enabled: true
   ha_assist_text_model: gemma-4-E2B-it
   ha_assist_vision_model: Qwen2-VL-2B-Instruct
+  ha_assist_verify_attempts: 2
+  ha_assist_verify_delay: 0.5
 
 models:
   vlm:
