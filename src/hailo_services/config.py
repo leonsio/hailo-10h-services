@@ -10,6 +10,7 @@ VLM_MODEL = "Qwen2-VL-2B-Instruct"
 STT_MODEL = "whisper-base"
 LLM_MODEL = "gemma-4-E2B-it"
 HA_ASSIST_MODEL = "HA-Assist"
+FRIGATE_ASSIST_MODEL = "Frigate-Assist"
 VISION_MODEL = "yolov11m"
 
 
@@ -56,6 +57,14 @@ class Settings:
         language (str): Default Whisper transcription language.
         service_language (str): Fallback language for HA routing, generated replies and notifications.
         ha_assist_enabled (bool): Whether to expose the virtual HA-Assist model.
+        frigate_assist_enabled (bool): Whether to expose experimental Frigate-Assist.
+        frigate_assist_text_model (str): Explicit native LLM/VLM target; empty uses the selected VLM.
+        frigate_assist_vision_model (str): Explicit native VLM target; empty uses the selected VLM.
+        frigate_assist_max_events (int): Maximum records per compacted tool-result list.
+        frigate_assist_text_chars (int): Preparation ceiling for required text and tools.
+        frigate_assist_vision_chars (int): Maximum explicit vision task text before generation.
+        frigate_assist_vision_max_tokens (int): Output cap for image chat, excluding structured descriptions.
+        frigate_assist_away_profiles (str): Comma-separated exact names of absence profiles.
         ha_assist_text_model (str): Enabled text backend selected for HA-Assist generative text fallback.
         ha_assist_vision_model (str): Enabled VLM backend selected for HA-Assist image requests.
         ha_assist_fuzzy_enabled (bool): Whether conservative catalogue spelling repair is enabled.
@@ -123,6 +132,14 @@ class Settings:
     language: str = "de"
     service_language: str = "de"
     ha_assist_enabled: bool = True
+    frigate_assist_enabled: bool = True
+    frigate_assist_text_model: str | None = ""
+    frigate_assist_vision_model: str | None = ""
+    frigate_assist_max_events: int = 12
+    frigate_assist_text_chars: int = 10000
+    frigate_assist_vision_chars: int = 1200
+    frigate_assist_vision_max_tokens: int = 128
+    frigate_assist_away_profiles: str = "away,abwesend"
     ha_assist_text_model: str = LLM_MODEL
     ha_assist_vision_model: str = VLM_MODEL
     ha_assist_fuzzy_enabled: bool = True
@@ -164,6 +181,25 @@ class Settings:
         """
         if not self.piper_voice.strip() or not self.piper_language.strip():
             raise ValueError("Piper voice and language must not be empty")
+        if {self.frigate_text_model, self.frigate_vision_model} & {
+            HA_ASSIST_MODEL,
+            FRIGATE_ASSIST_MODEL,
+        }:
+            raise ValueError("Frigate-Assist must route to native LLM/VLM models")
+        if self.vlm_enabled and self.frigate_vision_model != self.vlm_model:
+            raise ValueError(
+                f"Frigate-Assist vision target {self.frigate_vision_model!r} does not match "
+                f"the enabled VLM {self.vlm_model!r}; set frigate_assist_vision_model "
+                "to that model or leave it empty"
+            )
+        if not 1 <= self.frigate_assist_max_events <= 100:
+            raise ValueError("Frigate-Assist max events must be between 1 and 100")
+        if not 1000 <= self.frigate_assist_text_chars <= 20000:
+            raise ValueError("Frigate-Assist text chars must be between 1000 and 20000")
+        if not 1 <= self.frigate_assist_vision_max_tokens <= 2048:
+            raise ValueError("Frigate-Assist vision max tokens must be between 1 and 2048")
+        if not 256 <= self.frigate_assist_vision_chars <= 4000:
+            raise ValueError("Frigate-Assist vision chars must be between 256 and 4000")
         if not 1 <= self.piper_max_input_chars <= 16384:
             raise ValueError("piper_max_input_chars must be between 1 and 16384")
         if HA_ASSIST_MODEL in {self.ha_assist_text_model, self.ha_assist_vision_model}:
@@ -199,6 +235,24 @@ class Settings:
             or self.vision_zmq_endpoint.startswith("ipc://")
         ):
             raise ValueError("vision_zmq_endpoint must use tcp:// or ipc://")
+
+    @property
+    def frigate_text_model(self):
+        """Resolve an omitted text target to the selected native VLM.
+
+        Returns:
+            str: Explicit native model ID or the selected VLM ID.
+        """
+        return (self.frigate_assist_text_model or "").strip() or self.vlm_model
+
+    @property
+    def frigate_vision_model(self):
+        """Resolve an omitted image target to the selected native VLM.
+
+        Returns:
+            str: Explicit native model ID or the selected VLM ID.
+        """
+        return (self.frigate_assist_vision_model or "").strip() or self.vlm_model
 
     @property
     def vlm_model(self):
@@ -390,6 +444,11 @@ class Settings:
                 else:
                     values[key] = type(value)(raw)
         for key, value in values.items():
+            if (
+                key in {"frigate_assist_text_model", "frigate_assist_vision_model"}
+                and value is None
+            ):
+                values[key] = value = ""
             default = getattr(defaults, key)
             if isinstance(default, float):
                 valid = isinstance(value, (int, float)) and not isinstance(value, bool)

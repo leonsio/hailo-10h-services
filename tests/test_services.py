@@ -118,7 +118,12 @@ def test_http_ws_audio_and_resident_owner():
     with TestClient(create_app(settings(), backend)) as client:
         assert client.get("/health").json()["group_id"] == "SHARED"
         models = client.get("/v1/models").json()["data"]
-        assert [entry["id"] for entry in models] == [VLM_MODEL, "whisper-base", "HA-Assist"]
+        assert [entry["id"] for entry in models] == [
+            VLM_MODEL,
+            "whisper-base",
+            "HA-Assist",
+            "Frigate-Assist",
+        ]
         payload = {"model": VLM_MODEL, "messages": [{"role": "user", "content": "Hi"}]}
         answer = client.post("/v1/chat/completions", json=payload)
         assert answer.status_code == 200
@@ -167,7 +172,13 @@ def test_litert_lm_model_routes_through_shared_chat_api_and_streams():
         assert chunks == ["Gemma ", "antwortet"]
         status = runtime.status()
         assert status["litert_lm"]["ready"] is True
-        assert status["models"] == [VLM_MODEL, "whisper-base", LLM_MODEL, "HA-Assist"]
+        assert status["models"] == [
+            VLM_MODEL,
+            "whisper-base",
+            LLM_MODEL,
+            "HA-Assist",
+            "Frigate-Assist",
+        ]
         assert not hailo.calls
         assert len(gemma.calls) == 2
         await runtime.close()

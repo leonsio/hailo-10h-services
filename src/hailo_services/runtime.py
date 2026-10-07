@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .backend_hailo import HailoBackend, _validate_hailo_temperature
 from .backend_litert import LiteRTLMBackend
-from .config import HA_ASSIST_MODEL, LLM_MODEL, Settings
+from .config import FRIGATE_ASSIST_MODEL, HA_ASSIST_MODEL, LLM_MODEL, Settings
 from .errors import BusyError, LiteRTInferenceError
 from .interfaces import ChatBackend, ChatResult
 from .metrics import record
@@ -230,6 +230,37 @@ class Runtime:
             asyncio.TimeoutError: The configured request deadline expires.
         """
         request = self.default_chat_request(request)
+        if request.model == FRIGATE_ASSIST_MODEL:
+            from .frigate_assist import prepare
+            from .frigate_routing import validate_result
+
+            original = request
+            request, direct = prepare(self.settings, request)
+            if direct is not None:
+                record(
+                    request._metrics,
+                    inference_ms=0,
+                    input_tokens=0,
+                    output_tokens=0,
+                    input_tokens_source="deterministic",
+                    output_tokens_source="deterministic",
+                )
+                return direct
+            request = self.default_chat_request(request)
+            if request.model == LLM_MODEL:
+                if not self.litert_ready:
+                    raise BusyError(
+                        f"Frigate-Assist text backend is unavailable: {self.litert_error or 'Gemma is not ready'}"
+                    )
+                if isinstance(self.litert_backend, LiteRTLMBackend):
+                    result = await self.call_litert(
+                        self.litert_backend.chat, request, None, None, True
+                    )
+                else:
+                    result = await self.call_litert(self.litert_backend.chat, request)
+            else:
+                result = await self.call(self.backend.chat, request)
+            return validate_result(result, request, original)
         if request.model == HA_ASSIST_MODEL:
             from .ha_assist import prepare, target_model
 
@@ -292,7 +323,7 @@ class Runtime:
             BusyError: The runtime, model or selected owner queue is unavailable.
         """
         request = self.default_chat_request(request)
-        if request.model == HA_ASSIST_MODEL or has_tool_context(request):
+        if request.model in {HA_ASSIST_MODEL, FRIGATE_ASSIST_MODEL} or has_tool_context(request):
             yield await self.chat(request)
             return
         loop = asyncio.get_running_loop()
@@ -368,6 +399,7 @@ class Runtime:
             self.hailo_chat_models
             + ([LLM_MODEL] if self.litert_ready else [])
             + ([HA_ASSIST_MODEL] if self.settings.ha_assist_enabled else [])
+            + ([FRIGATE_ASSIST_MODEL] if self.settings.frigate_assist_enabled else [])
         )
 
     @property
@@ -456,6 +488,32 @@ class Runtime:
                     and self.settings.ha_assist_vision_model == self.settings.vlm_model
                 ),
             },
+            "frigate_assist": {
+                "enabled": self.settings.frigate_assist_enabled,
+                "experimental": True,
+                "model": FRIGATE_ASSIST_MODEL,
+                "text_model": self.settings.frigate_text_model,
+                "vision_model": self.settings.frigate_vision_model,
+                "text_ready": bool(
+                    self.settings.frigate_assist_enabled
+                    and (
+                        self.settings.frigate_text_model == LLM_MODEL
+                        and self.litert_ready
+                        or self.settings.frigate_text_model == self.settings.hailo_llm_model_id
+                        and self.settings.hailo_llm_enabled
+                        and self.ready
+                        or self.settings.frigate_text_model == self.settings.vlm_model
+                        and self.settings.vlm_enabled
+                        and self.ready
+                    )
+                ),
+                "vision_ready": bool(
+                    self.settings.frigate_assist_enabled
+                    and self.ready
+                    and self.settings.vlm_enabled
+                    and self.settings.frigate_vision_model == self.settings.vlm_model
+                ),
+            },
             "litert_lm": {
                 "ready": self.litert_ready,
                 "model": LLM_MODEL if self.litert_backend else None,
@@ -472,7 +530,8 @@ class Runtime:
                 else []
             )
             + ([LLM_MODEL] if self.litert_ready else [])
-            + ([HA_ASSIST_MODEL] if self.settings.ha_assist_enabled else []),
+            + ([HA_ASSIST_MODEL] if self.settings.ha_assist_enabled else [])
+            + ([FRIGATE_ASSIST_MODEL] if self.settings.frigate_assist_enabled else []),
             "model_paths": self.backend.paths,
             "artifact_paths": getattr(self.backend, "artifact_paths", {}),
             "minilm_ready": bool(self.ready and getattr(self.backend, "minilm", None)),

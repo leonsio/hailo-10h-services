@@ -194,7 +194,9 @@ class FrigateZmqServer:
                     getattr(self.vision, "pending", 0),
                 )
                 inference_started = time.perf_counter()
-                detections = await self.vision.detect_array(tensor, maximum=20)
+                detections = await self.vision.detect_array(
+                    tensor, maximum=20, request_id=request_id
+                )
                 inference_ms = (time.perf_counter() - inference_started) * 1000
                 detections = np.ascontiguousarray(detections, dtype=np.float32).reshape((20, 6))
                 response = {"shape": [20, 6], "dtype": "float32"}

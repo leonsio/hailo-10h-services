@@ -96,6 +96,47 @@ def request(model="Qwen2.5-1.5B-Instruct", **kwargs):
     )
 
 
+def test_frigate_native_hailo_final_summary_has_json_contract_and_preserves_usage():
+    b = backend(frigate_assist_text_model="Qwen2.5-1.5B-Instruct")
+    native = b.llm
+    native.text = '{"content":"A person was detected at the gate."}'
+    payload = {
+        "model": "Frigate-Assist",
+        "messages": [
+            {"role": "user", "content": "Summarize these events"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_recap",
+                        "type": "function",
+                        "function": {
+                            "name": "get_recap",
+                            "arguments": '{"after":"2026-10-07T17:00:00","before":"2026-10-07T20:00:00"}',
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_recap",
+                "content": '{"events":[{"description":"Person at gate"}]}',
+            },
+        ],
+    }
+    with TestClient(create_app(b.settings, b)) as client:
+        response = client.post("/v1/chat/completions", json=payload)
+        assert response.status_code == 200, response.text
+        assert (
+            response.json()["choices"][0]["message"]["content"]
+            == "A person was detected at the gate."
+        )
+        assert response.json()["usage"]["prompt_tokens"] > 0
+        assert len(native.calls) == 1
+        assert '{"content":"your answer"}' in native.calls[0]["prompt"]
+
+
 def tool():
     return {
         "type": "function",
@@ -118,15 +159,19 @@ def test_native_llm_http_ws_stream_metrics_and_model_selection(model):
     b = backend(hailo_llm_model=model)
     native = b.llm
     with TestClient(create_app(b.settings, b)) as client:
-        assert [m["id"] for m in client.get("/v1/models").json()["data"]] == [model, "HA-Assist"]
+        assert [m["id"] for m in client.get("/v1/models").json()["data"]] == [
+            model,
+            "HA-Assist",
+            "Frigate-Assist",
+        ]
         health = client.get("/health").json()
-        assert health["models"] == [model, "HA-Assist"]
+        assert health["models"] == [model, "HA-Assist", "Frigate-Assist"]
         assert health["default_text_model"] == model
         assert health["model_limits"][model]["context_length"] == 2048
         config = client.get("/ui/config").json()
         assert config["vision_models"] == []
         assert config["hailo_llm_model"] == model
-        assert config["chat_models"] == [model, "HA-Assist"]
+        assert config["chat_models"] == [model, "HA-Assist", "Frigate-Assist"]
         payload = {"messages": [{"role": "user", "content": "Hauptstadt Frankreich?"}]}
         answer = client.post("/v1/chat/completions", json=payload)
         assert answer.status_code == 200
@@ -389,7 +434,7 @@ def test_gemma_and_hailo_models_have_independent_selection_and_queues(hailo_llm)
             assert rt.executor is not rt.litert_executor
             rt.pending = s.queue_size
             assert await rt.chat(request(model=LLM_MODEL)) == LLM_MODEL
-            assert rt.status()["models"] == [model, LLM_MODEL, "HA-Assist"]
+            assert rt.status()["models"] == [model, LLM_MODEL, "HA-Assist", "Frigate-Assist"]
         finally:
             rt.pending = 0
             await rt.close()

@@ -124,7 +124,7 @@ def test_frigate_zmq_model_handshake_and_fixed_output(tmp_path):
             def accepts_model(self, name):
                 return name in {"yolov11m", "yolov11m.hef"}
 
-            async def detect_array(self, tensor, confidence=None, maximum=None):
+            async def detect_array(self, tensor, confidence=None, maximum=None, request_id=None):
                 return backend.detect(tensor, confidence or 0.4, maximum or 20)
 
         server = FrigateZmqServer(FakeVision(), settings)
@@ -169,5 +169,42 @@ def test_frigate_zmq_model_handshake_and_fixed_output(tmp_path):
             socket.close(linger=0)
             context.term()
             await server.close()
+
+    asyncio.run(scenario())
+
+
+def test_detector_phase_logs_keep_request_ids_on_success_and_failure(caplog):
+    from hailo_services.vision import VisionRuntime
+
+    class FailingBackend(FakeVisionBackend):
+        def detect(self, frame, confidence, maximum):
+            raise RuntimeError("native failure")
+
+    async def scenario():
+        caplog.set_level("DEBUG", logger="hailo_services.vision")
+        frame = np.zeros((32, 32, 3), dtype=np.uint8)
+        for backend, identifier in [
+            (FakeVisionBackend(), "ok-request"),
+            (FailingBackend(), "bad-request"),
+        ]:
+            runtime = VisionRuntime(_settings(), backend)
+            await runtime.start()
+            try:
+                if identifier == "bad-request":
+                    with pytest.raises(RuntimeError, match="native failure"):
+                        await runtime.detect_array(frame, request_id=identifier)
+                else:
+                    result = await runtime.detect_array(frame, request_id=identifier)
+                    assert result.shape == (20, 6)
+            finally:
+                await runtime.close()
+        messages = [
+            record.message
+            for record in caplog.records
+            if "event=vision_execution" in record.message
+        ]
+        assert any("request_id=ok-request" in msg and "status=completed" in msg for msg in messages)
+        assert any("request_id=bad-request" in msg and "status=error" in msg for msg in messages)
+        assert all("queue_wait_ms=" in msg and "execution_ms=" in msg for msg in messages)
 
     asyncio.run(scenario())

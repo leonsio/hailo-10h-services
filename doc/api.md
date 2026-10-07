@@ -463,6 +463,7 @@ contain:
 - resident YOLO model,
 - `gemma-4-E2B-it`,
 - virtual `HA-Assist`.
+- experimental virtual `Frigate-Assist`.
 
 Use this endpoint rather than assuming a configured model successfully initialized.
 
@@ -590,6 +591,41 @@ OpenAI-compatible server mode and select `HA-Assist`. A request body parameter
 limit. Do not choose a llama.cpp-specific server mode solely for this service because
 that may add parameters not part of this gateway's supported request schema.
 
+## Frigate virtual model (experimental)
+
+Use `model: "Frigate-Assist"` at `/v1/chat/completions` for Frigate-specific
+preparation. Recognized requests return deterministic client-executed tools;
+other text requests use `frigate_assist_text_model` (an enabled Gemma, native Hailo LLM,
+or the enabled VLM), and image requests use `frigate_assist_vision_model` with a short
+observation task and no tools. Both omitted or empty selections resolve to the selected
+native VLM; Gemma must be explicitly selected. An explicit image target conflicting
+with the enabled VLM is rejected when loading configuration. Explicit unavailable
+text targets do not fall back. VLM text requests obey the native VLM token/context limits. Direct native models
+and `HA-Assist` retain their own preparation behavior.
+
+Only `Frigate-Assist` accepts Frigate's optional `stream_options` object:
+`{"include_usage": true}`. With `stream: true`, the final usage chunk has empty
+`choices` and includes routing/preparation metrics. Tools are validated before
+streaming. The completion model name remains `Frigate-Assist`.
+
+`/health.frigate_assist` reports `experimental`, configured targets, independent
+`text_ready`/`vision_ready` flags and proxy enablement. Responses expose
+`metrics.frigate_route` and `metrics.frigate_prompt`. A request has zero model
+calls for deterministic handling, otherwise one selected backend call with no
+fallback. Character caps complement the native backend's actual token budgeting.
+
+**Chat is experimental and only conditionally usable.** Frigate chat is optional;
+named providers can separate `descriptions` and `chat`, or combine both roles with
+this virtual model. No embeddings are provided. See [Frigate-Assist](frigate-assist.md)
+for provider YAML, absence recap examples, supported commands, image/JSON limits,
+and diagnostic fields.
+
+Frigate's optional `provider_options.context_size` is a local planning hint, not
+the prepared backend input limit. The proxy examples omit the former `2048`
+override: inbound prompts can be larger than the native model context and are
+compiled before native token budgeting. The hint also affects Frigate's review
+frame selection and some UI gates; see the dedicated documentation for details.
+
 ## Home Assistant Wyoming STT and TTS
 
 Add the **Wyoming Protocol** integration in Home Assistant and point it to port 10300.
@@ -687,6 +723,7 @@ responses include request timing. Available fields depend on backend support.
 | `input_tokens`, `input_tokens_source` | Tokenizer count for accepted rendered prompt |
 | `output_tokens`, `output_tokens_source` | Retokenized/generated output count where available |
 | `input_budget_tokens` | Conservative budget used for admission/compaction |
+| `native_phases` | Native chat API-boundary timings: input/media preparation, context clear, generation setup and streaming; not individual hardware kernels |
 
 `HA-Assist` additionally records routing/history/intent/validation details such as
 `ha_route`, `ha_history`, `ha_plan`, `ha_intent` and `ha_validation` when applicable.

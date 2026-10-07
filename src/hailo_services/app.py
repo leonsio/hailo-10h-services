@@ -31,7 +31,7 @@ from fastapi.responses import (
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
-from .config import HA_ASSIST_MODEL, LLM_MODEL, STT_MODEL, Settings
+from .config import FRIGATE_ASSIST_MODEL, HA_ASSIST_MODEL, LLM_MODEL, STT_MODEL, Settings
 from .errors import BusyError, LiteRTInferenceError
 from .i18n import SUPPORTED_LANGUAGES, catalogue, wait_sentence
 from .input_budget import InputBudgetError
@@ -552,10 +552,18 @@ def create_app(
                 and settings.vlm_enabled
                 and settings.ha_assist_vision_model == settings.vlm_model
                 else []
+            )
+            + (
+                [FRIGATE_ASSIST_MODEL]
+                if settings.frigate_assist_enabled
+                and settings.vlm_enabled
+                and settings.frigate_vision_model == settings.vlm_model
+                else []
             ),
             "object_detection": vision.status(),
             "ha_assist_model": HA_ASSIST_MODEL,
             "ha_assist": runtime.status()["ha_assist"],
+            "frigate_assist": runtime.status()["frigate_assist"],
             "model_limits": runtime.model_limits,
             "vlm_max_images": ModelManager(settings)
             .entries.get(settings.vlm_model, {})
@@ -753,6 +761,11 @@ def create_app(
                 [{"id": HA_ASSIST_MODEL, "object": "model", "owned_by": "hailo-services"}]
                 if settings.ha_assist_enabled
                 else []
+            )
+            + (
+                [{"id": FRIGATE_ASSIST_MODEL, "object": "model", "owned_by": "hailo-services"}]
+                if settings.frigate_assist_enabled
+                else []
             ),
         }
 
@@ -909,6 +922,9 @@ def create_app(
                 No application-specific exceptions are raised for valid inputs.
             """
 
+            stream_finish = None
+            stream_status = "completed"
+
             def event(delta, finish=None):
                 """Serialize an OpenAI completion chunk as a server-sent event.
 
@@ -922,6 +938,9 @@ def create_app(
                 Notes:
                     No application-specific exceptions are raised for valid inputs.
                 """
+                nonlocal stream_finish
+                if finish:
+                    stream_finish = finish
                 return (
                     "data: "
                     + json.dumps(
@@ -938,7 +957,9 @@ def create_app(
 
             try:
                 yield event({"role": "assistant", "content": ""})
-                if request.model == HA_ASSIST_MODEL or has_tool_context(request):
+                if request.model in {HA_ASSIST_MODEL, FRIGATE_ASSIST_MODEL} or has_tool_context(
+                    request
+                ):
                     # Buffer native tool output so invalid/incomplete calls are never streamed
                     # as actions or spoken as text by the voice assistant.
                     if (
@@ -1001,7 +1022,42 @@ def create_app(
                     async for chunk in runtime.stream(request):
                         yield event({"content": chunk})
                     yield event({}, "stop")
+                if request.stream_options and request.stream_options.include_usage:
+                    counts = request._metrics
+                    usage = None
+                    if "input_tokens" in counts and "output_tokens" in counts:
+                        usage = {
+                            "prompt_tokens": counts["input_tokens"],
+                            "completion_tokens": counts["output_tokens"],
+                            "total_tokens": counts["input_tokens"] + counts["output_tokens"],
+                        }
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "id": identifier,
+                                "object": "chat.completion.chunk",
+                                "created": created,
+                                "model": request.model,
+                                "choices": [],
+                                "usage": usage,
+                                "metrics": response_metrics(
+                                    request._metrics, http_request.scope["state"]
+                                ),
+                            }
+                        )
+                        + "\n\n"
+                    )
+            except (asyncio.CancelledError, GeneratorExit):
+                if request.model == FRIGATE_ASSIST_MODEL:
+                    _LOG.info(
+                        "event=frigate_stream_end request_id=%s status=cancelled finish_reason=%s done_emitted=false",
+                        request_id,
+                        stream_finish,
+                    )
+                raise
             except Exception as exc:
+                stream_status = "error"
                 _LOG.exception("Streaming inference failed request_id=%s", request_id)
                 yield (
                     "data: "
@@ -1027,6 +1083,13 @@ def create_app(
                     + "\n\n"
                 )
             yield "data: [DONE]\n\n"
+            if request.model == FRIGATE_ASSIST_MODEL:
+                _LOG.info(
+                    "event=frigate_stream_end request_id=%s status=%s finish_reason=%s done_emitted=true",
+                    request_id,
+                    stream_status,
+                    stream_finish,
+                )
 
         return StreamingResponse(events(), media_type="text/event-stream")
 

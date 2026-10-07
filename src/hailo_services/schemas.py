@@ -2,9 +2,9 @@
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
-from .config import VLM_MODEL
+from .config import FRIGATE_ASSIST_MODEL, VLM_MODEL
 
 CatalogueText = Annotated[str, Field(min_length=1, max_length=256, pattern=r"^[^\r\n]+$")]
 
@@ -53,6 +53,13 @@ class HAContext(BaseModel):
     entities: list[HAEntity] = Field(max_length=4096)
 
 
+class StreamOptions(BaseModel):
+    """Validate Frigate's optional OpenAI usage-stream request."""
+
+    model_config = ConfigDict(extra="forbid")
+    include_usage: bool = False
+
+
 class ChatRequest(BaseModel):
     """Validate OpenAI chat input, tool policy and generation limits.
 
@@ -65,6 +72,7 @@ class ChatRequest(BaseModel):
         top_p (float | None): Top p.
         seed (int): Seed.
         stream (bool): Stream. Default: False.
+        stream_options (StreamOptions | None): Usage-stream options for Frigate-Assist only.
         user (str | None): User. Default: None.
         language (str | None): Language code; None uses the configured or detected language.
         tools (list[dict[str, Any]] | None): Client-provided OpenAI function schemas.
@@ -84,12 +92,27 @@ class ChatRequest(BaseModel):
     top_p: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     seed: int = Field(default=42, ge=0, le=2**32 - 1)
     stream: bool = False
+    stream_options: StreamOptions | None = None
     user: str | None = None
     language: str | None = Field(default=None, pattern=r"^(de|en|ru)(?:-[A-Za-z]{2})?$")
     tools: list[dict[str, Any]] | None = Field(default=None, max_length=128)
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool = True
     ha_context: HAContext | None = None
+
+    @model_validator(mode="after")
+    def check_stream_options(self):
+        """Keep Frigate compatibility options isolated from native chat models.
+
+        Returns:
+            ChatRequest: Validated request.
+
+        Raises:
+            ValueError: Stream options were supplied for a different model.
+        """
+        if self.stream_options is not None and self.model != FRIGATE_ASSIST_MODEL:
+            raise ValueError("stream_options is supported only by Frigate-Assist")
+        return self
 
     @field_validator("tools")
     @classmethod
