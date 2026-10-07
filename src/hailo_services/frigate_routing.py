@@ -2,7 +2,7 @@
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .frigate_prompt import camera_catalogue, server_time, text_content
 from .tool_calling import arguments_object, response_message, selected_tools
@@ -28,6 +28,134 @@ _READS = {
     "get_export_cases",
     "get_event_image",
 }
+_EVENT_QUERY = re.compile(
+    r"(?:zeige|zeig|show)(?: mir| me)?(?: die| alle| the| all)? "
+    r"(?:ereignisse|events|aktivitäten|activity|erkennungen|detections) (.+)",
+    re.I,
+)
+_TIME_REPLY = re.compile(
+    r"(?:(?:von|seit|ab|from|since) )?"
+    r"(?:heute morgen|this morning|heute|today|gestern|yesterday|"
+    r"(?:heute |today )?\d{1,2}(?::\d{2})?(?: uhr)?)"
+    r"(?: bis jetzt| until now)?",
+    re.I,
+)
+
+
+def event_interval(request):
+    """Resolve narrow event/time forms using Frigate's supplied local clock.
+
+    A time-only follow-up inherits only the preceding event query through time clarifications;
+    assistant suggestions never supply dates or filters. Morning has no silently
+    invented start hour.
+
+    Args:
+        request: Original Frigate request with conversation and server clock.
+
+    Returns:
+        tuple: Recognition flag, local ISO interval or None, clarification or None.
+    """
+    users = [
+        text_content(m).strip().rstrip("?.!") for m in request.messages if m.get("role") == "user"
+    ]
+    match = _EVENT_QUERY.fullmatch(users[-1])
+    if match:
+        phrase = match[1].casefold()
+    elif len(users) > 1 and _TIME_REPLY.fullmatch(users[-1]):
+        previous = next((q for q in reversed(users[:-1]) if not _TIME_REPLY.fullmatch(q)), "")
+        if not _EVENT_QUERY.fullmatch(previous):
+            return False, None, None
+        phrase = users[-1].casefold()
+    else:
+        return False, None, None
+    german = not re.search(r"\b(show|today|yesterday|morning|since|from)\b", users[-1], re.I)
+    phrase = re.sub(r"^(?:von|seit|ab|from|since) ", "", phrase)
+    phrase = re.sub(r"(?: bis jetzt| until now)$", "", phrase)
+    duration = re.fullmatch(
+        r"(?:(?:der |in den )?letzten?|(?:in )?(?:the )?last) "
+        r"(\d+|eine[rn]?|one|an?)?\s*(stunden?|hours?|minuten?|minutes?)",
+        phrase,
+    )
+    since = re.fullmatch(r"(?:heute |today )?(\d{1,2})(?::(\d{2}))?(?: uhr)?", phrase)
+    if (
+        not duration
+        and not since
+        and phrase not in {"heute", "today", "gestern", "yesterday", "heute morgen", "this morning"}
+    ):
+        return False, None, None
+    if phrase in {"heute morgen", "this morning"}:
+        return (
+            True,
+            None,
+            (
+                "Ab welcher Uhrzeit meinst du mit heute Morgen? Zum Beispiel: ab 06:00 Uhr bis jetzt."
+                if german
+                else "What start time do you mean by this morning? For example: from 06:00 until now."
+            ),
+        )
+    now = _local_datetime(server_time(request.messages))
+    if now is None:
+        return (
+            True,
+            None,
+            (
+                "Frigate hat keine gültige lokale Serverzeit mitgeschickt. Bitte gib Anfang und Ende mit Datum und Uhrzeit an."
+                if german
+                else "Frigate supplied no valid local server time. Please provide explicit start and end dates and times."
+            ),
+        )
+    before = now
+    if duration:
+        number = duration[1] or "1"
+        amount = int(number) if number.isdigit() else 1
+        minutes = amount * (60 if duration[2].startswith(("stund", "hour")) else 1)
+        if not 0 < minutes <= 44640:
+            return (
+                True,
+                None,
+                (
+                    "Bitte wähle einen Zeitraum zwischen einer Minute und 31 Tagen."
+                    if german
+                    else "Please choose a period between one minute and 31 days."
+                ),
+            )
+        after = now - timedelta(minutes=minutes)
+    elif since:
+        try:
+            after = now.replace(hour=int(since[1]), minute=int(since[2] or 0), second=0)
+        except ValueError:
+            after = now
+        if after >= now:
+            return (
+                True,
+                None,
+                (
+                    "Bitte gib eine gültige Uhrzeit vor der mitgeschickten Serverzeit an."
+                    if german
+                    else "Please provide a valid start time before the supplied server time."
+                ),
+            )
+    else:
+        after = now.replace(hour=0, minute=0, second=0)
+        if phrase in {"gestern", "yesterday"}:
+            before = after
+            after -= timedelta(days=1)
+        if after == before:
+            return (
+                True,
+                None,
+                "Für diesen Zeitraum liegt noch keine vergangene Zeit vor."
+                if german
+                else "This period has no elapsed time yet.",
+            )
+    return (
+        True,
+        {
+            "after": after.isoformat(timespec="seconds"),
+            "before": before.isoformat(timespec="seconds"),
+        },
+        None,
+    )
 
 
 def latest_question(request):
@@ -286,8 +414,17 @@ def plan(request, settings, images):
             ),
             "status_clarification",
         )
-    live = bool(_LIVE.fullmatch(question)) and bool(
-        targets or re.search(r"\b(kamera|kameras|camera|cameras|live)\b", question, re.I)
+    historical = bool(
+        re.search(
+            r"\b(letzten?|gestern|heute|last|yesterday|today|ereignisse|events|history)\b",
+            question,
+            re.I,
+        )
+    )
+    live = (
+        not historical
+        and bool(_LIVE.fullmatch(question))
+        and bool(targets or re.search(r"\b(kamera|kameras|camera|cameras|live)\b", question, re.I))
     )
     if live and "get_live_context" in names and not results:
         if len(targets) == 1:
@@ -332,6 +469,16 @@ def plan(request, settings, images):
     if results:
         # Reading live context without a frame cannot describe unseen objects.
         return [], None, "tool_summary"
+    recognized, interval, clarification = event_interval(request)
+    if recognized and names.intersection({"get_recap", "search_objects"}):
+        if clarification:
+            return tools, clarification, "event_time_clarification"
+        name = "get_recap" if "get_recap" in names else "search_objects"
+        return (
+            [t for t in tools if t["function"]["name"] == name],
+            _call(request, name, interval),
+            "event_time_interval",
+        )
     if request.tool_choice == "required" or isinstance(request.tool_choice, dict):
         return tools, None, "explicit_tool_choice"
     if absent:
@@ -376,6 +523,31 @@ def validate_result(result, prepared, original):
         if name in _WRITES:
             raise ValueError("Frigate-Assist does not accept generative writable tool calls")
         args = arguments_object(call["function"]["arguments"])
+        if name in {"search_objects", "find_similar_objects", "get_recap"}:
+            times = {}
+            for key in ("after", "before"):
+                if key not in args:
+                    continue
+                value = args[key]
+                parsed = _local_datetime(value)
+                if (
+                    not isinstance(value, str)
+                    or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", value)
+                    or parsed is None
+                ):
+                    raise ValueError(
+                        "Frigate-Assist requires valid local ISO timestamps for historical tools"
+                    )
+                times[key] = parsed
+            if "after" in times and "before" in times and times["after"] >= times["before"]:
+                raise ValueError(
+                    "Frigate-Assist rejected an empty or reversed historical time interval"
+                )
+            now = _local_datetime(server_time(original.messages))
+            if now and any(value > now for value in times.values()):
+                raise ValueError(
+                    "Frigate-Assist rejected a future timestamp in a historical tool call"
+                )
         for key in ("camera", "cameras"):
             if key not in args:
                 continue

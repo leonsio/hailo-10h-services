@@ -169,6 +169,7 @@ example). Requests may lower the selected backend's token ceiling but not raise 
 | Recognized absence question, no results yet | Return `get_profile_status` | 0 |
 | Same question with an unambiguous profile interval | Return `get_recap` with supplied local times | 0 |
 | Missing/ambiguous absence interval | Ask for start/end time | 0 |
+| Recognized event query with last N minutes/hours, today/yesterday or a start clock time | Calculate the local interval and return `get_recap` (otherwise `search_objects`) | 0 |
 | Known live camera query | Return `get_live_context` for the exact camera ID | 0 |
 | Exact supported setting/cancellation instruction | Return the schema-validated action | 0 |
 | Text reasoning or event summary | Compile text/history and selected schemas | 1 configured LLM call |
@@ -204,6 +205,9 @@ context produces an explicit error requesting a narrower question/time range.
 Character ceilings are preparation limits, **not token counts**.
 
 Generated tools are validated against the selected schemas and supplied camera IDs.
+Historical calls also require valid local ISO timestamps with seconds, an increasing
+interval and no timestamps later than the supplied Frigate server clock. Invalid
+calls are rejected before being emitted in a stream.
 The proxy does not expose writable tools to generative inference. This first version
 supports conservative exact forms such as:
 
@@ -236,6 +240,31 @@ The proxy cannot recover a full profile history that Frigate did not send. Multi
 absences or changing profiles within an absence may require an explicit time range.
 The deterministic recognizer covers a small set of German/English question forms;
 other wording uses the compact LLM path and remains experimental.
+
+### Relative event time windows and follow-ups
+
+`Zeige mir die Ereignisse der letzten Stunde` is handled directly: with a supplied
+Frigate clock of `2026-10-07 at 10:02:08 PM`, the tool receives
+`after: 2026-10-07T21:02:08` and `before: 2026-10-07T22:02:08`. No model calculates
+dates, no camera filter is invented, and no semantic search for the word "event"
+is added. The preferred tool is `get_recap` for review activity; if Frigate only
+supplies `search_objects`, the returned data instead covers tracked detections.
+Returned results are then summarized by the selected LLM.
+
+Recognized narrow German/English event forms cover the last N minutes/hours
+(between one minute and 31 days), today, yesterday, and a start time such as
+`Zeige die Ereignisse ab heute 06:00 Uhr bis jetzt`. Midnight crossings are
+calculated directly. A time-only follow-up such as `ab 06:00 Uhr bis jetzt`
+inherits the preceding event question through consecutive time clarifications,
+without taking dates from an assistant's suggestions. An unrelated question ends
+this inheritance. Filtered or more complex questions still use the experimental
+LLM path; this recognizer does not silently discard extra requested filters.
+
+`von heute morgen bis jetzt` has no defined start hour. The proxy asks specifically
+which hour the user means rather than silently assuming midnight or 06:00. Missing
+or invalid server clocks also require clarification. The proxy uses the clock in
+Frigate's request, including if Frigate reuses an older conversation clock; it does
+not replace it with the proxy host's wall clock or assume the host's timezone.
 
 ### Image preparation and descriptions
 
@@ -280,6 +309,14 @@ With debug logging enabled, `event=frigate_assist` reports preparation/routing c
 The usual native input-budget events show whether the compiled prompt fits. A failure
 never triggers a silent switch to a less suitable model. Validate real answer quality
 and latency on the Raspberry Pi/Hailo device; automated tests use backend doubles.
+
+If chat remains busy and no new service requests appear, check the **Frigate** log
+and its outstanding `/api/chat/completion` browser request. A completed service
+response can be followed by Frigate tool execution before another model call; a
+slow semantic search or another tool can therefore leave this service's log quiet.
+Cancel the running chat or reload/start a new conversation to recover the UI.
+The proxy cannot cancel or reset Frigate's internal tool execution. A service-side
+HTTP 200 alone does not demonstrate that the entire Frigate chat turn completed.
 
 ## References
 

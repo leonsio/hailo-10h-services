@@ -57,6 +57,7 @@ TOOLS = [
             "semantic_query": {"type": "string", "description": "Appearance in English"},
             "sub_label": {"type": "string"},
             "after": {"type": "string"},
+            "before": {"type": "string"},
         },
     ),
     tool("find_similar_objects", {"event_id": {"type": "string"}}, ["event_id"]),
@@ -320,6 +321,157 @@ def test_text_routing_and_tool_selection(service):
         < len(json.dumps(payload("Zeige alle Autos heute"))) / 2
     )
     assert "semantic_query in English" in compiled.tools[0]["function"]["description"]
+
+
+@pytest.mark.parametrize(
+    ("question", "after", "before"),
+    [
+        (
+            "Zeige mir die Ereignisse der letzten Stunde",
+            "2026-10-07T20:02:19",
+            "2026-10-07T21:02:19",
+        ),
+        ("Show me all events in the last hour", "2026-10-07T20:02:19", "2026-10-07T21:02:19"),
+        (
+            "Zeige alle Ereignisse der letzten 30 Minuten",
+            "2026-10-07T20:32:19",
+            "2026-10-07T21:02:19",
+        ),
+        ("Zeige die Ereignisse heute", "2026-10-07T00:00:00", "2026-10-07T21:02:19"),
+        ("Show events yesterday", "2026-10-06T00:00:00", "2026-10-07T00:00:00"),
+        (
+            "Zeige die Ereignisse ab heute 06:00 Uhr bis jetzt",
+            "2026-10-07T06:00:00",
+            "2026-10-07T21:02:19",
+        ),
+    ],
+)
+def test_event_intervals_without_inference(service, question, after, before):
+    client, backend, llm = service
+    result = message(client.post("/v1/chat/completions", json=payload(question)))
+    assert name_and_args(result) == ("get_recap", {"after": after, "before": before})
+    assert not backend.calls and not llm.calls
+    result = message(
+        client.post(
+            "/v1/chat/completions", json=followup(payload(question), result, {"events": []})
+        )
+    )
+    assert result["content"] == "summary from actual events"
+    assert len(llm.calls) == 1 and not llm.calls[0].tools
+
+
+def test_event_interval_midnight_and_search_fallback(service):
+    client, _, llm = service
+    body = payload("Zeige mir die Ereignisse der letzten Stunde")
+    body["messages"][0]["content"] = SYSTEM.replace("09:02:19 PM", "12:20:00 AM")
+    body["tools"] = [t for t in body["tools"] if t["function"]["name"] != "get_recap"]
+    result = message(client.post("/v1/chat/completions", json=body))
+    assert name_and_args(result) == (
+        "search_objects",
+        {"after": "2026-10-06T23:20:00", "before": "2026-10-07T00:20:00"},
+    )
+    assert not llm.calls
+
+
+def test_time_followups_do_not_copy_bad_assistant_dates(service):
+    client, _, llm = service
+    body = payload("Zeige mir die Ereignisse der letzten Stunde")
+    body["messages"] += [
+        {"role": "assistant", "content": "Bitte gib einen Zeitraum an: 10:02 PM bis 11:02 PM."},
+        {"role": "user", "content": "von heute morgen bis jetzt"},
+    ]
+    result = message(client.post("/v1/chat/completions", json=body))
+    assert "Ab welcher Uhrzeit" in result["content"]
+    body["messages"] += [result, {"role": "user", "content": "ab 06:00 Uhr bis jetzt"}]
+    result = message(client.post("/v1/chat/completions", json=body))
+    assert name_and_args(result) == (
+        "get_recap",
+        {"after": "2026-10-07T06:00:00", "before": "2026-10-07T21:02:19"},
+    )
+    assert not llm.calls
+
+
+def test_event_interval_needs_clock_and_honors_tool_none(service):
+    client, _, llm = service
+    body = payload("Zeige mir die Ereignisse der letzten Stunde")
+    body["messages"][0]["content"] = "No clock supplied"
+    result = message(client.post("/v1/chat/completions", json=body))
+    assert "Serverzeit" in result["content"] and not llm.calls
+    body["tool_choice"] = "none"
+    result = message(client.post("/v1/chat/completions", json=body))
+    assert "tool_calls" not in result and len(llm.calls) == 1
+
+
+def test_filtered_or_unrelated_questions_do_not_inherit_event_interval(service):
+    client, _, llm = service
+    body = payload("Zeige mir die Ereignisse der letzten Stunde von Kamera Garden")
+    message(client.post("/v1/chat/completions", json=body))
+    assert len(llm.calls) == 1
+    body = payload("Zeige mir die Ereignisse der letzten Stunde")
+    body["messages"] += [
+        {"role": "assistant", "content": "Ab wann?"},
+        {"role": "user", "content": "Eine andere Frage"},
+        {"role": "assistant", "content": "Antwort"},
+        {"role": "user", "content": "ab 06:00 Uhr bis jetzt"},
+    ]
+    message(client.post("/v1/chat/completions", json=body))
+    assert len(llm.calls) == 2
+
+
+def test_relative_event_stream_finishes_and_next_request_is_accepted(service):
+    client, _, llm = service
+    response = client.post(
+        "/v1/chat/completions",
+        json=payload(
+            "Zeige mir die Ereignisse der letzten Stunde",
+            stream=True,
+            stream_options={"include_usage": True},
+        ),
+    )
+    chunks = [
+        json.loads(line[6:])
+        for line in response.text.splitlines()
+        if line.startswith("data: ") and "[DONE]" not in line
+    ]
+    call = next(
+        c["choices"][0]["delta"]["tool_calls"][0]
+        for c in chunks
+        if c["choices"] and c["choices"][0]["delta"].get("tool_calls")
+    )
+    assert name_and_args({"tool_calls": [call]}) == (
+        "get_recap",
+        {"after": "2026-10-07T20:02:19", "before": "2026-10-07T21:02:19"},
+    )
+    assert chunks[-1]["usage"]["total_tokens"] == 0
+    assert response.text.endswith("data: [DONE]\n\n")
+    assert message(client.post("/v1/chat/completions", json=payload("Weitere Frage")))["content"]
+    assert len(llm.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"after": "2026-10-07 10:02:08 PM", "before": "2026-10-07 11:02:08 PM"},
+        {"after": "2026-10-07T20:00:00", "before": "2026-10-07T23:00:00"},
+        {"after": "2026-10-07T20:00:00", "before": "2026-10-07T19:00:00"},
+        {"after": "2026-10-07T20:00:00Z"},
+        {"after": "2026-02-30T00:00:00"},
+    ],
+)
+def test_generated_historical_dates_rejected_before_streaming(service, arguments):
+    client, _, llm = service
+    llm.result = {"tool_calls": [{"function": {"name": "search_objects", "arguments": arguments}}]}
+    response = client.post(
+        "/v1/chat/completions", json=payload("Zeige alle Autos heute", stream=True)
+    )
+    assert '"error"' in response.text
+    assert '"tool_calls"' not in response.text
+    assert response.text.endswith("data: [DONE]\n\n")
+    # A failed round releases the service for the next request.
+    llm.result = "summary from actual events"
+    assert message(client.post("/v1/chat/completions", json=payload("Eine weitere Frage")))[
+        "content"
+    ]
 
 
 def test_unknown_camera_generated_call_is_rejected(service):
