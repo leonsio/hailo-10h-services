@@ -477,11 +477,11 @@ class HailoVisionBackend:
         )
         completion_error: list[BaseException] = []
 
-        def completed(info):
+        def completed(completion_info):
             """Capture native detector completion failures for the owner thread.
 
             Args:
-                info (Any): Native Hailo completion metadata including an optional exception.
+                completion_info (Any): Native Hailo completion metadata including an optional exception.
 
             Returns:
                 None: Appends a native error when the callback reports one.
@@ -489,8 +489,8 @@ class HailoVisionBackend:
             Notes:
                 No application-specific exceptions are raised for valid inputs.
             """
-            if info.exception:
-                completion_error.append(info.exception)
+            if completion_info.exception:
+                completion_error.append(completion_info.exception)
 
         job = self.configured_model.run_async([bindings], completed)
         job.wait(int(self.settings.request_timeout * 1000))
