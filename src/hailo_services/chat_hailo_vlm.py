@@ -58,10 +58,7 @@ def _uniform_sample(items: list[tuple[int, int]], count: int) -> list[tuple[int,
         return [items[-1]]
     last = len(items) - 1
     denominator = count - 1
-    return [
-        items[(index * last + denominator // 2) // denominator]
-        for index in range(count)
-    ]
+    return [items[(index * last + denominator // 2) // denominator] for index in range(count)]
 
 
 def _limit_sequence_images(request, max_images: int):
