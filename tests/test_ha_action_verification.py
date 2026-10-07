@@ -238,8 +238,7 @@ def test_configured_third_verify_is_used_before_giving_up():
     assert decision["kind"] == "verify_retry"
     assert decision["verify_attempt"] == 3
     assert (
-        decision["response"]["tool_calls"][0]["function"]["name"]
-        == "homeassistant__GetLiveContext"
+        decision["response"]["tool_calls"][0]["function"]["name"] == "homeassistant__GetLiveContext"
     )
 
 
