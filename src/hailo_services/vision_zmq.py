@@ -61,7 +61,11 @@ class FrigateZmqServer:
         _LOG.info("Frigate ZMQ detector listening on %s", self.settings.vision_zmq_endpoint)
 
     async def _monitor(self):
-        """Log transport connections independently of detector requests."""
+        """Log transport connections independently of detector requests.
+
+        Returns:
+            None: Runs until cancelled or until the monitor socket fails.
+        """
         import zmq
         from zmq.utils.monitor import parse_monitor_message
 
@@ -187,7 +191,7 @@ class FrigateZmqServer:
                     shape,
                     dtype,
                     len(frames[1]),
-                    self.vision.pending,
+                    getattr(self.vision, "pending", 0),
                 )
                 inference_started = time.perf_counter()
                 detections = await self.vision.detect_array(tensor, maximum=20)
