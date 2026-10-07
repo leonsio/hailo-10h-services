@@ -54,12 +54,15 @@ def test_qwen2_frigate_sequences_are_sampled_before_budgeting(image_count, expec
         trimmed, prompt = limit_request(BudgetVLM(), _request(image_count), 2048, 2048)
 
     assert _frame_numbers(trimmed) == expected
-    assert sum(
-        part.get("type") == "image"
-        for message in prompt
-        if isinstance(message.get("content"), list)
-        for part in message["content"]
-    ) == 4
+    assert (
+        sum(
+            part.get("type") == "image"
+            for message in prompt
+            if isinstance(message.get("content"), list)
+            for part in message["content"]
+        )
+        == 4
+    )
     assert "vlm_image_overflow" in caplog.text
     assert f"images={image_count}" in caplog.text
     assert "max_images=4" in caplog.text
@@ -82,9 +85,12 @@ def test_single_image_vlm_is_not_silently_collapsed():
     # this semantic mismatch intact so backend_hailo keeps returning its clear
     # "supports at most 1 image" error instead of silently choosing a frame.
     assert _frame_numbers(trimmed) == [0, 1]
-    assert sum(
-        part.get("type") == "image"
-        for message in prompt
-        if isinstance(message.get("content"), list)
-        for part in message["content"]
-    ) == 2
+    assert (
+        sum(
+            part.get("type") == "image"
+            for message in prompt
+            if isinstance(message.get("content"), list)
+            for part in message["content"]
+        )
+        == 2
+    )
