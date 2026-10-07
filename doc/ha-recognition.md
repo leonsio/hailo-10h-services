@@ -61,6 +61,103 @@ Track false actions, intent/target accuracy, correct clarification, generative
 fallback rate and P50/P95 latency separately; a lower fallback rate alone is not
 proof of improvement. Real backend timings still require a Hailo/LiteRT host.
 
+## Practical test procedure
+
+Use the `feature/ha-recognition-diagnostics` branch and select **HA-Assist**
+in Home Assistant. Direct Gemma/Qwen requests bypass recognition. Compare both
+versions with identical tool schemas, exposed entities and settings.
+
+1. Capture a complete real OpenAI request from your HA integration as
+   `ha-request.json`: messages (including static catalogue), tools and current
+   user turn. A user prompt alone cannot test target selection or tool validation.
+2. Replay a deep copy through `/v1/ha-assist/diagnose`, using `model=HA-Assist`
+   and `stream=false`. This proposes actions without generation or execution.
+3. Inspect target, action, numeric value and scope first. Then inspect candidates,
+   route, compact messages/tools and preparation timings.
+4. For ambiguous/complex cases, separately test normal HA-Assist chat to observe
+   actual model quality, validation, token counts and TTFT. Diagnosis cannot
+   measure native inference or final native token budgeting.
+5. Finally compare typed HA input with voice input for the same sentence.
+   Preserve the Whisper transcript to distinguish STT errors from recognition errors.
+
+For example, reuse the original catalogue and tools while replacing only the last
+user turn (requires `jq`; set `SERVICE_URL` and `API_KEY` for your installation):
+
+```bash
+SERVICE_URL="http://HOST:8090"
+API_KEY=""
+TEST_PROMPT="Schalte das Licht imn Wohnzimmer aus"
+
+jq --arg text "$TEST_PROMPT" '
+  .model = "HA-Assist" | .stream = false |
+  ([.messages | to_entries[] | select(.value.role == "user") | .key] | last) as $i |
+  if $i == null then error("No user message in captured request") else
+    .messages = .messages[0:($i + 1)] |
+    .messages[$i].content = $text
+  end
+' ha-request.json > diagnosis-request.json
+
+curl --fail-with-body --silent --show-error \
+  "$SERVICE_URL/v1/ha-assist/diagnose" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
+  --data-binary @diagnosis-request.json > diagnosis-result.json
+
+jq '{
+  generative_calls, tools_executed, proposed_response,
+  route: .metrics.ha_route,
+  plan: .metrics.ha_plan,
+  intent: .metrics.ha_intent,
+  stages_ms: .metrics.ha_stages_ms,
+  prepared_request
+}' diagnosis-result.json
+```
+
+Use a fresh initial HA request for independent tests; keep full tool-call/result
+history intentionally when testing follow-ups. The command replaces the most recent
+user turn and drops subsequent messages. Diagnosis always reports
+`generative_calls=0` and `tools_executed=0`; whether production would need a
+model is shown by `metrics.ha_route.would_inference_calls`.
+
+### Test prompts and acceptance criteria
+
+Replace example rooms/devices with actual exposed catalogue names. Misspell those
+names at test time; no typo variants need to be configured. These are acceptance
+criteria, not a claim that every wording is deterministic under every schema.
+
+| Prompt | What to check |
+|---|---|
+| `Schalte das Licht in der Kuche aus` | Resolve Küche if unique; TurnOff targets the area and light domain, not only an arbitrary kitchen device. |
+| `Schalte das Licht in Wonzimmer auf 90%` | Resolve Wohnzimmer if unique; brightness=90, never color="90%". |
+| `Schalte das Licht in Wohnzimer auf 90%` | Same outcome from a different deletion; no stored typo list. |
+| `Schalte das Licht im Wohn Zimmer aus` | Resolve a unique catalogue room despite spacing. |
+| `Schalte das Licht imn Wohnzimmer aus` | Official-sentence recovery preserves TurnOff and area. |
+| `Schalte das Licht in den Wohnzimmer aus` | Conservative sentence recovery; same action and scope. |
+| `Schalte das Licht im Wohnzimmer auf 70` | With clear light command, brightness=70; no color task. |
+| `Schalte die Leselampe im Wohnzimmer auf 70%` | If that named light exists there, retain the individual target; do not change every room light. |
+| `Schalte das Licht im Wohnzimmer nicht aus` | No positive TurnOff inferred by fuzzy sentence repair. |
+| `Schalte das Licht im Wohnzimmer aus und an` | No single unconditional action inferred by sentence repair. |
+| `Wenn es dunkel ist, schalte das Licht im Wohnzimmer aus` | Do not silently discard the condition. |
+| `Mache das Licht im Wohnzimmer um 20 Prozent heller` | Do not replace a relative change with absolute brightness=20. |
+| `Schalte das Licht im Wohnzimmer auf 120 Prozent` | Never return a brightness value outside the allowed schema/range. |
+| `Schalte das Licht im unbekannten Raum aus` | No arbitrary device/area substitution. |
+| `Ist das Licht in der Küche an?` | Read-only state answer or GetLiveContext; never a switching tool. |
+| `Was ist die Hauptstadt von Portugal?` then `Was kann ich dort ansehen?` | General-model route; retain Portugal/Lisboa context; concise default response. |
+
+For a reproducible score tie, create a **diagnostic-only** catalogue with two light
+areas `ArbeitsraumA` and `ArbeitsraumB`, then ask
+`Schalte das Licht im ArbeitsraumC auf 70%`. Expect two constrained candidates,
+no direct guessed call and `would_inference_calls=1`. This synthetic catalogue
+need not be created as real HA devices. In normal chat, the LLM must choose within
+those candidates or ask for clarification when no evidence distinguishes them.
+
+Record each case with input/transcript, expected target/action/value,
+actual proposal, recognition source, candidates/scores and route. For generated
+requests add actual input/output tokens, TTFT and total duration. Repeat after a
+catalogue/schema change to check cache invalidation. Evaluate incorrect actions
+before deterministic coverage or latency; a deliberate fallback is preferable
+to a confidently wrong direct proposal.
+
 ## What tool caching changes
 
 The static tool index caches immutable lexical schema fields and corpus-frequency

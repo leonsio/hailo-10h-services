@@ -6,6 +6,50 @@ supports Frigate's ZeroMQ detector protocol. This document describes the interna
 source layout; [api.md](api.md) specifies the public interfaces and
 [installation.md](installation.md) describes deployment.
 
+## Hardware and service placement
+
+```mermaid
+flowchart TD
+    Clients["Home Assistant / Frigate / Other clients"] --> API
+    subgraph Services["Hailo-10H-Services"]
+        API["HTTP / OpenAI / Wyoming / MCP / ZMQ / WebSocket / MQTT"]
+        subgraph CPU["CPU"]
+            HA["HA-Assist: HassIL, target validation, prompt compilation and static caches"]
+            Gemma["Gemma 4 E2B: LiteRT-LM"]
+            Piper["Piper: text-to-speech"]
+        end
+        subgraph Accelerator["Hailo-10H"]
+            subgraph GenAI["VDevice SHARED: Hailo owner thread"]
+                Language["Qwen VLM OR native Hailo LLM"]
+                Whisper["Whisper: speech-to-text"]
+                MiniLM["MiniLM: retrieval embeddings"]
+            end
+            subgraph Detector["VDevice SHARED: detector owner thread"]
+                YOLO["YOLO: object detection"]
+            end
+        end
+        API --> HA
+        API --> Piper
+        API --> Whisper
+        API --> YOLO
+        HA --> Gemma
+        HA --> Language
+        HA --> MiniLM
+    end
+    CPU --> Host["Raspberry Pi 5/CM5"]
+    Accelerator --> Host
+```
+
+CPU services do not use a Hailo VDevice. Hailo GenAI/Whisper/MiniLM share the
+Hailo owner thread and its SHARED VDevice; YOLO has a separate owner thread and
+SHARED VDevice. Both use the same physical Hailo-10H accelerator. HA-Assist
+preparation is CPU code scheduled on the Hailo owner thread so that MiniLM calls
+remain serialized. Direct physical-model chat requests bypass HA-Assist.
+
+The HailoRT 5.4.0 resident GenAI choice is VLM **or** native Hailo LLM;
+CPU Gemma can run alongside either. The hardware label describes this deployment;
+request recognition remains independent of any specific HA catalogue.
+
 ## Naming and ownership
 
 `backend_<runtime>.py` owns native resources and synchronous model execution.

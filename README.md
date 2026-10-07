@@ -33,30 +33,43 @@ own actions.
 
 ## Architecture
 
-```text
-                         HTTP / OpenAI-compatible
-                  ┌──── /v1/chat/completions
-                  │     /v1/audio/transcriptions
-                  │     /v1/vision/detect
-                  │
-Home Assistant ───┼──── Wyoming / MCP
-Frigate ──────────┼──── ZMQ detector
-Other clients ────┼──── WebSocket / MQTT
-                  │
-                  ▼
-        ┌──────────────────────────────┐
-        │       Hailo-10H-Services     │
-        │                              │
-        │ Qwen VLM  OR  Hailo LLM      │ ← HailoRT 5.4.0
-        │ Whisper       YOLO            │
-        │ MiniLM                        │
-        │          VDevice SHARED       │
-        │                              │
-        │ Gemma 4 E2B ── LiteRT / CPU  │
-        └──────────────┬───────────────┘
-                       │
-                   Hailo-10H
+```mermaid
+flowchart TD
+    Clients["Home Assistant / Frigate / Other clients"] --> API
+    subgraph Services["Hailo-10H-Services"]
+        API["HTTP / OpenAI / Wyoming / MCP / ZMQ / WebSocket / MQTT"]
+        subgraph CPU["CPU"]
+            HA["HA-Assist: HassIL, target validation, prompt compilation and static caches"]
+            Gemma["Gemma 4 E2B: LiteRT-LM"]
+            Piper["Piper: text-to-speech"]
+        end
+        subgraph Accelerator["Hailo-10H"]
+            subgraph GenAI["VDevice SHARED: Hailo owner thread"]
+                Language["Qwen VLM OR native Hailo LLM"]
+                Whisper["Whisper: speech-to-text"]
+                MiniLM["MiniLM: retrieval embeddings"]
+            end
+            subgraph Detector["VDevice SHARED: detector owner thread"]
+                YOLO["YOLO: object detection"]
+            end
+        end
+        API --> HA
+        API --> Piper
+        API --> Whisper
+        API --> YOLO
+        HA --> Gemma
+        HA --> Language
+        HA --> MiniLM
+    end
+    CPU --> Host["Raspberry Pi 5/CM5"]
+    Accelerator --> Host
 ```
+
+CPU services do not use a Hailo VDevice. Hailo GenAI/Whisper/MiniLM share the
+Hailo owner thread and its SHARED VDevice; YOLO has a separate owner thread and
+SHARED VDevice. Both use the same physical Hailo-10H accelerator. HA-Assist
+preparation is CPU code scheduled on the Hailo owner thread so that MiniLM calls
+remain serialized. Direct physical-model chat requests bypass HA-Assist.
 
 The **VLM/LLM choice above applies only to Hailo GenAI models**. The software contains
 separate VLM and Hailo-LLM adapters, routing, queues and model selection and is ready
