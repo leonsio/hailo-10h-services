@@ -394,8 +394,52 @@ def test_event_intervals_without_inference(service, question, after, before):
             "/v1/chat/completions", json=followup(payload(question), result, {"events": []})
         )
     )
-    assert result["content"] == "summary from actual events"
-    assert len(llm.calls) == 1 and not llm.calls[0].tools
+    assert "keine Aktivitäten" in result["content"] or "No activity" in result["content"]
+    assert not llm.calls
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"events": [], "error": "database failed"},
+        {"events": [], "partial": True},
+        {"events": [], "message": "Partial query; remaining cameras unavailable"},
+        {"events": [{"description": "Person detected"}]},
+    ],
+)
+def test_empty_recap_does_not_hide_errors_or_partial_results(service, data):
+    client, _, llm = service
+    body = payload("Zeige mir die Ereignisse der letzten Stunde")
+    call = message(client.post("/v1/chat/completions", json=body))
+    result = message(client.post("/v1/chat/completions", json=followup(body, call, data)))
+    assert result["content"] == "summary from actual events" and len(llm.calls) == 1
+
+
+def test_empty_recap_stream_completion_is_logged(service, caplog):
+    client, _, llm = service
+    caplog.set_level("INFO", logger="hailo_services.app")
+    body = payload("Zeige mir die Ereignisse der letzten Stunde")
+    call = message(client.post("/v1/chat/completions", json=body))
+    body = followup(
+        body, call, {"events": [], "message": "No activity was found during this time period."}
+    )
+    body.update(stream=True, stream_options={"include_usage": True})
+    response = client.post("/v1/chat/completions", json=body)
+    assert response.text.endswith("data: [DONE]\n\n")
+    assert "status=completed finish_reason=stop done_emitted=true" in caplog.text
+    assert not llm.calls
+
+
+def test_watch_request_does_not_promise_unsupported_monitoring(service):
+    client, backend, llm = service
+    result = message(
+        client.post(
+            "/v1/chat/completions",
+            json=payload("Pass auf die Haustür auf und sag mir Bescheid, wenn jemand kommt"),
+        )
+    )
+    assert "noch nicht sicher unterstützt" in result["content"]
+    assert not backend.calls and not llm.calls
 
 
 def test_event_interval_midnight_and_search_fallback(service):

@@ -328,6 +328,25 @@ def plan(request, settings, images):
     cameras = camera_catalogue(request.messages)
     targets = matched_cameras(question, cameras)
     absent = bool(_ABSENCE.fullmatch(question))
+    recap = results.get("get_recap")
+    if (
+        isinstance(recap, dict)
+        and set(results).issubset({"get_recap", "get_profile_status"})
+        and set(recap).issubset({"events", "message"})
+        and recap.get("events") == []
+        and recap.get("message") in (None, "No activity was found during this time period.")
+    ):
+        # Only the canonical successful empty shape is conclusive. Error/partial
+        # fields must never be converted into a claim of no activity.
+        return (
+            [],
+            (
+                "Für den abgefragten Zeitraum wurden keine Aktivitäten zurückgegeben."
+                if german
+                else "No activity was returned for the requested time period."
+            ),
+            "empty_recap",
+        )
     # Do not offer arbitrary writable tools to a generative model. This initial
     # experimental proxy supports only exact cancellation and simple state edits.
     if question.casefold() in {
@@ -466,7 +485,8 @@ def plan(request, settings, images):
             )
     if (
         re.search(
-            r"\b(benachrichtige|notify|überwache|watch|schalte|turn|deaktiviere|aktiviere)\b",
+            r"\b(benachrichtige|notify|überwache|watch|schalte|turn|deaktiviere|aktiviere)\b|"
+            r"\bpass(?:e)? auf\b.*\bauf\b|\b(?:sag|sage|gib) mir bescheid\b",
             question,
             re.I,
         )

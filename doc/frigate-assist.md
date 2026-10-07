@@ -173,6 +173,7 @@ example). Requests may lower the selected backend's token ceiling but not raise 
 | Known live camera query | Return `get_live_context` for the exact camera ID | 0 |
 | Exact supported setting/cancellation instruction | Return the schema-validated action | 0 |
 | Text reasoning or event summary | Compile text/history and selected schemas | 1 configured LLM call |
+| Successful canonical empty `get_recap` result | Report that no activity was returned for the requested period | 0 |
 | Request containing image parts | Focus on observable image contents; no tools | 1 VLM call |
 
 The service **returns** tools; **Frigate executes** them and submits the results in
@@ -324,6 +325,9 @@ record cap). The normal native model metrics report actual token counts when ava
 The usage stream's final chunk also includes these metrics.
 
 With debug logging enabled, `event=frigate_assist` reports preparation/routing counts.
+`event=frigate_stream_end` reports completion/error/cancellation, the emitted
+finish reason, and whether the `[DONE]` marker was emitted by the server. This
+confirms server-side stream progress, not that Frigate/browser consumed the marker.
 The usual native input-budget events show whether the compiled prompt fits. A failure
 never triggers a silent switch to a less suitable model. Validate real answer quality
 and latency on the Raspberry Pi/Hailo device; automated tests use backend doubles.
@@ -335,6 +339,16 @@ slow semantic search or another tool can therefore leave this service's log quie
 Cancel the running chat or reload/start a new conversation to recover the UI.
 The proxy cannot cancel or reset Frigate's internal tool execution. A service-side
 HTTP 200 alone does not demonstrate that the entire Frigate chat turn completed.
+Successful empty recap results are answered without a model; error, partial or
+unknown result shapes keep the normal summary path. Requests such as `Pass auf
+die Haustür auf und sag mir Bescheid, wenn jemand kommt` are recognized as currently
+unsupported watch requests and receive a direct explanation, rather than a model
+offering monitoring without creating a job.
+
+go2rtc `producer.go ... error=EOF` entries concern the upstream camera stream.
+They are not chat API errors and do not by themselves establish why a chat stalls.
+Inspect the Frigate application log (container: `/dev/shm/logs/frigate/current`)
+and browser console/network separately from `/dev/shm/logs/go2rtc/current`.
 
 ## References
 

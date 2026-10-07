@@ -922,6 +922,9 @@ def create_app(
                 No application-specific exceptions are raised for valid inputs.
             """
 
+            stream_finish = None
+            stream_status = "completed"
+
             def event(delta, finish=None):
                 """Serialize an OpenAI completion chunk as a server-sent event.
 
@@ -935,6 +938,9 @@ def create_app(
                 Notes:
                     No application-specific exceptions are raised for valid inputs.
                 """
+                nonlocal stream_finish
+                if finish:
+                    stream_finish = finish
                 return (
                     "data: "
                     + json.dumps(
@@ -1042,7 +1048,16 @@ def create_app(
                         )
                         + "\n\n"
                     )
+            except (asyncio.CancelledError, GeneratorExit):
+                if request.model == FRIGATE_ASSIST_MODEL:
+                    _LOG.info(
+                        "event=frigate_stream_end request_id=%s status=cancelled finish_reason=%s done_emitted=false",
+                        request_id,
+                        stream_finish,
+                    )
+                raise
             except Exception as exc:
+                stream_status = "error"
                 _LOG.exception("Streaming inference failed request_id=%s", request_id)
                 yield (
                     "data: "
@@ -1068,6 +1083,13 @@ def create_app(
                     + "\n\n"
                 )
             yield "data: [DONE]\n\n"
+            if request.model == FRIGATE_ASSIST_MODEL:
+                _LOG.info(
+                    "event=frigate_stream_end request_id=%s status=%s finish_reason=%s done_emitted=true",
+                    request_id,
+                    stream_status,
+                    stream_finish,
+                )
 
         return StreamingResponse(events(), media_type="text/event-stream")
 
