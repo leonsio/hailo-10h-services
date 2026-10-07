@@ -118,15 +118,19 @@ def test_native_llm_http_ws_stream_metrics_and_model_selection(model):
     b = backend(hailo_llm_model=model)
     native = b.llm
     with TestClient(create_app(b.settings, b)) as client:
-        assert [m["id"] for m in client.get("/v1/models").json()["data"]] == [model, "HA-Assist"]
+        assert [m["id"] for m in client.get("/v1/models").json()["data"]] == [
+            model,
+            "HA-Assist",
+            "Frigate-Assist",
+        ]
         health = client.get("/health").json()
-        assert health["models"] == [model, "HA-Assist"]
+        assert health["models"] == [model, "HA-Assist", "Frigate-Assist"]
         assert health["default_text_model"] == model
         assert health["model_limits"][model]["context_length"] == 2048
         config = client.get("/ui/config").json()
         assert config["vision_models"] == []
         assert config["hailo_llm_model"] == model
-        assert config["chat_models"] == [model, "HA-Assist"]
+        assert config["chat_models"] == [model, "HA-Assist", "Frigate-Assist"]
         payload = {"messages": [{"role": "user", "content": "Hauptstadt Frankreich?"}]}
         answer = client.post("/v1/chat/completions", json=payload)
         assert answer.status_code == 200
@@ -389,7 +393,7 @@ def test_gemma_and_hailo_models_have_independent_selection_and_queues(hailo_llm)
             assert rt.executor is not rt.litert_executor
             rt.pending = s.queue_size
             assert await rt.chat(request(model=LLM_MODEL)) == LLM_MODEL
-            assert rt.status()["models"] == [model, LLM_MODEL, "HA-Assist"]
+            assert rt.status()["models"] == [model, LLM_MODEL, "HA-Assist", "Frigate-Assist"]
         finally:
             rt.pending = 0
             await rt.close()

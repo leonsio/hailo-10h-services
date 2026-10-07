@@ -181,7 +181,7 @@ def test_selected_models_appear_in_http_and_wyoming():
     )
     with TestClient(create_app(s, backend=Backend())) as client:
         ids = {m["id"] for m in client.get("/v1/models").json()["data"]}
-        assert ids == {"Qwen3-VL-2B-Instruct", "whisper-small", "HA-Assist"}
+        assert ids == {"Qwen3-VL-2B-Instruct", "whisper-small", "HA-Assist", "Frigate-Assist"}
         assert client.get("/ui/config").json()["whisper_model"] == "whisper-small"
         response = client.post(
             "/v1/chat/completions",

@@ -10,6 +10,7 @@ VLM_MODEL = "Qwen2-VL-2B-Instruct"
 STT_MODEL = "whisper-base"
 LLM_MODEL = "gemma-4-E2B-it"
 HA_ASSIST_MODEL = "HA-Assist"
+FRIGATE_ASSIST_MODEL = "Frigate-Assist"
 VISION_MODEL = "yolov11m"
 
 
@@ -56,6 +57,12 @@ class Settings:
         language (str): Default Whisper transcription language.
         service_language (str): Fallback language for HA routing, generated replies and notifications.
         ha_assist_enabled (bool): Whether to expose the virtual HA-Assist model.
+        frigate_assist_enabled (bool): Whether to expose experimental Frigate-Assist.
+        frigate_assist_vision_model (str): Enabled native VLM for image observation.
+        frigate_assist_max_events (int): Maximum records per compacted tool-result list.
+        frigate_assist_text_chars (int): Preparation ceiling for required text and tools.
+        frigate_assist_vision_chars (int): Maximum explicit vision task text before generation.
+        frigate_assist_away_profiles (str): Comma-separated exact names of absence profiles.
         ha_assist_text_model (str): Enabled text backend selected for HA-Assist generative text fallback.
         ha_assist_vision_model (str): Enabled VLM backend selected for HA-Assist image requests.
         ha_assist_fuzzy_enabled (bool): Whether conservative catalogue spelling repair is enabled.
@@ -123,6 +130,12 @@ class Settings:
     language: str = "de"
     service_language: str = "de"
     ha_assist_enabled: bool = True
+    frigate_assist_enabled: bool = True
+    frigate_assist_vision_model: str = VLM_MODEL
+    frigate_assist_max_events: int = 12
+    frigate_assist_text_chars: int = 10000
+    frigate_assist_vision_chars: int = 1200
+    frigate_assist_away_profiles: str = "away,abwesend"
     ha_assist_text_model: str = LLM_MODEL
     ha_assist_vision_model: str = VLM_MODEL
     ha_assist_fuzzy_enabled: bool = True
@@ -164,6 +177,16 @@ class Settings:
         """
         if not self.piper_voice.strip() or not self.piper_language.strip():
             raise ValueError("Piper voice and language must not be empty")
+        if self.frigate_assist_vision_model in {HA_ASSIST_MODEL, FRIGATE_ASSIST_MODEL}:
+            raise ValueError("Frigate-Assist must route to a native VLM")
+        if not self.frigate_assist_vision_model.strip():
+            raise ValueError("Frigate-Assist vision model must not be empty")
+        if not 1 <= self.frigate_assist_max_events <= 100:
+            raise ValueError("Frigate-Assist max events must be between 1 and 100")
+        if not 1000 <= self.frigate_assist_text_chars <= 20000:
+            raise ValueError("Frigate-Assist text chars must be between 1000 and 20000")
+        if not 256 <= self.frigate_assist_vision_chars <= 4000:
+            raise ValueError("Frigate-Assist vision chars must be between 256 and 4000")
         if not 1 <= self.piper_max_input_chars <= 16384:
             raise ValueError("piper_max_input_chars must be between 1 and 16384")
         if HA_ASSIST_MODEL in {self.ha_assist_text_model, self.ha_assist_vision_model}:
