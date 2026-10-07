@@ -1,6 +1,6 @@
 import sys
 from dataclasses import replace
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -42,17 +42,18 @@ def test_genai_vdevice_uses_shared_round_robin(monkeypatch):
         def release(self):
             pass
 
-    monkeypatch.setitem(
-        sys.modules,
-        "hailo_platform",
-        SimpleNamespace(
-            HailoSchedulingAlgorithm=SimpleNamespace(ROUND_ROBIN=round_robin),
-            VDevice=VDevice,
-        ),
-    )
-    monkeypatch.setitem(sys.modules, "hailo_platform.genai", SimpleNamespace(VLM=VLM))
+    hailo_platform = ModuleType("hailo_platform")
+    hailo_platform.__path__ = []
+    hailo_platform.HailoSchedulingAlgorithm = SimpleNamespace(ROUND_ROBIN=round_robin)
+    hailo_platform.VDevice = VDevice
+    genai = ModuleType("hailo_platform.genai")
+    genai.VLM = VLM
+    monkeypatch.setitem(sys.modules, "hailo_platform", hailo_platform)
+    monkeypatch.setitem(sys.modules, "hailo_platform.genai", genai)
     monkeypatch.setattr("hailo_services.backend_hailo.prepare_model_version", lambda: "5.4.0")
-    monkeypatch.setattr(ModelManager, "resolve", lambda self, model, kind, path=None: "/tmp/vlm.hef")
+    monkeypatch.setattr(
+        ModelManager, "resolve", lambda self, model, kind, path=None: "/tmp/vlm.hef"
+    )
 
     settings = replace(
         Settings(),
