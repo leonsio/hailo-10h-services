@@ -63,6 +63,7 @@ class Settings:
         frigate_assist_max_events (int): Maximum records per compacted tool-result list.
         frigate_assist_text_chars (int): Preparation ceiling for required text and tools.
         frigate_assist_vision_chars (int): Maximum explicit vision task text before generation.
+        frigate_assist_vision_max_tokens (int): Output cap for image chat, excluding structured descriptions.
         frigate_assist_away_profiles (str): Comma-separated exact names of absence profiles.
         ha_assist_text_model (str): Enabled text backend selected for HA-Assist generative text fallback.
         ha_assist_vision_model (str): Enabled VLM backend selected for HA-Assist image requests.
@@ -137,6 +138,7 @@ class Settings:
     frigate_assist_max_events: int = 12
     frigate_assist_text_chars: int = 10000
     frigate_assist_vision_chars: int = 1200
+    frigate_assist_vision_max_tokens: int = 128
     frigate_assist_away_profiles: str = "away,abwesend"
     ha_assist_text_model: str = LLM_MODEL
     ha_assist_vision_model: str = VLM_MODEL
@@ -194,6 +196,8 @@ class Settings:
             raise ValueError("Frigate-Assist max events must be between 1 and 100")
         if not 1000 <= self.frigate_assist_text_chars <= 20000:
             raise ValueError("Frigate-Assist text chars must be between 1000 and 20000")
+        if not 1 <= self.frigate_assist_vision_max_tokens <= 2048:
+            raise ValueError("Frigate-Assist vision max tokens must be between 1 and 2048")
         if not 256 <= self.frigate_assist_vision_chars <= 4000:
             raise ValueError("Frigate-Assist vision chars must be between 256 and 4000")
         if not 1 <= self.piper_max_input_chars <= 16384:

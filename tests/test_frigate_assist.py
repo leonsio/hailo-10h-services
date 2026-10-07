@@ -583,7 +583,7 @@ def test_named_last_seen_search_is_deterministic(service, question, name):
     [
         "Wann wurde ein Auto zuletzt gesehen?",
         "Wann wurde die Person mit roter Jacke zuletzt gesehen?",
-        "Wann wurde Leo zuletzt gesehen an Kamera Garden?",
+        "Wann wurde Leo zuletzt gesehen an Kamera Unknown?",
     ],
 )
 def test_last_seen_recognizer_does_not_drop_extra_filters(service, question):
@@ -1018,3 +1018,236 @@ def test_yaml_conflicting_vision_target_rejected_at_startup(tmp_path, monkeypatc
     monkeypatch.setenv("HAILO_CONFIG", str(path))
     with pytest.raises(ValueError, match="does not match the enabled VLM"):
         Settings.from_env()
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Wann hast du zuletzt Morgan gesehen?",
+        "Wann ist Morgan zuletzt gesehen worden?",
+        "When did you last see Morgan?",
+        "Wann wurde Morgan zuletzt gesehen? Gib mir das letzte Bild dazu",
+    ],
+)
+def test_general_last_sighting_forms_and_image_suffix(service, question):
+    client, backend, llm = service
+    call = message(client.post("/v1/chat/completions", json=payload(question)))
+    assert name_and_args(call) == ("search_objects", {"sub_label": "Morgan", "limit": 1})
+    assert not backend.calls and not llm.calls
+
+
+def test_last_sighting_exact_camera_filter_and_followup_preserved(service):
+    client, _, llm = service
+    call = message(
+        client.post(
+            "/v1/chat/completions", json=payload("When was Morgan last seen at camera Garden?")
+        )
+    )
+    assert name_and_args(call)[1] == {"sub_label": "Morgan", "camera": "garden", "limit": 1}
+    body = payload("Wann wurde Morgan zuletzt gesehen? Gib mir das letzte Bild dazu")
+    body["messages"] += [
+        {"role": "assistant", "content": "Which camera?"},
+        {"role": "user", "content": "Garden"},
+    ]
+    call = message(client.post("/v1/chat/completions", json=body))
+    assert name_and_args(call)[1] == {"sub_label": "Morgan", "camera": "garden", "limit": 1}
+    assert not llm.calls
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Wann wurde zuletzt eine Person vor dem Garden erkannt?",
+        "When was a person last detected at Garden?",
+    ],
+)
+def test_class_last_sighting_requests_one_result(service, question):
+    client, _, llm = service
+    body = payload(question)
+    call = message(client.post("/v1/chat/completions", json=body))
+    assert name_and_args(call) == (
+        "search_objects",
+        {"label": "person", "camera": "garden", "limit": 1},
+    )
+    data = [
+        {
+            "label": "person",
+            "camera": "garden",
+            "start_time_local": "2026-10-07 09:13:52 PM",
+            "end_time_local": "2026-10-07 09:14:14 PM",
+        }
+    ]
+    answer = message(client.post("/v1/chat/completions", json=followup(body, call, data)))
+    assert "09:13:52 PM" in answer["content"] and "09:14:14 PM" in answer["content"]
+    assert not llm.calls
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        [],
+        [
+            {
+                "sub_label": "Morgan",
+                "label": "person",
+                "camera": "garden",
+                "start_time_local": "2026-10-07 12:42:48 PM",
+            }
+        ],
+    ],
+)
+def test_named_last_sighting_summarized_without_model(service, data):
+    client, _, llm = service
+    body = payload("When was Morgan last seen?")
+    call = message(client.post("/v1/chat/completions", json=body))
+    answer = message(client.post("/v1/chat/completions", json=followup(body, call, data)))
+    assert answer["content"] and not llm.calls
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"error": "database failure"},
+        [
+            {
+                "sub_label": "SomeoneElse",
+                "camera": "garden",
+                "start_time_local": "2026-10-07 12:42:48 PM",
+            }
+        ],
+        [{"sub_label": "Morgan", "camera": "garden", "start_time_local": "invalid"}],
+    ],
+)
+def test_last_sighting_errors_and_mismatches_are_not_presented_as_proof(service, data):
+    client, _, llm = service
+    body = payload("When was Morgan last seen?")
+    call = message(client.post("/v1/chat/completions", json=body))
+    message(client.post("/v1/chat/completions", json=followup(body, call, data)))
+    assert len(llm.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "question", ["Zeige mir das aktuelle Live-Bild an", "Show me the current live image"]
+)
+def test_single_camera_live_request_and_multi_camera_reply_are_direct(service, question):
+    client, _, llm = service
+    body = payload(question)
+    body["messages"][0]["content"] = SYSTEM.split("  - Garden")[0]
+    call = message(client.post("/v1/chat/completions", json=body))
+    assert name_and_args(call) == ("get_live_context", {"camera": "front_door"})
+    body = payload(question)
+    body["messages"] += [
+        {"role": "assistant", "content": "Which camera?"},
+        {"role": "user", "content": "Garden"},
+    ]
+    call = message(client.post("/v1/chat/completions", json=body))
+    assert name_and_args(call) == ("get_live_context", {"camera": "garden"})
+    assert not llm.calls
+
+
+def test_attached_event_clothing_never_uses_similarity_or_an_unrelated_old_image(service):
+    client, backend, llm = service
+    body = payload()
+    body["messages"] += [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Old live frame"},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,ZmFrZQ=="}},
+            ],
+        },
+        {"role": "assistant", "content": "Old description"},
+        {
+            "role": "user",
+            "content": "[attached_event:event-123] Welche Kleidung hatte die Person an?",
+        },
+    ]
+    answer = message(client.post("/v1/chat/completions", json=body))
+    assert "kein Werkzeug" in answer["content"]
+    assert not backend.calls and not llm.calls
+    body["tools"].append(tool("get_event_image", {"event_id": {"type": "string"}}, ["event_id"]))
+    answer = message(client.post("/v1/chat/completions", json=body))
+    assert name_and_args(answer) == ("get_event_image", {"event_id": "event-123"})
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Hast du es gerade erfunden?",
+        "Warum?",
+        "When was Morgan last seen?",
+        "Explain camera settings",
+    ],
+)
+def test_historical_image_does_not_route_text_followups_to_vlm(service, question):
+    client, backend, llm = service
+    body = payload("Original image question")
+    body["messages"] += [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Here is the current live image from camera 'garden'."},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,ZmFrZQ=="}},
+            ],
+        },
+        {"role": "assistant", "content": "An unverified visual claim."},
+        {"role": "user", "content": question},
+    ]
+    message(client.post("/v1/chat/completions", json=body))
+    assert not backend.calls
+    if llm.calls:
+        assert not any(isinstance(m.get("content"), list) for m in llm.calls[0].messages)
+        assert "unverified model claims" in llm.calls[0].messages[0]["content"]
+
+
+def test_last_image_request_requires_image_tool_and_retains_actual_event_id(service):
+    client, _, llm = service
+    body = payload("When was Morgan last seen? Show me the last image")
+    body["tools"].append(tool("get_event_image", {"event_id": {"type": "string"}}, ["event_id"]))
+    call = message(client.post("/v1/chat/completions", json=body))
+    data = [
+        {
+            "id": "event-123",
+            "sub_label": "Morgan",
+            "camera": "garden",
+            "start_time_local": "2026-10-07 12:42:48 PM",
+        }
+    ]
+    next_call = message(client.post("/v1/chat/completions", json=followup(body, call, data)))
+    assert name_and_args(next_call) == ("get_event_image", {"event_id": "event-123"})
+    assert not llm.calls
+
+
+def test_vision_chat_output_cap_preserves_description_contracts():
+    body = payload()
+    body["messages"] = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Describe this."},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,ZmFrZQ=="}},
+            ],
+        }
+    ]
+    compiled, _ = prepare(Settings(frigate_assist_vision_max_tokens=64), ChatRequest(**body))
+    assert compiled.max_tokens == 64
+    body.pop("tools")
+    body["messages"].insert(
+        0, {"role": "system", "content": "Return JSON with a description field."}
+    )
+    compiled, _ = prepare(Settings(frigate_assist_vision_max_tokens=64), ChatRequest(**body))
+    assert compiled.max_tokens == 256
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Welche Farbe hatte die Kleidung von Morgan als er zuletzt gesehen wurde?",
+        "What was Morgan wearing when they were last seen?",
+    ],
+)
+def test_historical_clothing_searches_the_event_before_requesting_an_image(service, question):
+    client, _, llm = service
+    call = message(client.post("/v1/chat/completions", json=payload(question)))
+    assert name_and_args(call) == ("search_objects", {"sub_label": "Morgan", "limit": 1})
+    assert not llm.calls

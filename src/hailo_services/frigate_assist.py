@@ -5,7 +5,7 @@ import logging
 import time
 
 from .config import FRIGATE_ASSIST_MODEL, LLM_MODEL
-from .frigate_prompt import compile_request, has_images
+from .frigate_prompt import compile_request, text_content, uses_images
 from .frigate_routing import plan
 
 _LOG = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ def prepare(settings, request):
     if not any(message.get("role") == "user" for message in request.messages):
         raise ValueError("Frigate-Assist requires a user question or image")
     started = time.perf_counter()
-    images = has_images(request)
+    images = uses_images(request)
     tools, direct, reason = plan(request, settings, images)
     target = settings.frigate_vision_model if images else settings.frigate_text_model
     # Compilation validates the entire active round even for deterministic calls.
@@ -51,9 +51,19 @@ def prepare(settings, request):
                     f"Frigate-Assist text target {target!r} is not an enabled LLM/VLM; "
                     "configure frigate_assist_text_model and enable its backend; explicit unavailable targets do not fall back"
                 )
+    image_chat = images and (
+        bool(request.tools)
+        or any(
+            m.get("role") == "system" and "helpful assistant for Frigate" in text_content(m)
+            for m in request.messages
+        )
+    )
     prepared = prepared.model_copy(
         update={
             "model": target,
+            "max_tokens": min(request.max_tokens, settings.frigate_assist_vision_max_tokens)
+            if image_chat
+            else request.max_tokens,
             "temperature": min(0.1, max(0.01, request.temperature))
             if images
             else request.temperature,

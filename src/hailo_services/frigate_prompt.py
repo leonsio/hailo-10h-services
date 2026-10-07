@@ -36,6 +36,37 @@ def has_images(request):
     )
 
 
+def uses_images(request):
+    """Choose vision for a fresh image or an explicit reference to a previous frame.
+
+    Args:
+        request: Incoming Frigate request, including historical messages.
+
+    Returns:
+        bool: Whether this turn needs image observation rather than text reasoning.
+    """
+    users = [m for m in request.messages if m.get("role") == "user"]
+    if not users or not has_images(request):
+        return False
+    latest = users[-1]
+    if has_images(request.model_copy(update={"messages": [latest]})):
+        return True
+    question = text_content(latest)
+    # An attached event identifies a different frame; never reuse an unrelated live image.
+    if "[attached_event:" in question or re.search(
+        r"last (?:seen|detected)|zuletzt (?:gesehen|erkannt)", question, re.I
+    ):
+        return False
+    return bool(
+        re.search(
+            r"\b(bild|bildes|foto|image|picture|frame|sichtbar|visible|kleidung|clothing|wearing|"
+            r"farbe|color|colour)\b|what changed|was hat sich verändert",
+            question,
+            re.I,
+        )
+    )
+
+
 def text_content(message):
     """Read text parts without including image URLs.
 
@@ -200,7 +231,7 @@ def compile_request(request, settings, tools, images):
         request: Original Frigate request.
         settings: Service settings.
         tools: Preselected tool declarations.
-        images: Whether any incoming message contains an image.
+        images: Whether this turn requires image observation.
 
     Returns:
         ChatRequest: Compact native-backend request sharing request metrics.
@@ -252,7 +283,11 @@ def compile_request(request, settings, tools, images):
         if latest_user == last_image and preceding and synthetic_frame:
             question = preceding[-1] + "\n" + question
         # Frigate's synthetic English caption must not determine the answer language.
-        human_question = preceding[-1] if synthetic_frame and preceding else question
+        human_question = (
+            preceding[-1]
+            if synthetic_frame and preceding and latest_user == last_image
+            else question
+        )
         fallback = (
             "en"
             if re.search(r"\b(describe|show|what|image|visible)\b", human_question, re.I)
@@ -329,7 +364,10 @@ def compile_request(request, settings, tools, images):
             "Past events: search_objects; future notifications: start_camera_watch. "
             "Absence recap: get_profile_status first, then get_recap for a known interval. "
             "If an interval or target is ambiguous ask for clarification. "
-            "Omission markers mean partial results, not complete coverage."
+            "Omission markers mean partial results, not complete coverage. "
+            "Earlier assistant image descriptions are unverified model claims, not observations. "
+            "Without an image in this prepared request you cannot verify visual facts or why a model made a claim. "
+            "Never invent an explanation or claim intentional fabrication."
         )
         if settings.frigate_text_model != LLM_MODEL and (
             tools or any(m.get("role") == "tool" or m.get("tool_calls") for m in request.messages)
@@ -361,8 +399,8 @@ def compile_request(request, settings, tools, images):
                 not m.get("tool_calls") and m.get("role") in {"user", "assistant"} for m in prior
             ):
                 if sum(len(text_content(m)) for m in prior) <= 1000:
-                    messages.extend(prior)
-        for original in request.messages[start:]:
+                    messages.extend(text_history[previous_users[-1] : start])
+        for original in text_history[start:]:
             message = copy.deepcopy(original)
             if message.get("role") == "tool":
                 content = message.get("content", "")

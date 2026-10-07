@@ -505,6 +505,9 @@ def test_frigate_vlm_text_target_uses_native_tools_and_summary_contract(model):
         metrics = response.json()["metrics"]
         assert metrics["frigate_route"]["backend_model"] == model
         assert metrics["input_budget_tokens"] < 2048
+        phases = metrics["native_phases"]
+        assert phases["images"] == 0
+        assert all(value >= 0 for key, value in phases.items() if key.endswith("_ms"))
         body["messages"] += [
             {
                 "role": "assistant",

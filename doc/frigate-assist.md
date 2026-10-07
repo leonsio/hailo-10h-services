@@ -31,6 +31,7 @@ settings:
   frigate_assist_max_events: 12
   frigate_assist_text_chars: 10000
   frigate_assist_vision_chars: 1200
+  frigate_assist_vision_max_tokens: 128
   frigate_assist_away_profiles: "away,abwesend"
 
 models:
@@ -205,7 +206,10 @@ example). Requests may lower the selected backend's token ceiling but not raise 
 | Text reasoning or event summary | Compile text/history and selected schemas | 1 configured LLM/VLM call |
 | Successful canonical empty `get_recap` result | Report that no activity was returned for the requested period | 0 |
 | Recognized named last-sighting query | Search `sub_label` directly, with `limit: 1` when supported | 0 |
-| Request containing image parts | Focus on observable image contents; no tools | 1 VLM call |
+| Exact named/class last-sighting result with supplied local times | Return the verified single result directly | 0 |
+| Attached event with a clothing/image question but no frame | Request the event image through a supplied image tool, otherwise explain the missing image | 0 |
+| Current image or explicit visual follow-up to an earlier frame | Focus on observable image contents; no tools | 1 VLM call |
+| Text follow-up about an earlier model answer | Strip historical frames and use the configured text target | 1 configured LLM/VLM call |
 
 The service **returns** tools; **Frigate executes** them and submits the results in
 the next request. The proxy does not call Frigate's API, read its database, or cache
@@ -318,6 +322,28 @@ not replace it with the proxy host's wall clock or assume the host's timezone.
 
 ### Image preparation and descriptions
 
+Only the current turn's need for visual observation selects vision. Questions such as
+`Why did you say that?` use the text target even when earlier messages contain images.
+Previous assistant descriptions are unverified claims; neither model can verify them
+without the relevant frame. An explicit visual follow-up can reuse an earlier frame,
+but a last-sighting query does not reuse an unrelated live image.
+
+Named searches also recognize `When did you last see Morgan?` and
+`When was Morgan last seen? Show me the last image too.` without a configured person
+name. Exact camera replies continue the preceding live or last-sighting question.
+Recognized class queries such as `When was a person last seen at Entrance?` use
+the supplied camera catalogue and `limit: 1`. Valid single results use the exact
+supplied local timestamps; errors and unknown shapes keep the normal model path.
+An event ID is metadata, not an image. Clothing questions require the actual event
+frame; the proxy never substitutes a similarity search or today's live frame.
+It uses `get_event_image` only if Frigate supplied that tool with an `event_id`
+parameter. Otherwise it asks the user to open or attach the event image.
+
+Image chat output is capped at `frigate_assist_vision_max_tokens` (default 128;
+environment variable `HAILO_FRIGATE_ASSIST_VISION_MAX_TOKENS`), or the lower requested
+limit. This reduces generation time but does not increase the native context budget.
+Structured description requests keep their requested output limit and format contract.
+
 Vision gets a brief observation instruction and the relevant question/frame caption,
 not Frigate's search instructions or eight tool schemas. The prompt asks for visible
 objects/actions, uncertainty where needed, and no invented identity, intention,
@@ -388,6 +414,27 @@ confirms server-side stream progress, not that Frigate/browser consumed the mark
 The usual native input-budget events show whether the compiled prompt fits. A failure
 never triggers a silent switch to a less suitable model. Validate real answer quality
 and latency on the Raspberry Pi/Hailo device; automated tests use backend doubles.
+
+Native chat also reports `metrics.native_phases` and `event=native_chat_phases`:
+input preparation, media preparation, context clearing, entry into generation, and
+generation streaming. These measure Python/API boundaries, not separate hardware
+vision-encoder or prefill kernels.
+
+YOLO startup reports its scheduler priority (default 31), batch size and SHARED
+device group. With debug logging, `event=vision_execution` separates owner-thread
+queue waiting from backend execution; execution exceeding 500 ms is logged at warning
+level. `event=vision_native_phases` splits preparation, async-ready waiting,
+submission and job-completion waiting. ZMQ request IDs correlate these events.
+Completion waiting includes native scheduling and execution, so it is not pure
+compute time. Priority determines selection of eligible work; it does not promise
+immediate interruption of an ongoing VLM operation. Concurrent YOLO/VLM latency
+still needs measurement on real hardware. No scheduler or model-unloading workaround
+is applied by these diagnostics.
+
+Frigate's detector CPU/RAM display measures its local detector process, including
+the ZMQ client, rather than the remote Hailo service. Detector latency can include
+transport and remote waiting; a low local CPU percentage does not prove that Hailo
+is idle. Check remote service metrics and correlated logs as well.
 
 If chat remains busy and no new service requests appear, check the **Frigate** log
 and its outstanding `/api/chat/completion` browser request. A completed service

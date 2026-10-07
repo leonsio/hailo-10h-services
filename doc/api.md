@@ -723,6 +723,7 @@ responses include request timing. Available fields depend on backend support.
 | `input_tokens`, `input_tokens_source` | Tokenizer count for accepted rendered prompt |
 | `output_tokens`, `output_tokens_source` | Retokenized/generated output count where available |
 | `input_budget_tokens` | Conservative budget used for admission/compaction |
+| `native_phases` | Native chat API-boundary timings: input/media preparation, context clear, generation setup and streaming; not individual hardware kernels |
 
 `HA-Assist` additionally records routing/history/intent/validation details such as
 `ha_route`, `ha_history`, `ha_plan`, `ha_intent` and `ha_validation` when applicable.

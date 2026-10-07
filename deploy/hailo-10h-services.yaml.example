@@ -48,6 +48,7 @@ settings:
   frigate_assist_max_events: 12
   frigate_assist_text_chars: 10000
   frigate_assist_vision_chars: 1200
+  frigate_assist_vision_max_tokens: 128 # Output cap for image chat; structured descriptions retain their requested limit
   # Explicit absence-profile names; custom names must be added here.
   frigate_assist_away_profiles: "away,abwesend"
   queue_size: 8
@@ -88,7 +89,7 @@ vision:
   max_detections: 20
   queue_size: 16
   # Hailo scheduler priority inside the SHARED VDevice group (0..31).
-  # 31 keeps latency-sensitive Frigate/YOLO work above normal-priority GenAI work.
+  # 31 prioritizes the next eligible YOLO work; it does not guarantee VLM preemption.
   scheduler_priority: 31
   zmq:
     enabled: true

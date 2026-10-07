@@ -9,7 +9,10 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +23,7 @@ from .media import decode_base64
 from .models import ModelManager, prepare_model_version
 
 _LOG = logging.getLogger(__name__)
+_VISION_REQUEST_ID = ContextVar("vision_request_id", default="-")
 
 COCO80 = (
     "person",
@@ -427,10 +431,11 @@ class HailoVisionBackend:
         self.configured_model.set_scheduler_priority(self.settings.vision_scheduler_priority)
         self.input_shape = tuple(self.hef.get_input_vstream_infos()[0].shape)
         _LOG.info(
-            "Resident vision model ready model=%s input_shape=%s postprocess=%s",
+            "Resident vision model ready model=%s input_shape=%s postprocess=%s scheduler_priority=%d batch_size=1 group_id=SHARED",
             self.settings.vision_model_id,
             self.input_shape,
             self.entry.get("postprocess"),
+            self.settings.vision_scheduler_priority,
         )
 
     def _bindings(self, frame: np.ndarray):
@@ -469,12 +474,15 @@ class HailoVisionBackend:
         """
         if self.configured_model is None or self.input_shape is None:
             raise RuntimeError("Vision model is not ready")
+        started = time.perf_counter()
         height, width = self.input_shape[:2]
         frame = letterbox(frame, width, height)
         bindings = self._bindings(frame)
+        prepared_at = time.perf_counter()
         self.configured_model.wait_for_async_ready(
             timeout_ms=int(self.settings.request_timeout * 1000)
         )
+        ready_at = time.perf_counter()
         completion_error: list[BaseException] = []
 
         def completed(completion_info):
@@ -493,7 +501,19 @@ class HailoVisionBackend:
                 completion_error.append(completion_info.exception)
 
         job = self.configured_model.run_async([bindings], completed)
+        submitted_at = time.perf_counter()
         job.wait(int(self.settings.request_timeout * 1000))
+        completed_at = time.perf_counter()
+        _LOG.debug(
+            "event=vision_native_phases request_id=%s model=%s scheduler_priority=%d prepare_ms=%.1f async_ready_wait_ms=%.1f submit_ms=%.1f completion_wait_ms=%.1f",
+            _VISION_REQUEST_ID.get(),
+            self.settings.vision_model_id,
+            self.settings.vision_scheduler_priority,
+            (prepared_at - started) * 1000,
+            (ready_at - prepared_at) * 1000,
+            (submitted_at - ready_at) * 1000,
+            (completed_at - submitted_at) * 1000,
+        )
         if completion_error:
             raise RuntimeError(f"Vision inference failed: {completion_error[0]}")
         names = list(self.output_types)
@@ -568,6 +588,7 @@ class VisionRuntime:
         frame: np.ndarray,
         confidence: float | None = None,
         maximum: int | None = None,
+        request_id: str | None = None,
     ) -> np.ndarray:
         """Schedule bounded detector inference on its dedicated owner thread.
 
@@ -575,6 +596,7 @@ class VisionRuntime:
             frame (np.ndarray): RGB image tensor in HxWx3 or supported singleton-batch form.
             confidence (float | None): Detection score threshold; None uses service settings.
             maximum (int | None): Maximum detection rows or accepted artifact bytes.
+            request_id (str | None): Optional transport ID for correlated phase logs.
 
         Returns:
             np.ndarray: Fixed-size detection tensor in model coordinates.
@@ -591,9 +613,38 @@ class VisionRuntime:
         confidence = self.settings.vision_confidence if confidence is None else confidence
         maximum = self.settings.vision_max_detections if maximum is None else maximum
         self.pending += 1
-        future = asyncio.get_running_loop().run_in_executor(
-            self.executor, self.backend.detect, frame, confidence, maximum
-        )
+        queued_at = time.perf_counter()
+        identifier = request_id or uuid.uuid4().hex[:12]
+
+        def detect():
+            """Measure detector thread scheduling separately from native execution.
+
+            Returns:
+                np.ndarray: Unchanged detector results or the original exception.
+            """
+            token = _VISION_REQUEST_ID.set(identifier)
+            entered = time.perf_counter()
+            status = "completed"
+            try:
+                return self.backend.detect(frame, confidence, maximum)
+            except BaseException:
+                status = "error"
+                raise
+            finally:
+                elapsed = (time.perf_counter() - entered) * 1000
+                _LOG.log(
+                    logging.WARNING if elapsed > 500 else logging.DEBUG,
+                    "event=vision_execution request_id=%s model=%s scheduler_priority=%d status=%s queue_wait_ms=%.1f execution_ms=%.1f",
+                    identifier,
+                    self.settings.vision_model_id,
+                    self.settings.vision_scheduler_priority,
+                    status,
+                    (entered - queued_at) * 1000,
+                    elapsed,
+                )
+                _VISION_REQUEST_ID.reset(token)
+
+        future = asyncio.get_running_loop().run_in_executor(self.executor, detect)
         future.add_done_callback(lambda _: setattr(self, "pending", max(0, self.pending - 1)))
         return await asyncio.wait_for(asyncio.shield(future), self.settings.request_timeout)
 

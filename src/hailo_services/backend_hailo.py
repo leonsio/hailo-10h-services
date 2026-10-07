@@ -246,6 +246,7 @@ class HailoBackend:
             # Apply to both the compact prompt contract and output validation.
             # A caller cannot override a model's single-call restriction.
             request = request.model_copy(update={"parallel_tool_calls": False})
+        budget_started = time.perf_counter()
         request, prompt = budget(
             model,
             request,
@@ -260,6 +261,8 @@ class HailoBackend:
             if channels != 3 or height < 1 or width < 1:
                 raise ValueError("VLM requires an unsupported input frame format")
             size = (width, height)
+        media_started = time.perf_counter()
+        input_prepare_ms = (media_started - budget_started) * 1000
         frames = []
         max_images = entry.get("max_images", 1)
         for message in request.messages:
@@ -272,6 +275,7 @@ class HailoBackend:
                     frames.append(
                         image_frame(part["image_url"]["url"], self.settings.max_body, size)
                     )
+        media_prepare_ms = (time.perf_counter() - media_started) * 1000
         debug_json(
             _LOG,
             self.settings.debug_log,
@@ -293,9 +297,11 @@ class HailoBackend:
         # Clear only KV context, never unload the model weights.
         try:
             model.clear_context()
+            context_clear_ms = (time.perf_counter() - started) * 1000
             on_inference = getattr(request, "_on_inference", None)
             if on_inference is not None:
                 on_inference(getattr(request, "_response_language", self.settings.service_language))
+            generate_started = time.perf_counter()
             with model.generate(
                 prompt=prompt,
                 **({"frames": frames} if kind == "vlm" else {}),
@@ -304,6 +310,8 @@ class HailoBackend:
                 max_generated_tokens=request.max_tokens,
                 **({"top_p": request.top_p} if request.top_p is not None else {}),
             ) as generation:
+                generation_entered = time.perf_counter()
+                generate_setup_ms = (generation_entered - generate_started) * 1000
                 for chunk in generation:
                     if cancelled is not None and cancelled.is_set():
                         break
@@ -321,6 +329,25 @@ class HailoBackend:
                 inference_ms=inference_ms,
                 ttft_ms=first_chunk_ms,
                 ttft_source="first_text_chunk" if first_chunk_ms is not None else None,
+            )
+            request._metrics["native_phases"] = {
+                "input_prepare_ms": input_prepare_ms,
+                "media_prepare_ms": media_prepare_ms,
+                "context_clear_ms": context_clear_ms,
+                "generate_setup_ms": generate_setup_ms,
+                "generation_stream_ms": (time.perf_counter() - generation_entered) * 1000,
+                "images": len(frames),
+            }
+            _LOG.info(
+                "event=native_chat_phases request_id=%s model=%s images=%d input_prepare_ms=%.1f media_prepare_ms=%.1f context_clear_ms=%.1f generate_setup_ms=%.1f generation_stream_ms=%.1f",
+                request._request_id,
+                request.model,
+                len(frames),
+                input_prepare_ms,
+                media_prepare_ms,
+                context_clear_ms,
+                generate_setup_ms,
+                request._metrics["native_phases"]["generation_stream_ms"],
             )
             count_output(request._metrics, getattr(model, "tokenize", None), raw_output)
             result = parse_response(raw_output, request)

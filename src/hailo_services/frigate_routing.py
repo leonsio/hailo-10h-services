@@ -56,12 +56,14 @@ def last_seen_name(question):
         str | None: Literal name to search as sub_label, otherwise None.
     """
     match = re.fullmatch(
-        r"(?:wann wurde (.+?) zuletzt (?:gesehen|erkannt)|when was (.+?) last seen)",
+        r"(?:wann wurde (.+?) zuletzt (?:gesehen|erkannt)|when was (.+?) last seen|"
+        r"wann hast du zuletzt (.+?) gesehen|wann ist (.+?) zuletzt gesehen worden|"
+        r"when did you last see (.+?))",
         question,
         re.I,
     )
     if match:
-        name = match[1] or match[2]
+        name = next(group for group in match.groups() if group)
         name = re.sub(r"^(?:die person|the person) ", "", name, flags=re.I)
     else:
         match = re.fullmatch(
@@ -345,6 +347,206 @@ def _call(request, name, arguments):
     )
 
 
+def last_sighting_query(question, cameras):
+    """Parse a narrow last-sighting intent, retaining explicit camera and image requests.
+
+    Args:
+        question: Current user question without trailing punctuation.
+        cameras: Supplied camera ID/friendly-name mapping.
+
+    Returns:
+        tuple | None: Search arguments and image-request flag, or None for unsupported wording.
+    """
+    appearance = re.fullmatch(
+        r"welche farbe hatte die kleidung von (.+?) als (?:er|sie|die person) zuletzt gesehen wurde|"
+        r"what was (.+?) wearing when (?:they|he|she) (?:was|were) last seen",
+        question,
+        re.I,
+    )
+    if appearance:
+        name = last_seen_name("When was " + (appearance[1] or appearance[2]) + " last seen")
+        if name:
+            return {"sub_label": name}, True
+    image = re.search(
+        r"[?.!]\s*(?:gib|zeige|zeig) mir (?:das )?letzte (?:bild|foto)(?: dazu)?$|"
+        r"[?.!]\s*show me (?:the )?last (?:image|picture)(?: too)?$",
+        question,
+        re.I,
+    )
+    core = question[: image.start()] if image else question
+    camera = re.search(r" (?:an|bei|in|at|on) (?:kamera|camera) (.+)$", core, re.I)
+    args = {}
+    if camera:
+        matches = [
+            key
+            for key, value in cameras.items()
+            if camera[1].casefold() in {key.casefold(), value.casefold()}
+        ]
+        if len(matches) != 1:
+            return None
+        args["camera"] = matches[0]
+        core = core[: camera.start()]
+    name = last_seen_name(core)
+    if name:
+        return {**args, "sub_label": name}, bool(image)
+    generic = re.fullmatch(
+        r"(?:wann wurde zuletzt (?:eine?|die|der|das) (.+?) (?:vor|an) (?:dem |der )?(.+?) (?:erkannt|gesehen)|"
+        r"when was (?:a|the) (.+?) last (?:seen|detected) (?:at|in front of) (.+))",
+        core,
+        re.I,
+    )
+    if generic:
+        label, target = (generic[1], generic[2]) if generic[1] else (generic[3], generic[4])
+        classes = {
+            "person": "person",
+            "auto": "car",
+            "car": "car",
+            "hund": "dog",
+            "dog": "dog",
+            "katze": "cat",
+            "cat": "cat",
+            "paket": "package",
+            "package": "package",
+            "fahrrad": "bicycle",
+            "bicycle": "bicycle",
+        }
+        matches = [
+            key
+            for key, value in cameras.items()
+            if target.casefold() in {key.casefold(), value.casefold()}
+        ]
+        if label.casefold() in classes and len(matches) == 1:
+            return {"label": classes[label.casefold()], "camera": matches[0]}, bool(image)
+    return None
+
+
+def request_question(request, cameras):
+    """Resolve an exact camera reply only against the immediately preceding user intent.
+
+    Args:
+        request: Incoming Frigate request.
+        cameras: Supplied camera catalogue.
+
+    Returns:
+        tuple: Effective question and optional exact camera ID.
+    """
+    question = latest_question(request)
+    matches = [
+        key
+        for key, value in cameras.items()
+        if question.casefold() in {key.casefold(), value.casefold()}
+    ]
+    if len(matches) == 1:
+        users = [
+            text_content(m).strip().rstrip("?.!")
+            for m in request.messages
+            if m.get("role") == "user"
+        ]
+        if len(users) > 1 and (
+            _LIVE.fullmatch(users[-2]) or last_sighting_query(users[-2], cameras)
+        ):
+            return users[-2], matches[0]
+    return question, None
+
+
+def event_image_call(request, tools, event_id, german):
+    """Fetch an identified event frame only through an explicitly provided image tool.
+
+    Args:
+        request: Incoming request used to validate tools.
+        tools: Selected read tool declarations.
+        event_id: Exact supplied event identifier.
+        german: Whether to use a German clarification.
+
+    Returns:
+        tuple: Tool selection, direct result, and route reason.
+    """
+    selected = [t for t in tools if t["function"]["name"] == "get_event_image"]
+    if selected and "event_id" in selected[0]["function"].get("parameters", {}).get(
+        "properties", {}
+    ):
+        return selected, _call(request, "get_event_image", {"event_id": event_id}), "event_image"
+    return (
+        [],
+        (
+            "Für dieses Ereignis wurde kein Werkzeug zum Abrufen des Bildes bereitgestellt. "
+            "Öffne das Ereignisbild in Frigate oder sende es zur Bildanalyse mit."
+            if german
+            else "No event-image retrieval tool was supplied. Open the event image in Frigate or attach it for image analysis."
+        ),
+        "event_image_unavailable",
+    )
+
+
+def last_sighting_result(request, query, results, tools, cameras, german):
+    """Summarize a verified one-result last-sighting search without generative inference.
+
+    Args:
+        request: Incoming request with active tool calls.
+        query: Parsed search constraints and image flag.
+        results: Active matched tool results.
+        tools: Read tool declarations.
+        cameras: Camera names supplied by Frigate.
+        german: Answer-language flag.
+
+    Returns:
+        tuple | None: Deterministic response when evidence is sufficient, otherwise None.
+    """
+    args, image = query
+    calls = [
+        c
+        for m in request.messages
+        for c in m.get("tool_calls", [])
+        if c["function"]["name"] == "search_objects"
+    ]
+    if not calls:
+        return None
+    actual = arguments_object(calls[-1]["function"]["arguments"])
+    if actual != {**args, "limit": 1} or set(results) != {"search_objects"}:
+        return None
+    events = results["search_objects"]
+    if not isinstance(events, list) or len(events) > 1:
+        return None
+    if not events:
+        return (
+            [],
+            (
+                "Für diese Suchfilter wurde keine Sichtung zurückgegeben."
+                if german
+                else "No sighting was returned for these search filters."
+            ),
+            "last_seen_empty",
+        )
+    event = events[0]
+    if not isinstance(event, dict) or event.get("error") or event.get("_omitted"):
+        return None
+    if any(event.get(key) != value for key, value in args.items()):
+        return None
+    start, end = event.get("start_time_local"), event.get("end_time_local")
+    if not _local_datetime(start) or (end is not None and not _local_datetime(end)):
+        return None
+    if end is not None and _local_datetime(end) < _local_datetime(start):
+        return None
+    camera = event.get("camera")
+    if camera not in cameras:
+        return None
+    who = event.get("sub_label") or event.get("label")
+    if not isinstance(who, str):
+        return None
+    if image and isinstance(event.get("id"), str) and event["id"]:
+        return event_image_call(request, tools, event["id"], german)
+    period = start + (" – " + end if end and end != start else "")
+    return (
+        [],
+        (
+            f"Letzte zurückgegebene Sichtung: {who}, Kamera {cameras[camera]}, {period}."
+            if german
+            else f"Latest returned sighting: {who}, camera {cameras[camera]}, {period}."
+        ),
+        "last_seen_summary",
+    )
+
+
 def plan(request, settings, images):
     """Select tools and return deterministic read calls or conservative clarifications.
 
@@ -363,11 +565,35 @@ def plan(request, settings, images):
         return [], None, "image_observation"
     tools = selected_tools(request)
     names = {t["function"]["name"] for t in tools}
-    question = latest_question(request)
-    german = not re.search(r"\b(what|show|describe|stop|turn|camera status)\b", question, re.I)
-    results = tool_results(request)
     cameras = camera_catalogue(request.messages)
-    targets = matched_cameras(question, cameras)
+    question, reply_camera = request_question(request, cameras)
+    german = not re.search(r"\b(what|when|show|describe|stop|turn|camera status)\b", question, re.I)
+    results = tool_results(request)
+    targets = [reply_camera] if reply_camera else matched_cameras(question, cameras)
+    query = last_sighting_query(question, cameras)
+    if query and reply_camera:
+        query = ({**query[0], "camera": reply_camera}, query[1])
+    if query and "search_objects" in results:
+        direct = last_sighting_result(request, query, results, tools, cameras, german)
+        if direct:
+            return direct
+    anchor = re.match(r"\[attached_event:([^]\s]+)\]\s*(.*)", question, re.S)
+    if anchor and re.search(
+        r"\b(kleidung|farbe|bild|foto|clothing|wearing|color|colour|image|picture)\b",
+        anchor[2],
+        re.I,
+    ):
+        if "get_event_image" not in results:
+            return event_image_call(request, tools, anchor[1], german)
+        return (
+            [],
+            (
+                "Das Werkzeug hat kein Bild zur Analyse mitgeschickt."
+                if german
+                else "The tool did not attach an image for analysis."
+            ),
+            "event_image_missing",
+        )
     absent = bool(_ABSENCE.fullmatch(question))
     recap = results.get("get_recap")
     if (
@@ -458,6 +684,7 @@ def plan(request, settings, images):
             )
     # Technical health is not equivalent to a live image/detection status.
     live_reply = question.casefold() in {
+        "kamerabild",
         "das aktuelle kamerabild",
         "das kamerabild",
         "das aktuelle livebild",
@@ -517,6 +744,18 @@ def plan(request, settings, images):
                 "live_camera",
             )
         if not targets:
+            # An unnamed live request can use the sole supplied camera; a named
+            # unknown target must still be clarified rather than silently replaced.
+            if len(cameras) == 1 and re.fullmatch(
+                r"(?:zeige|show)(?: mir| me)? (?:das|the) (?:aktuelle |current )?live[ -]?(?:bild|image)(?: an)?",
+                question,
+                re.I,
+            ):
+                return (
+                    [t for t in tools if t["function"]["name"] == "get_live_context"],
+                    _call(request, "get_live_context", {"camera": next(iter(cameras))}),
+                    "live_camera",
+                )
             return (
                 tools,
                 "Welche Kamera meinst du? Bitte verwende einen der angegebenen Kameranamen."
@@ -553,13 +792,16 @@ def plan(request, settings, images):
     if results:
         # Reading live context without a frame cannot describe unseen objects.
         return [], None, "tool_summary"
-    entity = last_seen_name(question)
-    if entity and "search_objects" in names:
+    if query and "search_objects" in names:
         selected = [t for t in tools if t["function"]["name"] == "search_objects"]
-        args = {"sub_label": entity}
+        args = dict(query[0])
         if "limit" in selected[0]["function"].get("parameters", {}).get("properties", {}):
             args["limit"] = 1
-        return selected, _call(request, "search_objects", args), "named_last_seen"
+        return (
+            selected,
+            _call(request, "search_objects", args),
+            "named_last_seen" if "sub_label" in args else "class_last_seen",
+        )
     recognized, interval, clarification = event_interval(request)
     if recognized and names.intersection({"get_recap", "search_objects"}):
         if clarification:
@@ -604,7 +846,7 @@ def validate_result(result, prepared, original):
         ValueError: Generated camera IDs or tool names are unavailable.
     """
     if (
-        has_images(original)
+        has_images(prepared)
         and isinstance(result, str)
         and (not result.strip() or "\ufffd" in result)
     ):
