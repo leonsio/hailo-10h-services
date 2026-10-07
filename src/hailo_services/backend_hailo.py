@@ -109,15 +109,30 @@ class HailoBackend:
                     Path(self.artifact_paths["minilm_hef"]).parent
                     / manager.entry(name)["filename"],
                 )
-        from hailo_platform import HailoSchedulingAlgorithm, VDevice
+        from hailo_platform import VDevice
+
+        try:
+            from hailo_platform import HailoSchedulingAlgorithm
+        except ImportError:
+            HailoSchedulingAlgorithm = None
 
         params = VDevice.create_params()
         params.group_id = "SHARED"  # Mandatory, intentionally not configurable.
-        params.scheduling_algorithm = HailoSchedulingAlgorithm.ROUND_ROBIN
+        scheduling = "binding-default"
+        if HailoSchedulingAlgorithm is not None:
+            params.scheduling_algorithm = HailoSchedulingAlgorithm.ROUND_ROBIN
+            scheduling = "ROUND_ROBIN"
+        else:
+            _LOG.warning(
+                "HailoSchedulingAlgorithm is unavailable in this binding; "
+                "the SHARED VDevice will use the binding default scheduler"
+            )
         try:
             if params.group_id != "SHARED":
                 raise RuntimeError("Hailo binding did not preserve mandatory group_id=SHARED")
-            _LOG.info("Creating Hailo VDevice group_id=%s scheduling=ROUND_ROBIN", params.group_id)
+            _LOG.info(
+                "Creating Hailo VDevice group_id=%s scheduling=%s", params.group_id, scheduling
+            )
             if self.settings.vision_enabled and self.settings.vision_scheduler_priority <= 16:
                 _LOG.warning(
                     "vision_scheduler_priority=%d does not outrank Hailo normal priority 16; "
@@ -142,7 +157,8 @@ class HailoBackend:
                 self.minilm = MiniLM(self.device, self.artifact_paths["minilm_hef"], manager)
                 self.artifact_paths.update(self.minilm.artifacts)
             _LOG.info(
-                "All models initialized; VDevice group_id=SHARED scheduling=ROUND_ROBIN; paths=%s",
+                "All models initialized; VDevice group_id=SHARED scheduling=%s; paths=%s",
+                scheduling,
                 self.paths,
             )
         except BaseException:
