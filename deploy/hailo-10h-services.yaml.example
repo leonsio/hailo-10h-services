@@ -33,6 +33,12 @@ settings:
   ha_assist_fuzzy_margin: 8.0
   ha_assist_sentence_fuzzy_enabled: true
   ha_assist_sentence_threshold: 94.0
+  # Number of GetLiveContext reads after a successful light/switch on/off action.
+  # 0 disables state verification. Explicit failed targets are still reported immediately.
+  ha_assist_verify_attempts: 2
+  # Seconds before each verification read. Two checks at 0.5 s reach about 1 s
+  # after the action before the second state read, allowing slow integrations to settle.
+  ha_assist_verify_delay: 0.5
   ha_wait_messages: true
   queue_size: 8
   request_timeout: 180

@@ -6,7 +6,6 @@ import time
 
 from .config import HA_ASSIST_MODEL, LLM_MODEL
 from .ha_action_verification import (
-    _VERIFY_SETTLE_SECONDS,
     action_verification_response,
     successful_action_followup,
 )
@@ -98,6 +97,7 @@ def prepare(backend, request):
         from .ha_catalogue import prepare_catalogue
 
         request = prepare_catalogue(request)
+        decision = None
         if images:
             # Never let a text-only shortcut answer a question about the image.
             prepared = (
@@ -109,15 +109,20 @@ def prepare(backend, request):
                 backend.select_tools(request) if isinstance(backend, HailoBackend) else request
             )
             decision = (
-                action_verification_response(prepared) if request.tool_choice != "none" else None
+                action_verification_response(prepared, backend.settings)
+                if request.tool_choice != "none"
+                else None
             )
             if (
                 decision
-                and decision["kind"] == "verify"
+                and decision["kind"] in {"verify", "verify_retry"}
                 and not getattr(request, "_ha_diagnostic", False)
             ):
-                time.sleep(_VERIFY_SETTLE_SECONDS)
-                request._metrics["ha_verify_settle_ms"] = _VERIFY_SETTLE_SECONDS * 1000
+                delay = backend.settings.ha_assist_verify_delay
+                if delay > 0:
+                    time.sleep(delay)
+                request._metrics["ha_verify_delay_ms"] = delay * 1000
+                request._metrics["ha_verify_attempt"] = decision.get("verify_attempt")
             fast = (
                 successful_action_followup(prepared)
                 if not decision and request.tool_choice != "none"
@@ -151,6 +156,13 @@ def prepare(backend, request):
         "language": language,
         "tools_after": len(prepared.tools or []),
     }
+    if decision is not None:
+        trace["verification"] = {
+            "kind": decision["kind"],
+            "attempt": decision.get("verify_attempt"),
+            "max_attempts": backend.settings.ha_assist_verify_attempts,
+            "delay_ms": backend.settings.ha_assist_verify_delay * 1000,
+        }
     request._metrics["ha_route"] = trace
     _LOG.info(
         "ha_assist request_id=%s route=%s target=%s inference_calls=%d",

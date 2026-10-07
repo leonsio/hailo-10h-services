@@ -63,6 +63,8 @@ class Settings:
         ha_assist_fuzzy_margin (float): Minimum separation from the runner-up slot candidate.
         ha_assist_sentence_fuzzy_enabled (bool): Whether protected official-template recovery is enabled.
         ha_assist_sentence_threshold (float): Minimum sentence score before mandatory HassIL validation.
+        ha_assist_verify_attempts (int): Maximum live-state reads after a successful light/switch action; zero disables verification.
+        ha_assist_verify_delay (float): Seconds to wait before each live-state verification read.
         ha_wait_messages (bool): Whether HA-Assist streams localized pre-inference wait notifications.
         queue_size (int): Queue size. Default: 8.
         request_timeout (float): Client inference deadline in seconds; native work remains shielded.
@@ -128,6 +130,8 @@ class Settings:
     ha_assist_fuzzy_margin: float = 8.0
     ha_assist_sentence_fuzzy_enabled: bool = True
     ha_assist_sentence_threshold: float = 94.0
+    ha_assist_verify_attempts: int = 2
+    ha_assist_verify_delay: float = 0.5
     ha_wait_messages: bool = True
     queue_size: int = 8
     request_timeout: float = 180
@@ -173,6 +177,10 @@ class Settings:
             raise ValueError("Invalid HA-Assist fuzzy threshold or margin")
         if not 90 <= self.ha_assist_sentence_threshold <= 100:
             raise ValueError("HA sentence threshold must be between 90 and 100")
+        if not 0 <= self.ha_assist_verify_attempts <= 10:
+            raise ValueError("HA-Assist verify attempts must be between 0 and 10")
+        if not 0 <= self.ha_assist_verify_delay <= 30:
+            raise ValueError("HA-Assist verify delay must be between 0 and 30 seconds")
         for name in ("vlm_max_input_tokens", "hailo_llm_max_input_tokens"):
             if not 1 <= getattr(self, name) <= 2048:
                 raise ValueError(f"{name} must be between 1 and the compiled HEF limit of 2048")
