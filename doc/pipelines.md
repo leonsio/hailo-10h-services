@@ -30,6 +30,8 @@ CPU, for example:
 settings:
   ha_assist_text_model: gemma-4-E2B-it
   ha_assist_vision_model: Qwen2-VL-2B-Instruct
+  ha_assist_verify_attempts: 2
+  ha_assist_verify_delay: 0.5
 models:
   vlm: {enabled: true, model: Qwen2-VL-2B-Instruct}
   hailo_llm: {enabled: false}
@@ -49,7 +51,10 @@ unloaded/reloaded per request.
 3. For text, try official HassIL exact intent/slots using request entity/area lists.
 4. On miss, try one conservative fuzzy slot correction and reparse with HassIL.
 5. Validate unique direct calls against the client's original schema/choice.
-6. Retain weather/measurement, live state and action-result verification paths.
+6. Retain weather/measurement, live state and action-result verification paths. For
+   successful light/switch on/off actions, wait the configured delay and perform only
+   `GetLiveContext` verification reads; a stale state never causes the original action
+   to be resent.
 7. Use lexical name/keyword scoring and corpus-frequency weighting, then MiniLM
    ranking to reduce relevant HA context/tools; preserve schemas needed by history.
 8. Compile a minimal prompt when inference remains necessary, then apply the
@@ -70,8 +75,21 @@ enabled local backends, not remote endpoints.
 | Ask state, count/list devices in a state | `GetLiveContext`, then direct formatting |
 | Ask temperature/humidity | Live measurement lookup and interpretation |
 | Ask current outdoor weather | HA weather/environment metadata, direct if clear |
-| Successful action result | HA speech or localized acknowledgement |
+| Successful light/switch on/off result | Optional delayed `GetLiveContext` verification, then acknowledgement |
+| Explicit failed action target | Immediate deterministic action-failure response |
 | Ambiguous, relative or composite task | Compact request to configured text backend |
+
+`ha_assist_verify_attempts` controls the maximum number of state reads after a
+successful verifiable action (`2` by default, `0` disables verification).
+`ha_assist_verify_delay` controls the wait before each read (`0.5` seconds by default).
+With the defaults, reads happen roughly 0.5 and 1.0 seconds after the action. A mismatch
+causes another state read while attempts remain, never another `HassTurnOn` or
+`HassTurnOff`. `data.failed` is treated separately as an actual execution failure.
+
+Because Home Assistant executes the tools, every action or verification tool result
+returns in a new OpenAI-compatible request. Multiple verification attempts therefore
+produce multiple `/v1/chat/completions` round trips, but they stay on the deterministic
+path and do not invoke a text or vision model.
 
 A numeric fast path requires exactly one whole percentage, an explicit action,
 a known target, and a compatible supplied schema. Relative changes, negation,
@@ -107,9 +125,11 @@ clients where this is undesirable. Native tool calls remain fully buffered.
 
 `ha_assist`, `ha_intent`, `ha_route`, `ha_weather_route`, `ha_prompt_plan`,
 `gemma_rendered_prompt` and `gemma_timing` explain routing, context removal, actual
-prompt tokens and Gemma time. Enable `HAILO_DEBUG_LOG` for full detail; debug
-prompts can contain private conversation/device data. `max_input_tokens=4096`
-remains independent of the incoming HA catalogue's size.
+prompt tokens and Gemma time. Action-verification requests additionally expose
+`ha_verify` and `ha_verify_settle_ms`, including the verification attempt, configured
+maximum attempts and delay. Enable `HAILO_DEBUG_LOG` for full detail; debug prompts can
+contain private conversation/device data. `max_input_tokens=4096` remains independent
+of the incoming HA catalogue's size.
 
 The non-streaming response includes `metrics.ha_route` (selected physical backend,
 route, zero/one inference calls, preparation duration and language) and
