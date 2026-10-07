@@ -39,7 +39,7 @@ class Settings:
         vision_iou_threshold (float): Validated overlap threshold reserved for detector configuration; current native decoders do not apply host IoU suppression.
         vision_max_detections (int): Maximum returned object-detection rows for HTTP requests.
         vision_queue_size (int): Maximum pending requests per chat/speech backend queue.
-        vision_scheduler_priority (int): Hailo scheduler priority for the resident object detector.
+        vision_scheduler_priority (int): Hailo scheduler priority from 0 to 31; larger values run first.
         piper_enabled (bool): Whether to initialize CPU text-to-speech.
         piper_voice (str): Default installed voice ID or absolute ONNX path.
         piper_voice_dir (str): Directory of locally provisioned Piper ONNX/JSON pairs.
@@ -106,7 +106,7 @@ class Settings:
     vision_iou_threshold: float = 0.45
     vision_max_detections: int = 20
     vision_queue_size: int = 16
-    vision_scheduler_priority: int = 1
+    vision_scheduler_priority: int = 31
     piper_enabled: bool = False
     piper_voice: str = "de_DE-thorsten-medium"
     piper_voice_dir: str = "/var/lib/hailo-10h-services/piper"
@@ -192,8 +192,8 @@ class Settings:
             raise ValueError("vision_max_detections must be between 1 and 100")
         if self.vision_queue_size < 1:
             raise ValueError("vision_queue_size must be positive")
-        if not 0 <= self.vision_scheduler_priority <= 255:
-            raise ValueError("vision_scheduler_priority must be between 0 and 255")
+        if not 0 <= self.vision_scheduler_priority <= 31:
+            raise ValueError("vision_scheduler_priority must be between 0 and 31")
         if self.vision_zmq_enabled and not (
             self.vision_zmq_endpoint.startswith("tcp://")
             or self.vision_zmq_endpoint.startswith("ipc://")
