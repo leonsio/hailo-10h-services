@@ -1,11 +1,14 @@
 """Conservative Frigate tool planning; execution always remains with Frigate."""
 
 import json
+import logging
 import re
 from datetime import datetime, timedelta
 
-from .frigate_prompt import camera_catalogue, server_time, text_content
+from .frigate_prompt import camera_catalogue, has_images, server_time, text_content
 from .tool_calling import arguments_object, response_message, selected_tools
+
+_LOG = logging.getLogger(__name__)
 
 _ABSENCE = re.compile(
     r"(?:was (?:ist )?passiert(?:e)?[, ]+(?:während|waehrend|als) ich weg war|"
@@ -555,6 +558,40 @@ def validate_result(result, prepared, original):
     Raises:
         ValueError: Generated camera IDs or tool names are unavailable.
     """
+    if (
+        has_images(original)
+        and isinstance(result, str)
+        and (not result.strip() or "\ufffd" in result)
+    ):
+        chat = bool(original.tools) or any(
+            m.get("role") == "system" and "helpful assistant for Frigate" in text_content(m)
+            for m in original.messages
+        )
+        reason = "replacement_character" if "\ufffd" in result else "empty_output"
+        action = "chat_fallback" if chat else "rejected"
+        original._metrics["frigate_vision_quality"] = {
+            "status": "unusable",
+            "reason": reason,
+            "action": action,
+        }
+        _LOG.warning(
+            "event=frigate_vision_quality request_id=%s status=unusable reason=%s action=%s",
+            original._request_id,
+            reason,
+            action,
+        )
+        if not chat:
+            # A description may have a JSON contract; never substitute prose that
+            # Frigate could store as a successful description/structured result.
+            raise ValueError(
+                "Frigate-Assist received empty or damaged VLM output; description rejected"
+            )
+        system = text_content(prepared.messages[0])
+        if "Antworte auf Deutsch" in system:
+            return "Die Bildbeschreibung konnte nicht zuverlässig erstellt werden. Bitte prüfe das Kamerabild direkt in Frigate."
+        if "Answer in Russian" in system:
+            return "Не удалось получить надёжное описание изображения. Проверьте изображение камеры в Frigate."
+        return "A reliable image description could not be produced. Please check the camera image directly in Frigate."
     if not isinstance(result, dict):
         return result
     result = response_message(result, prepared, result.get("content") or "")

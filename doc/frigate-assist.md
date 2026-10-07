@@ -305,6 +305,14 @@ two short sentences unless an explicit format requires more. The prompt asks the
 model to report people only when a human body is clearly visible, rather than
 inferring people from objects or shadows. This is a generation instruction, not
 a verified person detector; night/infrared scenes can still be misinterpreted.
+The proxy rejects clearly damaged vision output: an empty answer or a Unicode
+replacement character (`U+FFFD`) is not presented as a usable image description.
+Chat receives a localized message asking the user to inspect the image directly;
+description requests fail explicitly rather than receiving prose that violates
+their output contract. `event=frigate_vision_quality` and
+`metrics.frigate_vision_quality` expose the reason/action. There is no repair by
+guessing missing text and no second model call. This guard detects damaged text,
+not plausible-sounding hallucinations, and leaves native model requests unchanged.
 `get_live_context` requests Frigate's current processed camera frame rather than
 searching for the latest historical detection. That frame/context can lag behind a
 later live-view screenshot. Compare the tool's context timestamp and the actual

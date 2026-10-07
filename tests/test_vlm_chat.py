@@ -81,6 +81,58 @@ def test_frigate_native_vlm_observation_returns_plain_text_without_tool_json():
         assert "Functions:" not in str(native.calls[0]["prompt"])
 
 
+@pytest.mark.parametrize("text", ["Das Livebild zeigt Eingang, die Kiefer, die\ufffd.", "   "])
+def test_frigate_native_damaged_vision_is_replaced_without_second_inference(text):
+    b = backend("Qwen2-VL-2B-Instruct", text=text)
+    payload = {
+        "model": "Frigate-Assist",
+        "tools": [tool()],
+        "stream": True,
+        "stream_options": {"include_usage": True},
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Beschreibe das aktuelle Kamerabild."},
+                    image(),
+                ],
+            }
+        ],
+    }
+    with TestClient(create_app(b.settings, b)) as client:
+        response = client.post("/v1/chat/completions", json=payload)
+        chunks = [
+            json.loads(line[6:])
+            for line in response.text.splitlines()
+            if line.startswith("data: ") and "[DONE]" not in line
+        ]
+        content = "".join(
+            c["choices"][0]["delta"].get("content", "") for c in chunks if c["choices"]
+        )
+        assert (
+            "nicht zuverlässig" in content and "Kiefer" not in content and "\ufffd" not in content
+        )
+        assert chunks[-1]["metrics"]["frigate_vision_quality"]["status"] == "unusable"
+        assert len(b.vlm.calls) == 1
+        assert response.text.endswith("data: [DONE]\n\n")
+
+
+def test_frigate_damaged_description_contract_is_not_replaced_with_chat_prose():
+    b = backend("Qwen2-VL-2B-Instruct", text='{"description":"\ufffd"}')
+    payload = {
+        "model": "Frigate-Assist",
+        "messages": [
+            {"role": "system", "content": "Return JSON with description."},
+            {"role": "user", "content": [image()]},
+        ],
+    }
+    with TestClient(create_app(b.settings, b)) as client:
+        response = client.post("/v1/chat/completions", json=payload)
+        assert response.status_code == 400 and "description rejected" in response.text
+        # Native model IDs retain their existing behavior.
+        assert b.chat(request(model="Qwen2-VL-2B-Instruct")) == '{"description":"\ufffd"}'
+
+
 @pytest.mark.parametrize("model", ["Qwen2-VL-2B-Instruct", "Qwen3-VL-2B-Instruct"])
 def test_zero_vlm_temperature_rejected_before_native_generation(model):
     b = backend(model)
