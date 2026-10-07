@@ -152,6 +152,8 @@ settings:
   ha_assist_enabled: true
   ha_assist_text_model: gemma-4-E2B-it
   ha_assist_vision_model: Qwen2-VL-2B-Instruct
+  ha_assist_verify_attempts: 2
+  ha_assist_verify_delay: 0.5
   litert_max_num_tokens: 16384
 
 models:
@@ -318,6 +320,8 @@ settings:
   ha_assist_enabled: true
   ha_assist_text_model: gemma-4-E2B-it
   ha_assist_vision_model: Qwen2-VL-2B-Instruct
+  ha_assist_verify_attempts: 2
+  ha_assist_verify_delay: 0.5
 
 models:
   vlm:
@@ -337,6 +341,15 @@ backends can be enabled together once Hailo removes the current runtime limitati
 A deterministic request performs **zero generative calls**. For generated actions the
 service returns validated function calls; Home Assistant executes them using its own
 permissions. The gateway never receives or needs a Home Assistant access token.
+
+For successful `light`/`switch` on/off actions, HA-Assist may verify the reported live
+state with `GetLiveContext`. `ha_assist_verify_attempts` controls the number of state
+reads (`2` by default, `0` disables verification) and `ha_assist_verify_delay` controls
+the delay before each read (`0.5` seconds by default). A stale state causes another
+**verification read**, not another `HassTurnOn`/`HassTurnOff` action. If Home Assistant
+returns explicit failed targets, that is reported as an action failure immediately;
+if the action was accepted but the state still differs after all reads, the response
+states that the action completed while the requested state could not yet be confirmed.
 
 See [How HA-Assist works](doc/ha-assist.md), [request pipelines](doc/pipelines.md) and
 [Home Assistant API configuration](doc/api.md#home-assistant-virtual-model).
