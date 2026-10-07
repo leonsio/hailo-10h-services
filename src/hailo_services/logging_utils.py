@@ -22,6 +22,14 @@ def redact_inline_data(text: str) -> str:
     """
 
     def replace(match: re.Match[str]) -> str:
+        """Render compact metadata for one matched inline data URL.
+
+        Args:
+            match: Regular-expression match containing MIME type and base64 payload.
+
+        Returns:
+            Redacted data URL preserving MIME type and approximate payload size.
+        """
         payload = match.group("payload")
         padding = len(payload) - len(payload.rstrip("="))
         approx_bytes = max(0, (len(payload) * 3) // 4 - padding)
