@@ -34,16 +34,16 @@ own actions.
 ## Architecture
 
 ```text
-                         HTTP / OpenAI-compatible
-                  +---- /v1/chat/completions
-                  |     /v1/audio/transcriptions
-                  |     /v1/vision/detect
-                  |
-Home Assistant ---+---- Wyoming / MCP
-Frigate ----------+---- ZMQ detector
-Other clients ----+---- WebSocket / MQTT
-                  |
-                  v
+                                            HTTP / OpenAI-compatible
+                                     +---- /v1/chat/completions
+                                     |     /v1/audio/transcriptions
+                                     |     /v1/vision/detect
+                                     |
+                   Home Assistant ---+---- Wyoming / MCP
+                   Frigate ----------+---- ZMQ detector
+                   Other clients ----+---- WebSocket / MQTT
+                                     |
+                                     v
         +----------------------------------------------------------+
         |                    Hailo-10H-Services                    |
         |                                                          |
@@ -51,7 +51,7 @@ Other clients ----+---- WebSocket / MQTT
         | |         CPU          |  |         Hailo-10H          | |
         | |                      |  |                            | |
         | | HA-Assist            |  | Qwen VLM OR Hailo LLM      | |
-        | | Gemma / LiteRT-LM     |  | Whisper / MiniLM / YOLO   | |
+        | | Gemma / LiteRT-LM    |  | Whisper / MiniLM / YOLO    | |
         | | Piper                |  | VDevice SHARED             | |
         | +----------------------+  +----------------------------+ |
         +----------------------------+-----------------------------+
