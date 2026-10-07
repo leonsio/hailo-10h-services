@@ -25,6 +25,9 @@ _ACTION_TO_STATE = {
 }
 _VERIFY_DOMAINS = {"light", "switch"}
 _DEFAULT_VERIFY_ATTEMPTS = 2
+# Backward-compatible settle interval for the legacy direct LiteRT HA path.
+# HA-Assist itself uses Settings.ha_assist_verify_delay.
+_VERIFY_SETTLE_SECONDS = 0.4
 
 
 def _arguments(call):
