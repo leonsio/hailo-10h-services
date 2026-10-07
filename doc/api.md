@@ -344,6 +344,29 @@ accelerator owner thread and queue. The HEF is not configured again per request.
 
 ## Frigate ZMQ detector
 
+With service debug logging enabled before startup, the listener logs transport events
+(`connected`, `handshake_complete`, `disconnected`) independently of model and
+inference requests. The monitor endpoint identifies the server socket, not the
+remote client's IP address.
+
+Each received request has a generated `request_id`. Model probes log the requested
+model and availability; inference logs input shape, dtype, byte count and pending
+queue depth, followed by inference time, total request time and nonzero detection
+rows (`class, score, ymin, xmin, ymax, xmax`). Binary image/model payloads are not
+logged. A sent response confirms server-side processing, not client receipt.
+
+Follow these messages with:
+
+```bash
+sudo journalctl -u hailo-10h-services -f -o short-precise | grep --line-buffered 'protocol=zmq'
+```
+
+Frigate normally selects detection regions using its own motion detection and sends
+those image tensors to the detector. Tracking and stationary-object checks can also
+produce requests without new visible motion. The service does not receive motion
+events or perform Frigate's camera-side motion detection.
+
+
 Frigate 0.17+ includes a built-in `type: zmq` detector. The service implements its
 REQ/REP model handshake and inference protocol:
 
