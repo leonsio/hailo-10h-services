@@ -206,7 +206,18 @@ def test_second_failed_verification_reports_unconfirmed_state_without_reissuing_
     assert decision["kind"] == "state_unconfirmed"
     assert decision["verify_attempt"] == 2
     assert "Licht - Rechts" in decision["response"]
-    assert len([call for message in messages if message.get("role") == "assistant" for call in message.get("tool_calls") or [] if call["function"]["name"] == "intent__HassTurnOff"]) == 1
+    assert (
+        len(
+            [
+                call
+                for message in messages
+                if message.get("role") == "assistant"
+                for call in message.get("tool_calls") or []
+                if call["function"]["name"] == "intent__HassTurnOff"
+            ]
+        )
+        == 1
+    )
 
 
 def test_configured_third_verify_is_used_before_giving_up():
@@ -226,7 +237,10 @@ def test_configured_third_verify_is_used_before_giving_up():
     decision = action_verification_response(request(messages), settings(3))
     assert decision["kind"] == "verify_retry"
     assert decision["verify_attempt"] == 3
-    assert decision["response"]["tool_calls"][0]["function"]["name"] == "homeassistant__GetLiveContext"
+    assert (
+        decision["response"]["tool_calls"][0]["function"]["name"]
+        == "homeassistant__GetLiveContext"
+    )
 
 
 def test_verify_can_be_disabled():
@@ -246,9 +260,14 @@ def test_failed_target_is_reported_as_action_failure_without_verification():
     )
     decision = action_verification_response(request(messages), settings())
     assert decision["kind"] == "action_failed"
-    assert "Home Assistant konnte die angeforderte Aktion nicht erfolgreich ausführen" in decision["response"]
+    assert (
+        "Home Assistant konnte die angeforderte Aktion nicht erfolgreich ausführen"
+        in decision["response"]
+    )
     assert "Licht - Rechts" in decision["response"]
-    assert "tool_calls" not in decision["response"] if isinstance(decision["response"], dict) else True
+    assert (
+        "tool_calls" not in decision["response"] if isinstance(decision["response"], dict) else True
+    )
 
 
 def test_verify_settings_have_safe_defaults_and_bounds():
