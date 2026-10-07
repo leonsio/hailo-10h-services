@@ -22,6 +22,9 @@ def _sequence_image_limits() -> dict[str, int]:
     Single-image models are intentionally excluded: collapsing a genuinely
     multi-image request to one frame changes its semantics too much, so the
     backend keeps rejecting those requests with its normal model-limit error.
+
+    Returns:
+        dict[str, int]: Model identifiers mapped to safe multi-image limits.
     """
     path = Path(__file__).with_name("model_catalog.yaml")
     with path.open(encoding="utf-8") as stream:
@@ -38,7 +41,11 @@ def _sequence_image_limits() -> dict[str, int]:
 
 
 def _image_positions(messages: list[dict[str, Any]]) -> list[tuple[int, int]]:
-    """Return message/part coordinates for OpenAI image_url parts."""
+    """Return message/part coordinates for OpenAI image_url parts.
+
+    Returns:
+        list[tuple[int, int]]: Message and content-part indexes for every image.
+    """
     positions: list[tuple[int, int]] = []
     for message_index, message in enumerate(messages):
         content = message.get("content")
@@ -51,7 +58,11 @@ def _image_positions(messages: list[dict[str, Any]]) -> list[tuple[int, int]]:
 
 
 def _uniform_sample(items: list[tuple[int, int]], count: int) -> list[tuple[int, int]]:
-    """Select evenly spaced items while preserving the first and last frame."""
+    """Select evenly spaced items while preserving the first and last frame.
+
+    Returns:
+        list[tuple[int, int]]: At most ``count`` positions spread across the input sequence.
+    """
     if len(items) <= count:
         return list(items)
     if count <= 1:
@@ -67,6 +78,9 @@ def _limit_sequence_images(request, max_images: int):
     Images from the active user turn take precedence over historical images.
     When the active turn itself overflows, frames are sampled uniformly so a
     Frigate sequence retains its beginning, intermediate motion and final state.
+
+    Returns:
+        ChatRequest: Original request when within the limit, otherwise a sampled copy.
     """
     positions = _image_positions(request.messages)
     if len(positions) <= max_images:
@@ -127,7 +141,11 @@ def limit_request(
     model_kind="VLM",
     template_options=None,
 ):
-    """Apply multi-frame overflow handling before shared VLM token budgeting."""
+    """Apply multi-frame overflow handling before shared VLM token budgeting.
+
+    Returns:
+        tuple[ChatRequest, list[dict[str, Any]]]: Budgeted request and native prompt messages.
+    """
     max_images = _sequence_image_limits().get(request.model)
     if max_images is not None:
         request = _limit_sequence_images(request, max_images)
