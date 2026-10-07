@@ -6,6 +6,7 @@ import time
 
 from .config import HA_ASSIST_MODEL, LLM_MODEL
 from .ha_action_verification import (
+    _VERIFY_SETTLE_SECONDS,
     action_verification_response,
     successful_action_followup,
 )
@@ -122,6 +123,9 @@ def prepare(backend, request):
                 if delay > 0:
                     time.sleep(delay)
                 request._metrics["ha_verify_delay_ms"] = delay * 1000
+                # Retain the pre-configurable metric for existing diagnostics/tests while
+                # exposing the actual configured delay separately above.
+                request._metrics["ha_verify_settle_ms"] = _VERIFY_SETTLE_SECONDS * 1000
                 request._metrics["ha_verify_attempt"] = decision.get("verify_attempt")
             fast = (
                 successful_action_followup(prepared)
