@@ -1,5 +1,6 @@
 """Conservative Frigate tool planning; execution always remains with Frigate."""
 
+import copy
 import json
 import logging
 import re
@@ -43,6 +44,43 @@ _TIME_REPLY = re.compile(
     r"(?: bis jetzt| until now)?",
     re.I,
 )
+
+
+def last_seen_name(question):
+    """Recognize narrow named-entity last-sighting questions without inferring identity.
+
+    Args:
+        question: Latest user text, without terminal punctuation.
+
+    Returns:
+        str | None: Literal name to search as sub_label, otherwise None.
+    """
+    match = re.fullmatch(
+        r"(?:wann wurde (.+?) zuletzt (?:gesehen|erkannt)|when was (.+?) last seen)",
+        question,
+        re.I,
+    )
+    if match:
+        name = match[1] or match[2]
+        name = re.sub(r"^(?:die person|the person) ", "", name, flags=re.I)
+    else:
+        match = re.fullmatch(
+            r"ich meine (?:die )?person [\"“](.+?)[\"”][, ]+wann wurde (?:er|sie|es) zuletzt (?:gesehen|erkannt)",
+            question,
+            re.I,
+        )
+        if not match:
+            return None
+        name = match[1]
+    name = name.strip().strip('"“”')
+    if not re.fullmatch(r"[\w][\w .'-]{0,79}", name) or re.search(
+        r"\b(person|personen|people|jemand|someone|auto|autos|car|cars|hund|dog|katze|cat|"
+        r"paket|package|vogel|bird|mit|with|wearing|in|der|die|das|ein|eine|a|the)\b",
+        name,
+        re.I,
+    ):
+        return None
+    return name
 
 
 def event_interval(request):
@@ -515,6 +553,13 @@ def plan(request, settings, images):
     if results:
         # Reading live context without a frame cannot describe unseen objects.
         return [], None, "tool_summary"
+    entity = last_seen_name(question)
+    if entity and "search_objects" in names:
+        selected = [t for t in tools if t["function"]["name"] == "search_objects"]
+        args = {"sub_label": entity}
+        if "limit" in selected[0]["function"].get("parameters", {}).get("properties", {}):
+            args["limit"] = 1
+        return selected, _call(request, "search_objects", args), "named_last_seen"
     recognized, interval, clarification = event_interval(request)
     if recognized and names.intersection({"get_recap", "search_objects"}):
         if clarification:
@@ -594,10 +639,34 @@ def validate_result(result, prepared, original):
         return "A reliable image description could not be produced. Please check the camera image directly in Frigate."
     if not isinstance(result, dict):
         return result
+    # Normalize exact catalogue names before schema validation, including enum IDs.
+    # Do not mutate backend output or infer a camera that was not supplied.
+    result = copy.deepcopy(result)
+    cameras = camera_catalogue(original.messages)
+    for call in result.get("tool_calls", []):
+        function = call.get("function", {})
+        args = arguments_object(function.get("arguments", {}))
+        for key in ("camera", "cameras"):
+            value = args.get(key)
+            if not isinstance(value, (str, list)) or value == "all":
+                continue
+            identifiers = value if isinstance(value, list) else value.split(",")
+            normalized = []
+            for identifier in identifiers:
+                matches = {
+                    cam
+                    for cam, friendly in cameras.items()
+                    if isinstance(identifier, str)
+                    and identifier.casefold() in {cam.casefold(), friendly.casefold()}
+                }
+                if len(matches) != 1:
+                    raise ValueError("Frigate-Assist rejected an unknown or ambiguous camera ID")
+                normalized.append(next(iter(matches)))
+            args[key] = normalized if isinstance(value, list) else ",".join(normalized)
+        function["arguments"] = args
     result = response_message(result, prepared, result.get("content") or "")
     if not isinstance(result, dict):
         return result
-    cameras = camera_catalogue(original.messages)
     for call in result.get("tool_calls", []):
         name = call["function"]["name"]
         if name in _WRITES:

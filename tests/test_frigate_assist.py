@@ -58,6 +58,7 @@ TOOLS = [
             "sub_label": {"type": "string"},
             "after": {"type": "string"},
             "before": {"type": "string"},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100},
         },
     ),
     tool("find_similar_objects", {"event_id": {"type": "string"}}, ["event_id"]),
@@ -554,6 +555,68 @@ def test_generated_historical_dates_rejected_before_streaming(service, arguments
     assert message(client.post("/v1/chat/completions", json=payload("Eine weitere Frage")))[
         "content"
     ]
+
+
+@pytest.mark.parametrize(
+    "question,name",
+    [
+        ("wann wurde Leo zuletzt gesehen?", "Leo"),
+        ('Ich meine die Person "Leo" wann wurde es zuletzt erkannt?', "Leo"),
+        ('Wann wurde die Person "Alex Müller" zuletzt erkannt?', "Alex Müller"),
+        ("When was the person Alex last seen?", "Alex"),
+        ("Wann wurde DHL zuletzt gesehen?", "DHL"),
+    ],
+)
+def test_named_last_seen_search_is_deterministic(service, question, name):
+    client, backend, llm = service
+    result = message(client.post("/v1/chat/completions", json=payload(question)))
+    assert name_and_args(result) == ("search_objects", {"sub_label": name, "limit": 1})
+    assert not llm.calls and not backend.calls
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Wann wurde ein Auto zuletzt gesehen?",
+        "Wann wurde die Person mit roter Jacke zuletzt gesehen?",
+        "Wann wurde Leo zuletzt gesehen an Kamera Garden?",
+    ],
+)
+def test_last_seen_recognizer_does_not_drop_extra_filters(service, question):
+    client, _, llm = service
+    message(client.post("/v1/chat/completions", json=payload(question)))
+    assert len(llm.calls) == 1
+
+
+def test_generated_camera_friendly_name_is_normalized_without_mutating_model_output(service):
+    client, _, llm = service
+    llm.result = {
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "search_objects",
+                    "arguments": {"camera": "Front Door", "label": "car"},
+                }
+            }
+        ]
+    }
+    original = copy.deepcopy(llm.result)
+    result = message(client.post("/v1/chat/completions", json=payload("Zeige alle Autos heute")))
+    assert name_and_args(result) == ("search_objects", {"camera": "front_door", "label": "car"})
+    assert llm.result == original
+
+
+def test_ambiguous_friendly_camera_name_remains_rejected(service):
+    client, _, llm = service
+    body = payload("Zeige alle Autos heute")
+    body["messages"][0]["content"] = SYSTEM.replace("Garden (ID: garden", "Front Door (ID: garden")
+    llm.result = {
+        "tool_calls": [
+            {"function": {"name": "search_objects", "arguments": {"camera": "Front Door"}}}
+        ]
+    }
+    response = client.post("/v1/chat/completions", json=body)
+    assert response.status_code == 400 and "ambiguous" in response.text
 
 
 def test_unknown_camera_generated_call_is_rejected(service):

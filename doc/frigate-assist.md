@@ -174,6 +174,7 @@ example). Requests may lower the selected backend's token ceiling but not raise 
 | Exact supported setting/cancellation instruction | Return the schema-validated action | 0 |
 | Text reasoning or event summary | Compile text/history and selected schemas | 1 configured LLM call |
 | Successful canonical empty `get_recap` result | Report that no activity was returned for the requested period | 0 |
+| Recognized named last-sighting query | Search `sub_label` directly, with `limit: 1` when supported | 0 |
 | Request containing image parts | Focus on observable image contents; no tools | 1 VLM call |
 
 The service **returns** tools; **Frigate executes** them and submits the results in
@@ -206,6 +207,9 @@ context produces an explicit error requesting a narrower question/time range.
 Character ceilings are preparation limits, **not token counts**.
 
 Generated tools are validated against the selected schemas and supplied camera IDs.
+An exact, unique camera friendly name is normalized to its supplied ID before
+proxy schema/camera validation. Unknown or ambiguous names remain errors; no
+fuzzy matching, camera fallback or invented camera filter is added.
 Historical calls also require valid local ISO timestamps with seconds, an increasing
 interval and no timestamps later than the supplied Frigate server clock. Invalid
 calls are rejected before being emitted in a stream.
@@ -241,6 +245,22 @@ The proxy cannot recover a full profile history that Frigate did not send. Multi
 absences or changing profiles within an absence may require an explicit time range.
 The deterministic recognizer covers a small set of German/English question forms;
 other wording uses the compact LLM path and remains experimental.
+
+### Named last-sighting queries
+
+`Wann wurde Leo zuletzt gesehen?` and `When was Alex last seen?` search the literal
+name as `sub_label`, without an invented camera, generic `label: person`, or
+semantic search for the name. The explicit clarification `Ich meine die Person
+"Leo" wann wurde es zuletzt erkannt?` is also recognized. Names are not hardcoded
+to a user's setup. Frigate's historical event search defaults to newest-first;
+the proxy requests `limit: 1` if the supplied tool schema supports it. Returned
+data is summarized by the selected LLM, preserving supplied local time strings.
+
+This searches Frigate's recorded recognition labels; it does not independently
+verify an identity or prove that a person was never present when no match is
+returned. Generic object classes, appearance descriptions and extra camera/time
+filters stay on the experimental reasoning path rather than silently losing
+those constraints.
 
 ### Relative event time windows and follow-ups
 
@@ -363,6 +383,7 @@ and browser console/network separately from `/dev/shm/logs/go2rtc/current`.
 - [Frigate named GenAI providers and roles](https://docs.frigate.video/configuration/genai/genai_config/)
 - [Frigate OpenAI provider source](https://github.com/blakeblackshear/frigate/blob/dev/frigate/genai/plugins/openai.py)
 - [Frigate chat tool/result format](https://github.com/blakeblackshear/frigate/blob/dev/frigate/api/chat.py)
+- [Frigate event search ordering](https://github.com/blakeblackshear/frigate/blob/dev/frigate/api/event.py)
 - [Frigate review frame budgeting](https://github.com/blakeblackshear/frigate/blob/dev/frigate/data_processing/post/review_descriptions.py)
 - [Frigate review regeneration UI gate](https://github.com/blakeblackshear/frigate/blob/dev/web/src/hooks/use-review-descriptions.ts)
 - [Service APIs](api.md)
