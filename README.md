@@ -402,16 +402,14 @@ WAV playback/download and retained request timings. Piper must be enabled and re
 ## License and third-party components
 
 The **hailo-10h-services source code** is licensed under the
-[GNU General Public License v3.0 or later](LICENSE) (`GPL-3.0-or-later`).
+[Apache License 2.0](LICENSE) (`Apache-2.0`).
 
-Third-party libraries, Hailo runtime components, precompiled HEFs, model weights,
-tokenizers, and Piper voice models are **not relicensed** by this project. They remain
-subject to their respective upstream licenses and terms. See
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistributing a wheel, Docker
-image, model cache, HEF, or other bundle containing those components.
+The project does **not** ship model weights, HEFs, Piper voice models or Hailo vendor
+runtime binaries as part of its source distribution. Required third-party software is
+installed separately through its upstream package source, and configured model assets
+are downloaded at install/runtime from external provider URLs when needed.
 
-In particular, entries in the model catalog are download references rather than a grant
-of rights to the referenced assets. Individual Piper voices have per-voice licenses,
-Llama 3.2 uses the Meta Llama 3.2 Community License, and Ultralytics states that its
-trained YOLO models are AGPL-3.0 by default unless separately licensed. Verify the
-provenance and terms of the exact model/HEF selected for a deployment.
+Those external components keep their own licenses and are not relicensed by this
+project. The bundled model catalog contains identifiers, metadata and download locations;
+it is not a license grant for the referenced assets. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for details and redistribution notes.
