@@ -6,7 +6,7 @@ import time
 
 from .config import FRIGATE_ASSIST_MODEL, LLM_MODEL
 from .frigate_prompt import compile_request, text_content, uses_images
-from .frigate_routing import plan
+from .frigate_routing import plan, resolved_context
 
 _LOG = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ def prepare(settings, request):
     tools, direct, reason = plan(request, settings, images)
     target = settings.frigate_vision_model if images else settings.frigate_text_model
     # Compilation validates the entire active round even for deterministic calls.
-    prepared = compile_request(request, settings, tools, images)
+    prepared = compile_request(request, settings, tools, images, context=resolved_context(request))
     if direct is None:
         if images and (not settings.vlm_enabled or target != settings.vlm_model):
             raise ValueError(

@@ -6,7 +6,7 @@ import logging
 import re
 from datetime import datetime, timedelta
 
-from .frigate_prompt import camera_catalogue, has_images, server_time, text_content
+from .frigate_prompt import TOOL_HINTS, camera_catalogue, has_images, server_time, text_content
 from .tool_calling import arguments_object, response_message, selected_tools
 
 _LOG = logging.getLogger(__name__)
@@ -22,19 +22,9 @@ _LIVE = re.compile(
     re.I,
 )
 _WRITES = {"set_camera_state", "start_camera_watch", "stop_camera_watch", "create_export"}
-_READS = {
-    "search_objects",
-    "find_similar_objects",
-    "get_live_context",
-    "get_profile_status",
-    "get_recap",
-    "get_categorized_object_names",
-    "get_export_cases",
-    "get_event_image",
-}
 _EVENT_QUERY = re.compile(
-    r"(?:zeige|zeig|show)(?: mir| me)?(?: die| alle| the| all)? "
-    r"(?:ereignisse|events|aktivitäten|activity|erkennungen|detections) (.+)",
+    r"(?:(?:zeige|zeig|show)(?: mir| me)?(?: die| alle| the| all)? )?"
+    r"(?:ereignisse|events|aktivitäten|activity|erkennungen|detections|historie|history) (.+)",
     re.I,
 )
 _TIME_REPLY = re.compile(
@@ -112,7 +102,7 @@ def event_interval(request):
     else:
         return False, None, None
     german = not re.search(r"\b(show|today|yesterday|morning|since|from)\b", users[-1], re.I)
-    phrase = re.sub(r"^(?:von|seit|ab|from|since) ", "", phrase)
+    phrase = re.sub(r"^(?:von|seit|ab|from|since|of) ", "", phrase)
     phrase = re.sub(r"(?: bis jetzt| until now)$", "", phrase)
     duration = re.fullmatch(
         r"(?:(?:der |in den )?letzten?|(?:in )?(?:the )?last) "
@@ -152,17 +142,20 @@ def event_interval(request):
         number = duration[1] or "1"
         amount = int(number) if number.isdigit() else 1
         minutes = amount * (60 if duration[2].startswith(("stund", "hour")) else 1)
-        if not 0 < minutes <= 44640:
+        if minutes <= 0:
             return (
                 True,
                 None,
                 (
-                    "Bitte wähle einen Zeitraum zwischen einer Minute und 31 Tagen."
+                    "Bitte gib einen positiven Zeitraum an."
                     if german
-                    else "Please choose a period between one minute and 31 days."
+                    else "Please provide a positive time period."
                 ),
             )
-        after = now - timedelta(minutes=minutes)
+        try:
+            after = now - timedelta(minutes=minutes)
+        except OverflowError:
+            return True, None, "Please provide a time period within the supported calendar."
     elif since:
         try:
             after = now.replace(hour=int(since[1]), minute=int(since[2] or 0), second=0)
@@ -218,6 +211,66 @@ def latest_question(request):
         ),
         "",
     )
+
+
+def resolved_context(request):
+    """Resolve unambiguous calendar and camera facts without replacing the user's task.
+
+    Args:
+        request: Frigate request with authoritative local clock and camera catalogue.
+
+    Returns:
+        dict: Explicit facts for the compact model prompt; absent facts are not guessed.
+    """
+    question = latest_question(request)
+    context = {}
+    days = set(re.findall(r"\b(gestern|yesterday|heute|today)\b", question, re.I))
+    days = {"yesterday" if day.casefold() in {"gestern", "yesterday"} else "today" for day in days}
+    now = _local_datetime(server_time(request.messages))
+    if (
+        now
+        and len(days) == 1
+        and not re.search(
+            r"\b(morgen|morning|abend|evening|nachmittag|afternoon)\b|\d{1,2}:\d{2}|\d{1,2}\s*(?:uhr|am|pm)\b",
+            question,
+            re.I,
+        )
+    ):
+        midnight = now.replace(hour=0, minute=0, second=0)
+        day = next(iter(days))
+        start, end = (
+            (midnight - timedelta(days=1), midnight) if day == "yesterday" else (midnight, now)
+        )
+        context["local_time_window"] = {
+            "after": start.isoformat(timespec="seconds"),
+            "before": end.isoformat(timespec="seconds"),
+            "meaning": "entire previous day, ending at next midnight"
+            if day == "yesterday"
+            else "today until supplied server time",
+        }
+    cameras = camera_catalogue(request.messages)
+    matches = matched_cameras(question, cameras)
+    if len(matches) == 1:
+        context["camera_id"] = matches[0]
+    duration = re.search(
+        r"\b(?:letzten?|last) (\d+) (stunden?|hours?|minuten?|minutes?)\b", question, re.I
+    )
+    if now and duration:
+        minutes = int(duration[1]) * (
+            60 if duration[2].casefold().startswith(("stund", "hour")) else 1
+        )
+        if minutes > 0:
+            try:
+                start = now - timedelta(minutes=minutes)
+            except OverflowError:
+                pass
+            else:
+                context["local_time_window"] = {
+                    "after": start.isoformat(timespec="seconds"),
+                    "before": now.isoformat(timespec="seconds"),
+                    "meaning": "requested elapsed interval ending at supplied server time",
+                }
+    return context
 
 
 def tool_results(request):
@@ -561,9 +614,34 @@ def plan(request, settings, images):
     Raises:
         ValueError: A forced tool violates the supported conservative action policy.
     """
-    if images:
-        return [], None, "image_observation"
     tools = selected_tools(request)
+    if images:
+        if request.tool_choice == "required" or isinstance(request.tool_choice, dict):
+            return tools, None, "image_tools"
+        question = latest_question(request)
+        if question.startswith("Here is the current live image"):
+            questions = [
+                text_content(m)
+                for m in request.messages
+                if m.get("role") == "user"
+                and not text_content(m).startswith("Here is the current live image")
+            ]
+            question = questions[-1] if questions else question
+        if re.search(
+            r"\b(notify|watch|benachrichtige|überwache|enable|disable|schalte)\b", question, re.I
+        ):
+            return [t for t in tools if t["function"]["name"] in _WRITES], None, "image_action"
+        if re.search(r"\b(search|find|suche|finde|similar|ähnlich|aehnlich)\b", question, re.I):
+            return (
+                [
+                    t
+                    for t in tools
+                    if t["function"]["name"] in {"search_objects", "find_similar_objects"}
+                ],
+                None,
+                "image_search",
+            )
+        return [], None, "image_observation"
     names = {t["function"]["name"] for t in tools}
     cameras = camera_catalogue(request.messages)
     question, reply_camera = request_question(request, cameras)
@@ -614,8 +692,7 @@ def plan(request, settings, images):
             ),
             "empty_recap",
         )
-    # Do not offer arbitrary writable tools to a generative model. This initial
-    # experimental proxy supports only exact cancellation and simple state edits.
+    # Exact actions bypass generation. Other supplied tools remain model-accessible.
     if question.casefold() in {
         "stop watching",
         "stop camera watch",
@@ -651,17 +728,12 @@ def plan(request, settings, images):
                 _call(request, "set_camera_state", args),
                 "camera_state",
             )
-    if isinstance(request.tool_choice, dict) and request.tool_choice["function"]["name"] in _WRITES:
-        raise ValueError(
-            "Frigate-Assist requires an exact supported user instruction for writable tools"
-        )
-    tools = [t for t in tools if t["function"]["name"] in _READS]
     if any(name in _WRITES for name in results):
         # Let Gemma explain the actual returned success/error; never repeat the action.
-        return [], None, "action_result"
+        return tools, None, "action_result"
     if absent:
         if "get_recap" in results:
-            return [], None, "recap_summary"
+            return tools, None, "recap_summary"
         if "get_profile_status" in results:
             interval = recap_interval(results["get_profile_status"], request, settings)
             if interval and "get_recap" in names:
@@ -733,8 +805,20 @@ def plan(request, settings, images):
     )
     live = (
         not historical
-        and bool(_LIVE.fullmatch(question))
-        and bool(targets or re.search(r"\b(kamera|kameras|camera|cameras|live)\b", question, re.I))
+        and bool(
+            _LIVE.fullmatch(question)
+            or re.fullmatch(
+                r"(?:zeige|show|beschreibe|describe).*\b(?:bild|image|foto|picture)\b.*",
+                question,
+                re.I,
+            )
+        )
+        and bool(
+            targets
+            or re.search(
+                r"\b(kamera|kameras|camera|cameras|live|livebild|liveimage)\b", question, re.I
+            )
+        )
     )
     if live and "get_live_context" in names and not results:
         if len(targets) == 1:
@@ -747,7 +831,7 @@ def plan(request, settings, images):
             # An unnamed live request can use the sole supplied camera; a named
             # unknown target must still be clarified rather than silently replaced.
             if len(cameras) == 1 and re.fullmatch(
-                r"(?:zeige|show)(?: mir| me)? (?:das|the) (?:aktuelle |current )?live[ -]?(?:bild|image)(?: an)?",
+                r"(?:zeige|show)(?: mir| me)? (?:(?:das|ein|the|a) )?(?:aktuelle |current )?live[ -]?(?:bild|image)(?: an)?",
                 question,
                 re.I,
             ):
@@ -763,24 +847,6 @@ def plan(request, settings, images):
                 else "Which camera do you mean? Please use one of the supplied camera names.",
                 "camera_clarification",
             )
-    if (
-        re.search(
-            r"\b(benachrichtige|notify|überwache|watch|schalte|turn|deaktiviere|aktiviere)\b|"
-            r"\bpass(?:e)? auf\b.*\bauf\b|\b(?:sag|sage|gib) mir bescheid\b",
-            question,
-            re.I,
-        )
-        and not results
-    ):
-        return (
-            tools,
-            (
-                "Diese Steuerungs- oder Überwachungsanfrage wird von Frigate-Assist noch nicht sicher unterstützt. Nutze dafür die Frigate-Einstellungen; einfache Befehle wie ‚Schalte die Erkennung für Kamera Eingang aus‘ sind möglich."
-                if german
-                else "This control/watch request is not yet supported safely. Use Frigate settings; simple instructions such as 'Turn detection for camera Front Door off' are supported."
-            ),
-            "unsupported_action",
-        )
     if "get_profile_status" in results and "get_recap" not in results:
         return [t for t in tools if t["function"]["name"] == "get_recap"], None, "profile_reasoning"
     if "search_objects" in results and re.search(r"\b(ähnlich|aehnlich|similar)\b", question, re.I):
@@ -791,7 +857,7 @@ def plan(request, settings, images):
         )
     if results:
         # Reading live context without a frame cannot describe unseen objects.
-        return [], None, "tool_summary"
+        return tools, None, "tool_summary"
     if query and "search_objects" in names:
         selected = [t for t in tools if t["function"]["name"] == "search_objects"]
         args = dict(query[0])
@@ -814,20 +880,36 @@ def plan(request, settings, images):
         )
     if request.tool_choice == "required" or isinstance(request.tool_choice, dict):
         return tools, None, "explicit_tool_choice"
+    relevant = set()
+    if re.search(
+        r"\b(benachrichtige|notify|überwache|watch)\b|pass(?:e)? auf|(?:sag|sage|gib) mir bescheid",
+        question,
+        re.I,
+    ):
+        relevant.update({"start_camera_watch", "stop_camera_watch", "get_live_context"})
+    if re.search(r"\b(schalte|turn|deaktiviere|aktiviere|enable|disable)\b", question, re.I):
+        relevant.add("set_camera_state")
     if absent:
-        tools = [t for t in tools if t["function"]["name"] in {"get_profile_status", "get_recap"}]
-    elif live:
-        tools = [t for t in tools if t["function"]["name"] == "get_live_context"]
-    elif re.search(r"\b(ähnlich|aehnlich|similar|attached_event)\b", question, re.I):
-        tools = [
-            t for t in tools if t["function"]["name"] in {"find_similar_objects", "search_objects"}
-        ]
-    elif re.search(
+        relevant.update({"get_profile_status", "get_recap"})
+    if live:
+        relevant.add("get_live_context")
+    if re.search(r"\b(ähnlich|aehnlich|similar|attached_event)\b", question, re.I):
+        relevant.update({"find_similar_objects", "search_objects"})
+    if re.search(
         r"\b(gestern|heute|yesterday|today|detections|erkennungen|autos|cars|personen|people)\b",
         question,
         re.I,
     ):
-        tools = [t for t in tools if t["function"]["name"] == "search_objects"]
+        relevant.add("search_objects")
+    if relevant:
+        # Unknown/new tools cannot be classified safely and must remain available.
+        selected = [
+            t
+            for t in tools
+            if t["function"]["name"] in relevant or t["function"]["name"] not in TOOL_HINTS
+        ]
+        if selected:
+            tools = selected
     return tools, None, "text_reasoning"
 
 
@@ -890,7 +972,11 @@ def validate_result(result, prepared, original):
         args = arguments_object(function.get("arguments", {}))
         for key in ("camera", "cameras"):
             value = args.get(key)
-            if not isinstance(value, (str, list)) or value == "all":
+            if (
+                not isinstance(value, (str, list))
+                or value == "all"
+                or (function.get("name") == "set_camera_state" and value == "*")
+            ):
                 continue
             identifiers = value if isinstance(value, list) else value.split(",")
             normalized = []
@@ -911,8 +997,6 @@ def validate_result(result, prepared, original):
         return result
     for call in result.get("tool_calls", []):
         name = call["function"]["name"]
-        if name in _WRITES:
-            raise ValueError("Frigate-Assist does not accept generative writable tool calls")
         args = arguments_object(call["function"]["arguments"])
         if name in {"search_objects", "find_similar_objects", "get_recap"}:
             times = {}
@@ -951,6 +1035,8 @@ def validate_result(result, prepared, original):
                 else []
             )
             if name == "get_recap" and value == "all":
+                continue
+            if name == "set_camera_state" and value == "*":
                 continue
             if not identifiers or any(identifier not in cameras for identifier in identifiers):
                 raise ValueError("Frigate-Assist rejected an unknown or ambiguous camera ID")

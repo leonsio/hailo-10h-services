@@ -208,7 +208,8 @@ example). Requests may lower the selected backend's token ceiling but not raise 
 | Recognized named last-sighting query | Search `sub_label` directly, with `limit: 1` when supported | 0 |
 | Exact named/class last-sighting result with supplied local times | Return the verified single result directly | 0 |
 | Attached event with a clothing/image question but no frame | Request the event image through a supplied image tool, otherwise explain the missing image | 0 |
-| Current image or explicit visual follow-up to an earlier frame | Focus on observable image contents; no tools | 1 VLM call |
+| Pure image observation or explicit visual follow-up | Focus on observable image contents; no tools | 1 VLM call |
+| Image search/action or forced tool choice | Keep the relevant supplied schemas within native model limits | 1 VLM call |
 | Text follow-up about an earlier model answer | Strip historical frames and use the configured text target | 1 configured LLM/VLM call |
 
 The service **returns** tools; **Frigate executes** them and submits the results in
@@ -223,15 +224,18 @@ mean that both targets are ready.
 The compiler replaces Frigate's long chat system prompt with short task rules.
 It retains the supplied server-local clock, camera/friendly-name and zone mappings,
 the current user question, and complete tool call/result dependencies for the
-active turn. One short preceding plain question/answer can be retained for references.
-Older completed tool rounds are removed. Missing or unmatched tool results are rejected,
+active turn. The preceding complete exchange, including compact tool results, is
+retained when it fits the history allowance (up to 4000 characters, bounded by the
+configured text limit). Larger preceding exchanges are explicitly marked as omitted;
+the model is instructed to ask for relevant details when needed. Older rounds are removed. Missing or unmatched tool results are rejected,
 not repaired by guessing.
 
 Tool descriptions are shortened and schema annotations removed. Required fields,
-types, enums, ranges, and other validation constraints remain intact. Read tools are
+types, enums, ranges, and other validation constraints remain intact. Tools are
 selected by question category, for example historical search, live context, or
-similarity. Unknown categories keep the available read tools rather than guessing
-one tool. Native LLM token counting remains the final budget check.
+similarity. Compound questions retain tools for each recognized intent. Unknown categories and
+new tools remain available rather than being silently removed. Tool results do not
+end the workflow: the model can return another supplied tool call when needed. Native LLM token counting remains the final budget check.
 
 Result lists retain at most `frigate_assist_max_events` entries per list. Omitted
 record counts are explicit. Long strings/nested data receive omission markers;
@@ -247,18 +251,18 @@ fuzzy matching, camera fallback or invented camera filter is added.
 Historical calls also require valid local ISO timestamps with seconds, an increasing
 interval and no timestamps later than the supplied Frigate server clock. Invalid
 calls are rejected before being emitted in a stream.
-The proxy does not expose writable tools to generative inference. This first version
-supports conservative exact forms such as:
+Exact action forms bypass generation, for example:
 
 - `Turn detection for camera <friendly name or ID> off`
 - `Turn recording for camera <friendly name or ID> on`
 - `Stop camera watch`
 
-More complex setting changes, creating watches/exports, wildcard actions, or unclear
-targets remain unsupported. The camera must come from the request's catalogue.
-Frigate still enforces permissions and user approval for actions. This proxy does
-not bypass those checks. Subsequent action results are summarized by the configured text model rather
-than interpreted as proof of success before Frigate returns them.
+Other setting changes, watches and exports use the configured model with the
+supplied tool schemas; they are not rejected merely because there is no exact
+recognizer. The model is instructed to perform actions only when requested and
+never claim success before a result or repeat a completed action. Schema and
+camera validation still apply. `set_camera_state` accepts Frigate's `*` camera
+wildcard. Frigate retains execution, permissions and approval handling.
 
 ### Example: “What happened while I was away?”
 
@@ -306,13 +310,18 @@ supplies `search_objects`, the returned data instead covers tracked detections.
 Returned results are then summarized by the selected LLM.
 
 Recognized narrow German/English event forms cover the last N minutes/hours
-(between one minute and 31 days), today, yesterday, and a start time such as
+(positive durations within the supported calendar), today, yesterday, and a start time such as
 `Show me the events from 06:00 until now`. Midnight crossings are
 calculated directly. A time-only follow-up such as `from 06:00 until now`
 inherits the preceding event question through consecutive time clarifications,
 without taking dates from an assistant's suggestions. An unrelated question ends
 this inheritance. Filtered or more complex questions still use the experimental
-LLM path; this recognizer does not silently discard extra requested filters.
+LLM path; this recognizer does not silently discard extra requested filters. The model also
+receives resolved camera IDs and time windows for unambiguous references in filtered
+questions, preserving the original question. `Show me the history of yesterday`
+is handled directly: 00:00 of the previous day to 00:00 of the next day, covering
+all of the final minute. All calculations use the supplied Frigate local clock,
+not the proxy host's clock. Ambiguous morning/start times still require clarification.
 
 `from this morning until now` has no defined start hour. The proxy asks specifically
 which hour the user means rather than silently assuming midnight or 06:00. Missing
@@ -345,7 +354,10 @@ limit. This reduces generation time but does not increase the native context bud
 Structured description requests keep their requested output limit and format contract.
 
 Vision gets a brief observation instruction and the relevant question/frame caption,
-not Frigate's search instructions or eight tool schemas. The prompt asks for visible
+not Frigate's generic search instructions. Pure observation uses no tool schemas;
+explicit image-search/action tasks retain the relevant schemas, and an explicit
+required/forced tool choice is respected. These mixed requests still need to fit
+the native VLM context and remain experimental. The prompt asks for visible
 objects/actions, uncertainty where needed, and no invented identity, intention,
 off-screen event, timestamp or technical camera status. The virtual model retains
 explicit short description/format instructions. Overlong vision tasks fail with
@@ -444,10 +456,8 @@ Cancel the running chat or reload/start a new conversation to recover the UI.
 The proxy cannot cancel or reset Frigate's internal tool execution. A service-side
 HTTP 200 alone does not demonstrate that the entire Frigate chat turn completed.
 Successful empty recap results are answered without a model; error, partial or
-unknown result shapes keep the normal summary path. Requests such as
-`Watch the front door and notify me when someone arrives` are recognized as currently
-unsupported watch requests and receive a direct explanation, rather than a model
-offering monitoring without creating a job.
+unknown result shapes keep the normal summary path. A watch request uses the configured model and supplied watch schema; an actual
+watch requires a tool call executed by Frigate, not a text promise from the model.
 
 go2rtc `producer.go ... error=EOF` entries concern the upstream camera stream.
 They are not chat API errors and do not by themselves establish why a chat stalls.

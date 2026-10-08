@@ -597,7 +597,8 @@ Use `model: "Frigate-Assist"` at `/v1/chat/completions` for Frigate-specific
 preparation. Recognized requests return deterministic client-executed tools;
 other text requests use `frigate_assist_text_model` (an enabled Gemma, native Hailo LLM,
 or the enabled VLM), and image requests use `frigate_assist_vision_model` with a short
-observation task and no tools. Both omitted or empty selections resolve to the selected
+observation task. Pure observation omits tools; explicit image search/actions retain
+relevant tool schemas. Unknown tools and multi-step text workflows remain available. Both omitted or empty selections resolve to the selected
 native VLM; Gemma must be explicitly selected. An explicit image target conflicting
 with the enabled VLM is rejected when loading configuration. Explicit unavailable
 text targets do not fall back. VLM text requests obey the native VLM token/context limits. Direct native models

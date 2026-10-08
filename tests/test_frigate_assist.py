@@ -204,7 +204,7 @@ def test_absence_three_rounds_without_invented_times(service):
     assert len(llm.calls) == 1 and not backend.calls
     compiled = llm.calls[0]
     assert compiled.model == LLM_MODEL
-    assert not compiled.tools
+    assert "get_recap" in {t["function"]["name"] for t in compiled.tools}
     assert "2026-10-07 06:10:00 PM" in json.dumps(compiled.messages)
     assert "Generic instructions" not in json.dumps(compiled.messages)
     assert not getattr(compiled, "_ha_assist", False)
@@ -367,6 +367,190 @@ def test_text_routing_and_tool_selection(service):
 
 
 @pytest.mark.parametrize(
+    "clock,after,before",
+    [
+        ("2026-01-01 at 09:02:19 PM", "2025-12-31T00:00:00", "2026-01-01T00:00:00"),
+        ("2024-03-01 at 09:02:19 PM", "2024-02-29T00:00:00", "2024-03-01T00:00:00"),
+    ],
+)
+def test_history_yesterday_resolves_full_calendar_day(service, clock, after, before):
+    client, backend, llm = service
+    body = payload("Zeige mir die Historie von gestern")
+    body["messages"][0]["content"] = SYSTEM.replace("2026-10-07 at 09:02:19 PM", clock)
+    result = message(client.post("/v1/chat/completions", json=body))
+    assert name_and_args(result) == ("get_recap", {"after": after, "before": before})
+    assert not backend.calls and not llm.calls
+
+
+def test_filtered_yesterday_question_retains_task_and_gets_resolved_dates(service):
+    client, _, llm = service
+    question = "Welche roten Autos waren gestern bei Garden?"
+    message(client.post("/v1/chat/completions", json=payload(question)))
+    compiled = llm.calls[0]
+    assert compiled.messages[-1]["content"] == question
+    assert '"after":"2026-10-06T00:00:00"' in compiled.messages[0]["content"]
+    assert '"before":"2026-10-07T00:00:00"' in compiled.messages[0]["content"]
+    assert '"camera_id":"garden"' in compiled.messages[0]["content"]
+
+
+def test_model_can_start_watch_and_use_wildcard_setting(service):
+    client, _, llm = service
+    for question, name, args in [
+        (
+            "Notify me when a person arrives at Garden",
+            "start_camera_watch",
+            {"camera": "garden", "condition": "a person arrives"},
+        ),
+        (
+            "Disable detection on all cameras",
+            "set_camera_state",
+            {"camera": "*", "feature": "detect", "value": "OFF"},
+        ),
+    ]:
+        llm.result = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "action1",
+                    "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(args)},
+                }
+            ],
+        }
+        assert name_and_args(
+            message(client.post("/v1/chat/completions", json=payload(question)))
+        ) == (name, args)
+
+
+def test_unknown_tools_and_compound_intents_remain_available(service):
+    client, _, llm = service
+    body = payload("Show cars yesterday and notify me when a person arrives")
+    body["tools"].append(tool("get_camera_statistics"))
+    message(client.post("/v1/chat/completions", json=body))
+    assert {"search_objects", "start_camera_watch", "get_camera_statistics"} <= {
+        t["function"]["name"] for t in llm.calls[0].tools
+    }
+
+
+def test_single_camera_live_request_and_named_image_bypass_model(service):
+    client, backend, llm = service
+    body = payload("Zeige mir ein Live-Bild")
+    body["messages"][0]["content"] = SYSTEM.replace(
+        "  - Garden (ID: garden, zones: Lawn (ID: lawn))\n", ""
+    )
+    assert name_and_args(message(client.post("/v1/chat/completions", json=body))) == (
+        "get_live_context",
+        {"camera": "front_door"},
+    )
+    assert name_and_args(
+        message(client.post("/v1/chat/completions", json=payload("Zeige mir das Bild von Garden")))
+    ) == ("get_live_context", {"camera": "garden"})
+    assert not backend.calls and not llm.calls
+
+
+def test_result_round_allows_another_model_tool_step(service):
+    client, _, llm = service
+    body = payload("Find similar objects to the latest car")
+    call = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "search1",
+                "type": "function",
+                "function": {"name": "search_objects", "arguments": '{"label":"car"}'},
+            }
+        ],
+    }
+    llm.result = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "similar1",
+                "type": "function",
+                "function": {
+                    "name": "find_similar_objects",
+                    "arguments": '{"event_id":"event123"}',
+                },
+            }
+        ],
+    }
+    result = message(
+        client.post(
+            "/v1/chat/completions", json=followup(body, call, [{"id": "event123", "label": "car"}])
+        )
+    )
+    assert name_and_args(result) == ("find_similar_objects", {"event_id": "event123"})
+
+
+def test_long_relative_period_and_filtered_interval_are_resolved(service):
+    client, _, llm = service
+    result = message(
+        client.post(
+            "/v1/chat/completions", json=payload("Show me the events of the last 1000 hours")
+        )
+    )
+    assert name_and_args(result) == (
+        "get_recap",
+        {"after": "2026-08-27T05:02:19", "before": "2026-10-07T21:02:19"},
+    )
+    question = "Welche Autos waren in den letzten 2 Stunden bei Garden?"
+    message(client.post("/v1/chat/completions", json=payload(question)))
+    assert llm.calls[-1].messages[-1]["content"] == question
+    assert '"after":"2026-10-07T19:02:19"' in llm.calls[-1].messages[0]["content"]
+
+
+def test_image_search_and_forced_tool_keep_needed_schema():
+    body = payload("Find similar objects to the car in this image")
+    body["messages"][-1]["content"] = [
+        {"type": "text", "text": body["messages"][-1]["content"]},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,ZmFrZQ=="}},
+    ]
+    prepared, direct = prepare(Settings(), ChatRequest(**body))
+    assert direct is None
+    assert {t["function"]["name"] for t in prepared.tools} == {
+        "search_objects",
+        "find_similar_objects",
+    }
+    assert "No tool calls." not in prepared.messages[0]["content"]
+    body["tool_choice"] = {"type": "function", "function": {"name": "search_objects"}}
+    prepared, direct = prepare(Settings(), ChatRequest(**body))
+    assert prepared.tool_choice == body["tool_choice"]
+    assert [t["function"]["name"] for t in prepared.tools] == ["search_objects"]
+
+
+def test_followup_retains_previous_compact_tool_evidence(service):
+    client, _, llm = service
+    body = payload("Show cars yesterday")
+    call = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "previous1",
+                "type": "function",
+                "function": {"name": "search_objects", "arguments": '{"label":"car"}'},
+            }
+        ],
+    }
+    body = followup(
+        body,
+        call,
+        [{"id": "car-event", "description": "A red car arrived", "embedding": [0] * 500}],
+    )
+    body["messages"] += [
+        {"role": "assistant", "content": "A car arrived."},
+        {"role": "user", "content": "What color was that car?"},
+    ]
+    message(client.post("/v1/chat/completions", json=body))
+    compiled = json.dumps(llm.calls[0].messages)
+    assert "A red car arrived" in compiled and "car-event" in compiled
+    assert "embedding" not in compiled
+
+
+@pytest.mark.parametrize(
     ("question", "after", "before"),
     [
         (
@@ -435,7 +619,7 @@ def test_empty_recap_stream_completion_is_logged(service, caplog):
     assert not llm.calls
 
 
-def test_watch_request_does_not_promise_unsupported_monitoring(service):
+def test_watch_request_reaches_text_model_with_watch_tools(service):
     client, backend, llm = service
     result = message(
         client.post(
@@ -443,8 +627,9 @@ def test_watch_request_does_not_promise_unsupported_monitoring(service):
             json=payload("Pass auf die Haustür auf und sag mir Bescheid, wenn jemand kommt"),
         )
     )
-    assert "noch nicht sicher unterstützt" in result["content"]
-    assert not backend.calls and not llm.calls
+    assert result["content"] == llm.result
+    assert not backend.calls and len(llm.calls) == 1
+    assert "start_camera_watch" in {t["function"]["name"] for t in llm.calls[0].tools}
 
 
 def test_event_interval_midnight_and_search_fallback(service):
@@ -657,7 +842,7 @@ def test_technical_status_is_a_clarification(service):
     assert not llm.calls and not backend.calls
 
 
-def test_deterministic_setting_and_unsupported_watch(service):
+def test_deterministic_setting_and_model_watch(service):
     client, backend, llm = service
     result = message(
         client.post(
@@ -671,8 +856,8 @@ def test_deterministic_setting_and_unsupported_watch(service):
     result = message(
         client.post("/v1/chat/completions", json=payload("Benachrichtige mich wenn Gäste kommen"))
     )
-    assert "noch nicht sicher unterstützt" in result["content"]
-    assert not backend.calls and not llm.calls
+    assert result["content"] == llm.result
+    assert not backend.calls and len(llm.calls) == 1
 
 
 def test_truncated_events_are_explicit_and_errors_remain(service):
