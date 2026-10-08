@@ -12,6 +12,24 @@ from .frigate_routing import plan, resolved_context
 _LOG = logging.getLogger(__name__)
 
 
+_MODEL_TOOL_ROUTES = {
+    "deterministic_historical_search_tool_selection",
+    "deterministic_watch_tool_selection",
+}
+
+
+def _tool_names(tools):
+    """Return selected tool names for conservative planner comparisons.
+
+    Args:
+        tools: OpenAI function tool declarations.
+
+    Returns:
+        set[str]: Function names contained in the declarations.
+    """
+    return {tool["function"]["name"] for tool in tools or []}
+
+
 def prepare(settings, request):
     """Prepare a deterministic call or exactly one native text/vision request.
 
@@ -36,11 +54,24 @@ def prepare(settings, request):
         tools, direct, reason = plan(request, settings, images)
     else:
         tools, direct, reason = deterministic
+        # The deterministic layer may narrow a single obvious read tool before
+        # semantic inference. If the conservative legacy planner sees additional
+        # tools, retain them: that indicates a compound intent or an unknown/new
+        # Frigate capability which this layer must not silently discard.
+        if direct is None and reason == "deterministic_historical_search_tool_selection":
+            legacy_tools, legacy_direct, legacy_reason = plan(request, settings, images)
+            if legacy_direct is None and _tool_names(legacy_tools) - _tool_names(tools):
+                tools, direct, reason = legacy_tools, legacy_direct, legacy_reason
     target = settings.frigate_vision_model if images else settings.frigate_text_model
     # Compilation validates the entire active round even for deterministic calls.
     context = resolved_context(request)
     context.update(resolved_facts(request))
     prepared = compile_request(request, settings, tools, images, context=context)
+    if direct is None and prepared.tools and reason in _MODEL_TOOL_ROUTES:
+        # The deterministic planner has already chosen the only safe capability.
+        # Requiring the call prevents a small model from answering from memory or
+        # asking for information that is already encoded in the constrained schema.
+        prepared = prepared.model_copy(update={"tool_choice": "required"})
     if direct is None:
         if images and (not settings.vlm_enabled or target != settings.vlm_model):
             raise ValueError(
