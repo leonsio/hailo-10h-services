@@ -108,10 +108,10 @@ _ACTION = set(
     "ative desative включи выключи".split()
 )
 _ON = set(
-    "on enable enabled ein an active actif activo attivo aan ligado ativado включи включено".split()
+    "on enable enabled ein an active actif activa activo attiva attivo aan ligado ative ativado включи включено".split()
 )
 _OFF = set(
-    "off disable disabled aus inaktiv desactive désactive desactivado disattiva uit desligado desativado выключи выключено".split()
+    "off disable disabled aus inaktiv desactive désactive desactiva desactivado disattiva uit desligado desative desativado выключи выключено".split()
 )
 _FEATURES = {
     "detect": set(
@@ -209,7 +209,11 @@ def _tokens(text):
     Returns:
         set[str]: Normalized lexical tokens found in the text.
     """
-    return set(re.findall(r"[\wÀ-ÖØ-öø-ÿА-Яа-яЁё'’]+", _normalize(text), re.UNICODE))
+    normalized = _normalize(text)
+    tokens = set(re.findall(r"[\wÀ-ÖØ-öø-ÿА-Яа-яЁё'’]+", normalized, re.UNICODE))
+    split_apostrophes = normalized.replace("'", " ").replace("’", " ")
+    tokens.update(re.findall(r"[\wÀ-ÖØ-öø-ÿА-Яа-яЁё]+", split_apostrophes, re.UNICODE))
+    return tokens
 
 
 def _language(request, text):
@@ -582,14 +586,12 @@ def _last_sighting(text, tools, catalogue):
     if not selected:
         return None
     properties = selected[0]["function"].get("parameters", {}).get("properties", {})
-    if "label" not in properties or "limit" not in properties:
+    if "label" not in properties or "limit" not in properties or "camera" not in properties:
         return None
     matches = _cameras(text, catalogue)
-    if len(matches) > 1:
+    if len(matches) != 1:
         return None
-    arguments = {"label": labels[0], "limit": 1}
-    if len(matches) == 1 and "camera" in properties:
-        arguments["camera"] = matches[0]
+    arguments = {"label": labels[0], "camera": matches[0], "limit": 1}
     return selected, arguments
 
 
@@ -708,11 +710,12 @@ def deterministic_plan(request, settings, images):
             )
     now = _local_datetime(server_time(request.messages))
     interval = _interval(text, now) if now else None
-    previous_recap = any(
-        _tokens(text_content(message)) & _RECAP
-        for message in request.messages[:-1]
+    user_texts = [
+        text_content(message)
+        for message in request.messages
         if message.get("role") == "user"
-    )
+    ]
+    previous_recap = len(user_texts) >= 2 and bool(_tokens(user_texts[-2]) & _RECAP)
     if interval and "get_recap" in names and not results and (tokens & _RECAP or previous_recap):
         after, before = interval
         if before > now:
