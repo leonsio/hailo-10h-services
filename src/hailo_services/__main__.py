@@ -12,7 +12,11 @@ from .process_app import create_process_app
 
 
 def _process_mode_enabled() -> bool:
-    """Return whether production inference should use isolated child processes."""
+    """Return whether production inference should use isolated child processes.
+
+    Returns:
+        bool: True unless the compatibility fallback is explicitly requested.
+    """
     return os.getenv("HAILO_PROCESS_MODE", "1").strip().lower() not in {
         "0",
         "false",
