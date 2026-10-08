@@ -50,6 +50,9 @@ async function loadLanguage(choice) {
   const data = await response.json();
   uiLanguage = language; uiStrings = data.ui || {}; uiChoice = choice;
   languageNames = data.language_names || {};
+  $("ui-language").replaceChildren(new Option(tr("ui_81"), "auto"),
+    ...(config?.ui_languages || ["de", "en", "ru"]).map(code => new Option(languageNames[code] || code, code)));
+  $("ui-language").value = choice;
   const selectedSTT = $("language").value;
   $("language").replaceChildren(new Option(tr("ui_71"), ""),
     ...(config?.stt_languages || ["de", "en", "ru"]).map(code => new Option(languageNames[code] || code, code)));

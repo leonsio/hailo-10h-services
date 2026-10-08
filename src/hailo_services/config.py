@@ -459,8 +459,10 @@ class Settings:
                     f"Invalid type for setting {key}: expected {type(default).__name__}"
                 )
         config = cls(**values)
-        if config.service_language not in {"de", "en", "ru"}:
-            raise ValueError("Service language must be de, en or ru")
+        from hailo_services.shared.i18n import SUPPORTED_LANGUAGES
+
+        if config.service_language not in SUPPORTED_LANGUAGES:
+            raise ValueError("Service language must have a bundled locale JSON")
         if config.queue_size < 1 or config.max_body < 1024 or config.request_timeout <= 0:
             raise ValueError("Invalid queue size, body limit or timeout")
         if not 0 <= config.wyoming_port <= 65535 or not 1 <= config.port <= 65535:

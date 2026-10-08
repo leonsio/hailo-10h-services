@@ -23,12 +23,12 @@ from wyoming.audio import AudioChunk, AudioStart, AudioStop
 from wyoming.event import async_read_event, async_write_event
 from wyoming.info import Describe, Info
 
-from hailo_services.app import create_app
+from hailo_services.api.app import create_app
+from hailo_services.api.protocols import WyomingServer, dispatch, read_bounded_event
 from hailo_services.config import VLM_MODEL, Settings
-from hailo_services.media import audio_file, image_frame
-from hailo_services.protocols import WyomingServer, dispatch, read_bounded_event
-from hailo_services.runtime import BusyError, HailoBackend, Runtime
+from hailo_services.runtime.runtime import BusyError, HailoBackend, Runtime
 from hailo_services.schemas import ChatRequest
+from hailo_services.shared.media import audio_file, image_frame
 
 
 class FakeBackend:
@@ -189,7 +189,7 @@ def test_litert_lm_model_routes_through_shared_chat_api_and_streams():
 
 def test_litert_backend_uses_python_engine_and_preserves_chat_history(tmp_path, monkeypatch):
     from hailo_services.config import LLM_MODEL
-    from hailo_services.runtime import LiteRTLMBackend
+    from hailo_services.runtime.runtime import LiteRTLMBackend
 
     model = tmp_path / "gemma.litertlm"
     model.touch()
@@ -274,7 +274,7 @@ def test_litert_backend_uses_python_engine_and_preserves_chat_history(tmp_path, 
 
 def test_optional_http_whisper_debug_logs_protocol_and_audio_metadata(caplog):
     backend = FakeBackend()
-    with caplog.at_level(logging.DEBUG, logger="hailo_services.app"):
+    with caplog.at_level(logging.DEBUG, logger="hailo_services.api.app"):
         with TestClient(create_app(settings(api_key="secret", debug_log=True), backend)) as client:
             response = client.post(
                 "/v1/audio/transcriptions",
@@ -399,7 +399,7 @@ def test_media_validation():
 def test_phone_resolution_jpeg_is_downsampled_but_extreme_images_are_rejected(monkeypatch):
     # Lower the production limit in this unit test so the decoder path is
     # exercised without allocating a real 48 MP buffer on the test runner.
-    monkeypatch.setattr("hailo_services.media._MAX_IMAGE_PIXELS", 3_000_000)
+    monkeypatch.setattr("hailo_services.shared.media._MAX_IMAGE_PIXELS", 3_000_000)
     monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 3_000_000)
     image = Image.new("RGB", (1800, 1600), "#4a728c")
     encoded = io.BytesIO()
@@ -501,7 +501,7 @@ def test_real_wyoming_wire_protocol(caplog):
             await server.close()
             await runtime.close()
 
-    with caplog.at_level(logging.DEBUG, logger="hailo_services.protocols"):
+    with caplog.at_level(logging.DEBUG, logger="hailo_services.api.protocols"):
         asyncio.run(run())
     assert "protocol=wyoming event=transcribe_start" in caplog.text
     assert "encoding=pcm_s16le sample_rate_hz=16000 channels=1" in caplog.text
@@ -621,7 +621,7 @@ def test_mqtt_dispatch_uses_same_runtime():
 
 
 def test_native_shared_creation_residency_and_partial_cleanup(monkeypatch, tmp_path):
-    monkeypatch.setattr("hailo_services.backend_hailo.prepare_model_version", lambda: "5.4.0")
+    monkeypatch.setattr("hailo_services.chat.backend_hailo.prepare_model_version", lambda: "5.4.0")
     minilm_hef = tmp_path / "minilm-l6-ruvector.hef"
     minilm_hef.write_bytes(b"compiled test fixture")
     events, params_seen = [], []
@@ -634,7 +634,7 @@ def test_native_shared_creation_residency_and_partial_cleanup(monkeypatch, tmp_p
         def close(self):
             events.append("minilm")
 
-    monkeypatch.setattr("hailo_services.backend_hailo.MiniLM", FakeMiniLM)
+    monkeypatch.setattr("hailo_services.chat.backend_hailo.MiniLM", FakeMiniLM)
 
     class Resource:
         def __init__(self, name):
@@ -669,7 +669,7 @@ def test_native_shared_creation_residency_and_partial_cleanup(monkeypatch, tmp_p
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
     monkeypatch.setattr(
-        "hailo_services.backend_hailo.ModelManager.resolve",
+        "hailo_services.chat.backend_hailo.ModelManager.resolve",
         lambda self, model, kind=None, path=None: resolve(model, kind=kind),
     )
     backend = HailoBackend(settings())
@@ -704,7 +704,7 @@ def test_native_shared_creation_residency_and_partial_cleanup(monkeypatch, tmp_p
 
 
 def test_model_release_selection_handles_hailort_54():
-    from hailo_services.models import select_release
+    from hailo_services.runtime.models import select_release
 
     available = ["v5.1.0", "v5.2.0", "v5.3.0"]
     assert select_release("5.4.0", available) == "v5.3.0"
@@ -774,7 +774,7 @@ def test_vlm_preprocessing_context_cleanup_and_native_streaming():
 
 
 def test_mqtt_envelopes_and_invalid_id_do_not_crash_bridge(monkeypatch):
-    from hailo_services.protocols import MQTTBridge
+    from hailo_services.api.protocols import MQTTBridge
 
     published = []
 
@@ -813,7 +813,7 @@ def test_mqtt_envelopes_and_invalid_id_do_not_crash_bridge(monkeypatch):
         async def publish(self, topic, payload, **kwargs):
             published.append((topic, payload, kwargs))
 
-    monkeypatch.setattr("hailo_services.protocols.aiomqtt.Client", Client)
+    monkeypatch.setattr("hailo_services.api.protocols.aiomqtt.Client", Client)
 
     async def run():
         config = settings(mqtt_host="broker")
@@ -834,7 +834,7 @@ def test_mqtt_envelopes_and_invalid_id_do_not_crash_bridge(monkeypatch):
 
 
 def test_version_detection_uses_binding_without_device_probe(monkeypatch):
-    from hailo_services.models import prepare_model_version
+    from hailo_services.runtime.models import prepare_model_version
 
     modules = {
         "hailo_platform": types.SimpleNamespace(__version__="5.4.0"),

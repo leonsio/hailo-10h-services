@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from hailo_services.chat_hailo_vlm import model_prompt, tool_response
+from hailo_services.chat.chat_hailo_vlm import model_prompt, tool_response
 from hailo_services.schemas import ChatRequest
 
 

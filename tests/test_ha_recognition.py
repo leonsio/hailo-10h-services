@@ -9,14 +9,14 @@ from hypothesis import strategies as st
 from test_ha_assist import SYSTEM, TOOLS, payload
 from test_ha_assist import service as service
 
+from hailo_services.assistants.ha.ha_fuzzy import slot_repairs
+from hailo_services.assistants.ha.ha_intents import deterministic_intent
+from hailo_services.assistants.ha.ha_recognition import _templates
+from hailo_services.assistants.ha.ha_request_plan import validate_action
 from hailo_services.config import HA_ASSIST_MODEL, LLM_MODEL, Settings
-from hailo_services.ha_fuzzy import slot_repairs
-from hailo_services.ha_intents import deterministic_intent
-from hailo_services.ha_recognition import _templates
-from hailo_services.ha_request_plan import validate_action
-from hailo_services.i18n import using_language
 from hailo_services.schemas import ChatRequest
-from hailo_services.tool_retrieval import _tool_index, retrieve_tools
+from hailo_services.shared.i18n import using_language
+from hailo_services.shared.tool_retrieval import _tool_index, retrieve_tools
 
 
 @pytest.mark.parametrize(
@@ -168,8 +168,8 @@ def test_catalogue_content_changes_invalidate_even_with_same_version(service):
 
 
 def test_direct_and_generated_actions_preserve_named_target_and_capabilities(service):
-    from hailo_services.ha_catalogue import prepare_catalogue
-    from hailo_services.ha_request_plan import canonical_request
+    from hailo_services.assistants.ha.ha_catalogue import prepare_catalogue
+    from hailo_services.assistants.ha.ha_request_plan import canonical_request
 
     request = ChatRequest(
         **payload("Schalte die Leselampe im Bibliothek auf 70%", ha_context=metadata())
@@ -217,8 +217,8 @@ def test_tool_index_cache_is_bounded_localized_and_schema_sensitive():
 
 @pytest.mark.parametrize("qualifier", ["nihct", "not", "wenn", "und", "um 20 Prozent heller"])
 def test_long_target_cannot_hide_qualifiers_from_sentence_score(qualifier):
-    from hailo_services.ha_intents import _grammar
-    from hailo_services.ha_recognition import template_candidates
+    from hailo_services.assistants.ha.ha_intents import _grammar
+    from hailo_services.assistants.ha.ha_recognition import template_candidates
 
     area = "ArbeitszimmerMitEinemExtremLangenIndividuellKonfiguriertenNamen"
     text = f"Schalte das Licht imn {area} {qualifier} aus"
@@ -252,7 +252,7 @@ def test_exact_catalogue_span_is_never_replaced_with_neighbor_action_words():
 def test_cache_status_reports_apis_without_using_them():
     from types import SimpleNamespace
 
-    from hailo_services.diagnostics import cache_status
+    from hailo_services.diagnostics.diagnostics import cache_status
 
     def forbidden():
         raise AssertionError("native context must not be probed or changed")
@@ -278,8 +278,8 @@ def test_ambiguous_area_capability_check_uses_the_chosen_candidate(service):
     ).json()
     assert result["metrics"]["ha_plan"]["target_resolution"] == "llm"
     assert not llm.calls
-    from hailo_services.ha_catalogue import prepare_catalogue
-    from hailo_services.ha_request_plan import canonical_request
+    from hailo_services.assistants.ha.ha_catalogue import prepare_catalogue
+    from hailo_services.assistants.ha.ha_request_plan import canonical_request
 
     request = ChatRequest(**payload("Schalte das Licht im Leseraum auf 70%", ha_context=context))
     object.__setattr__(request, "_ha_assist", True)
@@ -294,8 +294,8 @@ def test_ambiguous_area_capability_check_uses_the_chosen_candidate(service):
 
 
 def test_explicit_empty_exposed_catalogue_rejects_actions():
-    from hailo_services.ha_catalogue import prepare_catalogue
-    from hailo_services.ha_request_plan import canonical_request
+    from hailo_services.assistants.ha.ha_catalogue import prepare_catalogue
+    from hailo_services.assistants.ha.ha_request_plan import canonical_request
 
     request = ChatRequest(**payload(ha_context={"entities": []}))
     object.__setattr__(request, "_ha_assist", True)

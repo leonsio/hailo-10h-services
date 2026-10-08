@@ -5,10 +5,10 @@ import os
 
 import uvicorn
 
-from .app import create_app
-from .config import Settings
-from .logging_utils import install_inline_data_redaction
-from .process_app import create_process_app
+from hailo_services.api.app import create_app
+from hailo_services.api.process_app import create_process_app
+from hailo_services.config import Settings
+from hailo_services.diagnostics.logging_utils import install_inline_data_redaction
 
 
 def _process_mode_enabled() -> bool:

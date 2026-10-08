@@ -107,9 +107,9 @@ cd -- "${SERVICE_STATE}"
 runuser -u hailo-services -- env HOME="${SERVICE_STATE}" HAILO_CONFIG=/etc/hailo-10h-services.yaml "${SERVICE_DIR}/venv/bin/python" - <<'PY'
 from hailo_platform import VDevice
 from hailo_platform.genai import VLM, Speech2Text
-from hailo_services.models import ModelManager
-from hailo_services.app import create_app
-from hailo_services.preflight import main
+from hailo_services.runtime.models import ModelManager
+from hailo_services.api.app import create_app
+from hailo_services.runtime.preflight import main
 main()
 print('Service user imports and model manager OK')
 PY

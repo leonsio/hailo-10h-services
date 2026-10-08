@@ -4,9 +4,9 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from hailo_services.backend_hailo import HailoBackend
+from hailo_services.chat.backend_hailo import HailoBackend
 from hailo_services.config import Settings
-from hailo_services.models import ModelManager
+from hailo_services.runtime.models import ModelManager
 
 
 def test_detector_priority_defaults_to_hailo_maximum():
@@ -50,7 +50,7 @@ def test_genai_vdevice_uses_shared_round_robin(monkeypatch):
     genai.VLM = VLM
     monkeypatch.setitem(sys.modules, "hailo_platform", hailo_platform)
     monkeypatch.setitem(sys.modules, "hailo_platform.genai", genai)
-    monkeypatch.setattr("hailo_services.backend_hailo.prepare_model_version", lambda: "5.4.0")
+    monkeypatch.setattr("hailo_services.chat.backend_hailo.prepare_model_version", lambda: "5.4.0")
     monkeypatch.setattr(
         ModelManager, "resolve", lambda self, model, kind, path=None: "/tmp/vlm.hef"
     )

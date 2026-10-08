@@ -1,11 +1,11 @@
 import json
 
-from hailo_services.config import LLM_MODEL
-from hailo_services.ha_routing import (
+from hailo_services.assistants.ha.ha_routing import (
     assess_ha_relevance,
     direct_action_response,
     general_passthrough_request,
 )
+from hailo_services.config import LLM_MODEL
 from hailo_services.schemas import ChatRequest
 
 SYSTEM = """Du bist Sprach Assistent für Home Assistant.

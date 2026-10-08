@@ -9,10 +9,10 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from hailo_services.app import create_app
+from hailo_services.api.app import create_app
 from hailo_services.config import Settings
-from hailo_services.vision import decode_hailo_nms, decode_yolo26, letterbox
-from hailo_services.vision_zmq import FrigateZmqServer
+from hailo_services.vision.vision import decode_hailo_nms, decode_yolo26, letterbox
+from hailo_services.vision.vision_zmq import FrigateZmqServer
 
 
 class FakeVisionBackend:
@@ -174,14 +174,14 @@ def test_frigate_zmq_model_handshake_and_fixed_output(tmp_path):
 
 
 def test_detector_phase_logs_keep_request_ids_on_success_and_failure(caplog):
-    from hailo_services.vision import VisionRuntime
+    from hailo_services.vision.vision import VisionRuntime
 
     class FailingBackend(FakeVisionBackend):
         def detect(self, frame, confidence, maximum):
             raise RuntimeError("native failure")
 
     async def scenario():
-        caplog.set_level("DEBUG", logger="hailo_services.vision")
+        caplog.set_level("DEBUG", logger="hailo_services.vision.vision")
         frame = np.zeros((32, 32, 3), dtype=np.uint8)
         for backend, identifier in [
             (FakeVisionBackend(), "ok-request"),

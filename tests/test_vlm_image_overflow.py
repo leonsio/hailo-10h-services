@@ -1,6 +1,6 @@
 import pytest
 
-from hailo_services.chat_hailo_vlm import limit_request
+from hailo_services.chat.chat_hailo_vlm import limit_request
 from hailo_services.schemas import ChatRequest
 
 

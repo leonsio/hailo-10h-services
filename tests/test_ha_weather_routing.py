@@ -1,4 +1,4 @@
-from hailo_services import ha_weather_routing
+from hailo_services.assistants.ha import ha_weather_routing
 
 GENERIC_ENTITIES = [
     {"name": "Outdoor Temperature", "domain": "sensor", "area": "Garden"},

@@ -5,11 +5,11 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from hailo_services.app import create_app
+from hailo_services.api.app import create_app
+from hailo_services.api.protocols import wyoming_info
 from hailo_services.config import Settings
-from hailo_services.models import ModelManager
-from hailo_services.protocols import wyoming_info
-from hailo_services.runtime import HailoBackend, Runtime
+from hailo_services.runtime.models import ModelManager
+from hailo_services.runtime.runtime import HailoBackend, Runtime
 
 
 def test_yaml_selects_models_and_env_overrides(tmp_path, monkeypatch):
@@ -127,7 +127,7 @@ def test_cached_named_models_reused_and_download_is_bounded(tmp_path, monkeypatc
     with path.open("wb") as stream:
         stream.truncate(manager.entry("Whisper-Small")["sizes"]["v5.4.0"])
     monkeypatch.setattr(
-        "hailo_services.models.urllib.request.urlopen",
+        "hailo_services.runtime.models.urllib.request.urlopen",
         lambda *a, **k: pytest.fail("cached model caused network call"),
     )
     assert manager.resolve("Whisper-Small", "whisper") == path
@@ -151,7 +151,7 @@ def test_disabled_models_never_download_or_allocate(monkeypatch):
     monkeypatch.setitem(
         sys.modules, "hailo_platform.genai", SimpleNamespace(VLM=None, Speech2Text=None)
     )
-    monkeypatch.setattr("hailo_services.backend_hailo.prepare_model_version", lambda: "5.4.0")
+    monkeypatch.setattr("hailo_services.chat.backend_hailo.prepare_model_version", lambda: "5.4.0")
     monkeypatch.setattr(
         ModelManager, "resolve", lambda *a, **k: pytest.fail("disabled model downloaded")
     )
@@ -214,7 +214,7 @@ def test_gemma_enable_download_setup_and_disable_legacy_path(tmp_path, monkeypat
 def test_exact_size_rejects_partial_cache_and_failed_replacement_preserves_it(
     tmp_path, monkeypatch
 ):
-    from hailo_services.models import ensure_model_file
+    from hailo_services.runtime.models import ensure_model_file
 
     path = tmp_path / "model.hef"
     path.write_bytes(b"old")
@@ -231,7 +231,9 @@ def test_exact_size_rejects_partial_cache_and_failed_replacement_preserves_it(
         def read(self, size):
             return b""
 
-    monkeypatch.setattr("hailo_services.models.urllib.request.urlopen", lambda *a, **k: Response())
+    monkeypatch.setattr(
+        "hailo_services.runtime.models.urllib.request.urlopen", lambda *a, **k: Response()
+    )
     with pytest.raises(RuntimeError, match="Incomplete"):
         ensure_model_file(path, "https://example.test/model", 1, 10, expected_size=4)
     assert path.read_bytes() == b"old"

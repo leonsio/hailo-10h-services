@@ -4,10 +4,10 @@ import json
 import sys
 from types import SimpleNamespace
 
+from hailo_services.assistants.ha.ha_action_verification import successful_action_followup
 from hailo_services.config import LLM_MODEL
-from hailo_services.diagnostics_litert import instrument_engine
-from hailo_services.ha_action_verification import successful_action_followup
-from hailo_services.runtime import LiteRTLMBackend
+from hailo_services.diagnostics.diagnostics_litert import instrument_engine
+from hailo_services.runtime.runtime import LiteRTLMBackend
 from hailo_services.schemas import ChatRequest
 
 
@@ -54,7 +54,7 @@ def action_request(*, failed=None, response_type="action_done", speech=None):
 def test_successful_action_followup_skips_second_gemma_inference(caplog):
     backend = LiteRTLMBackend("/does/not/need/to/exist.litertlm", debug_log=True)
     request = action_request()
-    with caplog.at_level("DEBUG", logger="hailo_services.chat_litert"):
+    with caplog.at_level("DEBUG", logger="hailo_services.chat.chat_litert"):
         result = backend.chat(request)
     assert result == "Erledigt."
     assert "tool_followup_fast_path request_id=fast-123" in caplog.text
@@ -119,7 +119,7 @@ class FakeEngine:
 def test_wall_clock_timing_is_logged_without_native_benchmark(caplog):
     backend = SimpleNamespace(engine=FakeEngine(), debug_log=True)
     instrument_engine(backend)
-    with caplog.at_level("DEBUG", logger="hailo_services.diagnostics_litert"):
+    with caplog.at_level("DEBUG", logger="hailo_services.diagnostics.diagnostics_litert"):
         with backend.engine.create_conversation(messages=[]) as conversation:
             assert conversation.send_message("hello") == {"content": "ok"}
     assert "gemma_timing request_id=-" in caplog.text
@@ -131,7 +131,7 @@ def test_wall_clock_timing_is_logged_without_native_benchmark(caplog):
 def test_exact_rendered_prompt_is_logged_in_debug(caplog):
     backend = SimpleNamespace(engine=FakeEngine(), debug_log=True)
     instrument_engine(backend)
-    with caplog.at_level("DEBUG", logger="hailo_services.diagnostics_litert"):
+    with caplog.at_level("DEBUG", logger="hailo_services.diagnostics.diagnostics_litert"):
         with backend.engine.create_conversation(messages=[]) as conversation:
             rendered = conversation.render_message_to_string(
                 {"role": "user", "content": "schalte das Licht aus"}
@@ -173,7 +173,7 @@ def test_start_does_not_enable_native_benchmark(monkeypatch, tmp_path):
 
 
 def test_wall_metrics_are_collected_without_native_counts(monkeypatch):
-    from hailo_services.diagnostics_litert import _REQUEST, _log_timing
+    from hailo_services.diagnostics.diagnostics_litert import _REQUEST, _log_timing
 
     metrics = {"input_tokens": 20, "input_tokens_source": "tokenizer"}
     monkeypatch.setattr(_REQUEST, "metrics", metrics, raising=False)

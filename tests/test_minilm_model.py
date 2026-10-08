@@ -4,9 +4,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from hailo_services.minilm import MiniLM
-from hailo_services.models import ensure_minilm_hef
-from hailo_services.tool_retrieval import retrieve_tools
+from hailo_services.runtime.minilm import MiniLM
+from hailo_services.runtime.models import ensure_minilm_hef
+from hailo_services.shared.tool_retrieval import retrieve_tools
 
 
 class Response:
@@ -36,7 +36,7 @@ def test_minilm_hef_downloads_atomically_to_shared_models_path(tmp_path, monkeyp
         opened.append((request.full_url, timeout))
         return Response(payload)
 
-    monkeypatch.setattr("hailo_services.models.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("hailo_services.runtime.models.urllib.request.urlopen", fake_urlopen)
     resolved = ensure_minilm_hef(destination, "https://models.example/minilm.hef")
     assert resolved == destination
     assert destination.read_bytes() == payload
@@ -49,7 +49,7 @@ def test_minilm_hef_downloads_atomically_to_shared_models_path(tmp_path, monkeyp
 def test_minilm_hef_rejects_an_incomplete_download_and_cleans_temp_file(tmp_path, monkeypatch):
     destination = tmp_path / "minilm-l6-ruvector.hef"
     monkeypatch.setattr(
-        "hailo_services.models.urllib.request.urlopen",
+        "hailo_services.runtime.models.urllib.request.urlopen",
         lambda *args, **kwargs: Response(b"too short"),
     )
     with pytest.raises(RuntimeError, match="Incomplete MiniLM HEF"):

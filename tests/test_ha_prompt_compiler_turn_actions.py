@@ -1,5 +1,5 @@
+from hailo_services.assistants.ha.ha_prompt_compiler import compile_ha_prompt
 from hailo_services.config import LLM_MODEL
-from hailo_services.ha_prompt_compiler import compile_ha_prompt
 from hailo_services.schemas import ChatRequest
 
 SYSTEM = """Du bist Sprach Assistent für Home Assistant.

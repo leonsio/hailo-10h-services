@@ -9,13 +9,13 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from hailo_services.app import create_app
-from hailo_services.chat_hailo_vlm import limit_request, model_prompt, tool_response
+from hailo_services.api.app import create_app
+from hailo_services.chat.chat_hailo_vlm import limit_request, model_prompt, tool_response
 from hailo_services.config import LLM_MODEL, Settings
-from hailo_services.input_budget import InputBudgetError
-from hailo_services.models import ModelManager
-from hailo_services.runtime import HailoBackend, Runtime
+from hailo_services.runtime.models import ModelManager
+from hailo_services.runtime.runtime import HailoBackend, Runtime
 from hailo_services.schemas import ChatRequest
+from hailo_services.shared.input_budget import InputBudgetError
 
 
 class VLM:
@@ -392,7 +392,8 @@ def test_qwen2_preferred_release_isolated_and_override_does_not_change_whisper(
     existing.write_bytes(b"user model")
     seen = []
     monkeypatch.setattr(
-        "hailo_services.models.ensure_model_file", lambda path, *args: seen.append(path) or path
+        "hailo_services.runtime.models.ensure_model_file",
+        lambda path, *args: seen.append(path) or path,
     )
     selected = manager.resolve("Qwen2-VL-2B-Instruct", "vlm")
     assert selected == tmp_path / "v5.1.1" / existing.name

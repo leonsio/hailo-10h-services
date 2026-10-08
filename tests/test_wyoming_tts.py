@@ -12,10 +12,10 @@ from wyoming.event import async_read_event, async_write_event
 from wyoming.info import Describe, Info
 from wyoming.tts import Synthesize, SynthesizeVoice
 
+from hailo_services.api.protocols import WyomingServer
 from hailo_services.config import Settings
-from hailo_services.protocols import WyomingServer
-from hailo_services.runtime import Runtime
-from hailo_services.speech_runtime import SpeechRuntime
+from hailo_services.runtime.runtime import Runtime
+from hailo_services.speech.speech_runtime import SpeechRuntime
 
 
 class VoiceBackend:

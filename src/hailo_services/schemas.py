@@ -4,7 +4,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
-from .config import FRIGATE_ASSIST_MODEL, VLM_MODEL
+from hailo_services.config import FRIGATE_ASSIST_MODEL, VLM_MODEL
+from hailo_services.shared.i18n import SUPPORTED_LANGUAGES
 
 CatalogueText = Annotated[str, Field(min_length=1, max_length=256, pattern=r"^[^\r\n]+$")]
 
@@ -94,7 +95,9 @@ class ChatRequest(BaseModel):
     stream: bool = False
     stream_options: StreamOptions | None = None
     user: str | None = None
-    language: str | None = Field(default=None, pattern=r"^(de|en|ru)(?:-[A-Za-z]{2})?$")
+    language: str | None = Field(
+        default=None, pattern=rf"^({'|'.join(SUPPORTED_LANGUAGES)})(?:-[A-Za-z]{{2}})?$"
+    )
     tools: list[dict[str, Any]] | None = Field(default=None, max_length=128)
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool = True
@@ -128,7 +131,7 @@ class ChatRequest(BaseModel):
         Notes:
             No application-specific exceptions are raised for valid inputs.
         """
-        from .tool_calling import validate_tools
+        from hailo_services.shared.tool_calling import validate_tools
 
         validate_tools(tools or [])
         return tools
@@ -205,7 +208,7 @@ class ChatRequest(BaseModel):
             if message.get("tool_calls") and message["role"] != "assistant":
                 raise ValueError("Only assistant messages may contain tool_calls")
             if message.get("role") == "assistant" and message.get("tool_calls"):
-                from .tool_calling import validate_history_calls
+                from hailo_services.shared.tool_calling import validate_history_calls
 
                 validate_history_calls(message["tool_calls"])
                 if content is None:

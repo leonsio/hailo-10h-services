@@ -5,14 +5,22 @@ from pathlib import Path
 
 import pytest
 
-from hailo_services.app import create_app
+from hailo_services.api.app import create_app
+from hailo_services.api.protocols import wyoming_info
+from hailo_services.assistants.ha.ha_pipeline import (
+    direct_numeric_action,
+    is_home_assistant_request,
+)
+from hailo_services.assistants.ha.ha_state_routing import _query_kind, deterministic_live_response
 from hailo_services.config import LLM_MODEL, Settings
-from hailo_services.ha_pipeline import direct_numeric_action, is_home_assistant_request
-from hailo_services.ha_state_routing import _query_kind, deterministic_live_response
-from hailo_services.i18n import catalogue, detect_language, normalize_matching, using_language
-from hailo_services.protocols import wyoming_info
-from hailo_services.runtime import HailoBackend
+from hailo_services.runtime.runtime import HailoBackend
 from hailo_services.schemas import ChatRequest
+from hailo_services.shared.i18n import (
+    catalogue,
+    detect_language,
+    normalize_matching,
+    using_language,
+)
 
 SYSTEM = """Home Assistant
 Static Context:
@@ -331,13 +339,13 @@ def test_sse_wait_precedes_inference_completion_and_tools_remain_buffered():
     ],
 )
 def test_unknown_area_preserves_original_name(text, area):
-    from hailo_services.ha_state_routing import _location_phrase
+    from hailo_services.assistants.ha.ha_state_routing import _location_phrase
 
     assert _location_phrase(text) == area
 
 
 def test_zero_current_temperature_and_humidity_are_not_lost():
-    from hailo_services.ha_state_routing import _measurement_value
+    from hailo_services.assistants.ha.ha_state_routing import _measurement_value
 
     entity = {
         "domain": "climate",
@@ -354,7 +362,7 @@ def test_zero_current_temperature_and_humidity_are_not_lost():
 
 
 def test_wait_sentences_do_not_repeat_consecutively():
-    from hailo_services.i18n import wait_sentence
+    from hailo_services.shared.i18n import wait_sentence
 
     for language in ("de", "en", "ru"):
         sentences = [wait_sentence(language) for _ in range(10)]

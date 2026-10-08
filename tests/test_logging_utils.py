@@ -1,6 +1,6 @@
 import logging
 
-from hailo_services.logging_utils import (
+from hailo_services.diagnostics.logging_utils import (
     InlineDataRedactionFilter,
     install_inline_data_redaction,
     redact_inline_data,

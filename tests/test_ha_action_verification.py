@@ -1,8 +1,8 @@
 import json
 from types import SimpleNamespace
 
+from hailo_services.assistants.ha.ha_action_verification import action_verification_response
 from hailo_services.config import LLM_MODEL, Settings
-from hailo_services.ha_action_verification import action_verification_response
 from hailo_services.schemas import ChatRequest
 
 LIVE_TOOL = {

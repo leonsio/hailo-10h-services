@@ -1,7 +1,7 @@
 import pytest
 
 from hailo_services.config import Settings
-from hailo_services.models import ModelManager
+from hailo_services.runtime.models import ModelManager
 
 
 def test_hailo_54_catalog_excludes_legacy_llama_3b():

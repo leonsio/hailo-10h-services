@@ -49,4 +49,4 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D"]
 # Internal proxy methods deliberately mirror the documented public backend contracts.
-"src/hailo_services/_process/worker.py" = ["D102", "D107"]
+"src/hailo_services/runtime/workers/worker.py" = ["D102", "D107"]

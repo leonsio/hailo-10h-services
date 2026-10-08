@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from hailo_services.tls import generate, names
+from hailo_services.api.tls import generate, names
 
 
 def test_certificates_names_profile_and_key_permissions(tmp_path):

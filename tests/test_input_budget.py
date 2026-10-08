@@ -8,12 +8,12 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from test_services import FakeBackend, settings
 
-from hailo_services.app import create_app
+from hailo_services.api.app import create_app
 from hailo_services.config import LLM_MODEL
-from hailo_services.input_budget import InputBudgetError, history_candidates
-from hailo_services.runtime import HailoBackend, LiteRTLMBackend
+from hailo_services.runtime.runtime import HailoBackend, LiteRTLMBackend
 from hailo_services.schemas import ChatRequest
-from hailo_services.tool_retrieval import compact_static_context, retrieve_tools
+from hailo_services.shared.input_budget import InputBudgetError, history_candidates
+from hailo_services.shared.tool_retrieval import compact_static_context, retrieve_tools
 
 TOOL = {
     "type": "function",
@@ -546,7 +546,7 @@ When controlling Home Assistant always call the intent tools."""
         tools=[turn_off, todo],
     )
     request._request_id = "debug-entity-123"
-    with caplog.at_level("DEBUG", logger="hailo_services.backend_hailo"):
+    with caplog.at_level("DEBUG", logger="hailo_services.chat.backend_hailo"):
         object.__setattr__(request, "_ha_assist", True)
         selected = backend.select_tools(request)
     assert "event=entity_retrieval_trace request_id=debug-entity-123" in caplog.text
@@ -571,7 +571,7 @@ def test_debug_budget_logs_rendered_and_final_gemma_request(caplog):
         max_input_tokens=4096,
     )
     request._request_id = "debug-budget-456"
-    with caplog.at_level("DEBUG", logger="hailo_services.backend_litert"):
+    with caplog.at_level("DEBUG", logger="hailo_services.chat.backend_litert"):
         result = backend.chat(request, tools_prepared=True)
     assert result == "ok"
     assert "event=before_input_budget request_id=debug-budget-456" in caplog.text

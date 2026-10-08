@@ -192,7 +192,7 @@ Important request fields:
 | `tools` | OpenAI-style function definitions |
 | `tool_choice` | `auto`, `none`, `required`, or named function |
 | `parallel_tool_calls` | Whether multiple calls are accepted when the selected model contract allows them |
-| `language` | Optional `de`, `en`, `ru` family hint for HA processing |
+| `language` | Optional `de`, `en`, `ru`, `fr`, `es`, `it`, `nl`, `pt` family hint for assistant processing (optionally a region suffix) |
 
 A native Hailo request with `temperature: 0` is rejected with HTTP 400 instead of
 passing an invalid sampling configuration into HailoRT.

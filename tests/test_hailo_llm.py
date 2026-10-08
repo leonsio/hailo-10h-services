@@ -8,14 +8,14 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from hailo_services.app import create_app
-from hailo_services.chat_hailo_llm import limit_request, model_prompt
-from hailo_services.chat_hailo_vlm import render_prompt
+from hailo_services.api.app import create_app
+from hailo_services.chat.chat_hailo_llm import limit_request, model_prompt
+from hailo_services.chat.chat_hailo_vlm import render_prompt
 from hailo_services.config import LLM_MODEL, Settings
-from hailo_services.input_budget import InputBudgetError
-from hailo_services.models import ModelManager
-from hailo_services.runtime import HailoBackend, Runtime
+from hailo_services.runtime.models import ModelManager
+from hailo_services.runtime.runtime import HailoBackend, Runtime
 from hailo_services.schemas import ChatRequest
+from hailo_services.shared.input_budget import InputBudgetError
 
 
 class NativeLLM:
@@ -369,7 +369,7 @@ def test_llm_startup_shared_device_resolution_and_cleanup(
         "hailo_platform.genai",
         SimpleNamespace(LLM=llm, VLM=lambda device, path: Resource("vlm")),
     )
-    monkeypatch.setattr("hailo_services.backend_hailo.prepare_model_version", lambda: "5.4.0")
+    monkeypatch.setattr("hailo_services.chat.backend_hailo.prepare_model_version", lambda: "5.4.0")
 
     def resolve(self, model, kind):
         assert "allocate" not in events

@@ -10,12 +10,12 @@ import pytest
 from fastapi.testclient import TestClient
 from test_services import FakeBackend
 
-from hailo_services.app import create_app
+from hailo_services.api.app import create_app
 from hailo_services.config import Settings
-from hailo_services.errors import BusyError
 from hailo_services.schemas import SpeechRequest
-from hailo_services.speech_piper import PiperBackend
-from hailo_services.speech_runtime import SpeechRuntime
+from hailo_services.shared.errors import BusyError
+from hailo_services.speech.speech_piper import PiperBackend
+from hailo_services.speech.speech_runtime import SpeechRuntime
 
 
 class SpeechBackend:

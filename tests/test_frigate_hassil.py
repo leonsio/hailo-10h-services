@@ -4,8 +4,8 @@ import json
 
 import pytest
 
+from hailo_services.assistants.frigate.frigate_intents import hassil_plan, recognize_request
 from hailo_services.config import FRIGATE_ASSIST_MODEL, Settings
-from hailo_services.frigate_intents import hassil_plan, recognize_request
 from hailo_services.schemas import ChatRequest
 
 SYSTEM = """You are a helpful assistant for Frigate, a security camera NVR system.

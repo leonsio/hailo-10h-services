@@ -16,7 +16,7 @@ fi
 install -d -m 0755 /etc/hailo-10h-services "${TLS_DIR}"
 TLS_PYTHON=/opt/hailo-10h-services/venv/bin/python
 [[ -x ${TLS_PYTHON} ]] || TLS_PYTHON=python3
-"${TLS_PYTHON}" "${SOURCE_DIR}/src/hailo_services/tls.py" "$@" --directory "${TLS_DIR}"
+"${TLS_PYTHON}" "${SOURCE_DIR}/src/hailo_services/api/tls.py" "$@" --directory "${TLS_DIR}"
 install -d -m 0755 /etc/nginx/sites-available /etc/nginx/sites-enabled
 BACKUP=$(mktemp)
 HAD_SITE=false

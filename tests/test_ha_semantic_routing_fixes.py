@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from hailo_services import ha_prompt_compiler as compiler
-from hailo_services import ha_routing as routing
+from hailo_services.assistants.ha import ha_prompt_compiler as compiler
+from hailo_services.assistants.ha import ha_routing as routing
 from hailo_services.config import LLM_MODEL
 from hailo_services.schemas import ChatRequest
 

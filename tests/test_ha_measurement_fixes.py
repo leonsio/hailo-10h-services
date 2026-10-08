@@ -1,4 +1,4 @@
-from hailo_services import ha_state_routing as state
+from hailo_services.assistants.ha import ha_state_routing as state
 
 
 def test_climate_target_temperature_is_not_reported_as_current_temperature():

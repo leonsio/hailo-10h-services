@@ -7,11 +7,11 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from hailo_services.app import create_app
+from hailo_services.api.app import create_app
+from hailo_services.assistants.frigate.frigate_assist import prepare
+from hailo_services.assistants.frigate.frigate_prompt import compact_tool
 from hailo_services.config import FRIGATE_ASSIST_MODEL, LLM_MODEL, VLM_MODEL, Settings
-from hailo_services.frigate_assist import prepare
-from hailo_services.frigate_prompt import compact_tool
-from hailo_services.runtime import HailoBackend
+from hailo_services.runtime.runtime import HailoBackend
 from hailo_services.schemas import ChatRequest
 
 SYSTEM = (
@@ -606,7 +606,7 @@ def test_empty_recap_does_not_hide_errors_or_partial_results(service, data):
 
 def test_empty_recap_stream_completion_is_logged(service, caplog):
     client, _, llm = service
-    caplog.set_level("INFO", logger="hailo_services.app")
+    caplog.set_level("INFO", logger="hailo_services.api.app")
     body = payload("Zeige mir die Ereignisse der letzten Stunde")
     call = message(client.post("/v1/chat/completions", json=body))
     body = followup(

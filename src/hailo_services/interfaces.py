@@ -5,7 +5,7 @@ from __future__ import annotations
 from threading import Event
 from typing import Any, Callable, Protocol
 
-from .schemas import ChatRequest
+from hailo_services.schemas import ChatRequest
 
 ChatResult = str | dict[str, Any]
 ChatEmitter = Callable[[ChatResult], None]

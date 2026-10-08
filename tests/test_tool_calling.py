@@ -6,11 +6,11 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from test_services import FakeBackend, settings
 
-from hailo_services.app import create_app
+from hailo_services.api.app import create_app
 from hailo_services.config import LLM_MODEL, VLM_MODEL
-from hailo_services.runtime import LiteRTLMBackend
+from hailo_services.runtime.runtime import LiteRTLMBackend
 from hailo_services.schemas import ChatRequest
-from hailo_services.tool_calling import native_messages, response_message
+from hailo_services.shared.tool_calling import native_messages, response_message
 
 TOOLS = [
     {
@@ -431,7 +431,7 @@ def test_native_failure_returns_json_error_and_correct_debug_status(caplog):
     backend.start = start
     import logging
 
-    with caplog.at_level(logging.DEBUG, logger="hailo_services.app"):
+    with caplog.at_level(logging.DEBUG, logger="hailo_services.api.app"):
         with TestClient(create_app(settings(debug_log=True), FakeBackend(), backend)) as client:
             health = client.get("/health").json()
             assert health["litert_lm"]["max_num_tokens"] == 16384
@@ -445,7 +445,7 @@ def test_native_failure_returns_json_error_and_correct_debug_status(caplog):
 
 def test_context_configuration(monkeypatch):
     from hailo_services.config import Settings
-    from hailo_services.runtime import Runtime
+    from hailo_services.runtime.runtime import Runtime
 
     monkeypatch.setenv("HAILO_LITERT_MAX_NUM_TOKENS", "32768")
     config = Settings.from_env()

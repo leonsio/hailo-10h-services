@@ -6,15 +6,15 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from hailo_services.app import create_app
-from hailo_services.chat_hailo_vlm import model_prompt
+from hailo_services.api.app import create_app
+from hailo_services.assistants.ha.ha_fuzzy import slot_repairs
+from hailo_services.assistants.ha.ha_intents import deterministic_intent
+from hailo_services.chat.chat_hailo_vlm import model_prompt
 from hailo_services.config import HA_ASSIST_MODEL, LLM_MODEL, Settings
-from hailo_services.ha_fuzzy import slot_repairs
-from hailo_services.ha_intents import deterministic_intent
-from hailo_services.runtime import HailoBackend, LiteRTLMBackend
+from hailo_services.runtime.runtime import HailoBackend, LiteRTLMBackend
 from hailo_services.schemas import ChatRequest
-from hailo_services.tool_calling import response_message
-from hailo_services.tool_retrieval import retrieve_tools
+from hailo_services.shared.tool_calling import response_message
+from hailo_services.shared.tool_retrieval import retrieve_tools
 
 SYSTEM = """Home Assistant
 Static Context:
@@ -575,7 +575,7 @@ def test_configuration_env_overrides_yaml_targets(tmp_path, monkeypatch):
 
 
 def test_optional_image_tools_can_return_a_validated_description(service):
-    from hailo_services.chat_hailo_vlm import tool_response
+    from hailo_services.chat.chat_hailo_vlm import tool_response
 
     client, backend, _ = service
     body = payload()
@@ -649,7 +649,7 @@ def test_tool_error_has_no_gemma_followup(service):
 
 
 def test_catalogue_cache_updates_and_does_not_leak_mutations():
-    from hailo_services.ha_request_plan import _catalogue, catalogue
+    from hailo_services.assistants.ha.ha_request_plan import _catalogue, catalogue
 
     _catalogue.cache_clear()
     messages = payload()["messages"]
@@ -664,7 +664,7 @@ def test_catalogue_cache_updates_and_does_not_leak_mutations():
 
 
 def test_wrong_model_target_or_percent_color_is_rejected():
-    from hailo_services.ha_request_plan import canonical_request
+    from hailo_services.assistants.ha.ha_request_plan import canonical_request
 
     request = ChatRequest(**payload("schalte das Licht im Wohnzimmer auf 90%"))
     object.__setattr__(request, "_ha_assist", True)
@@ -701,7 +701,7 @@ def test_canonical_percent_does_not_execute_uncertain_commands(service, text):
 
 
 def test_embedding_cache_is_bounded_and_reuses_vectors():
-    from hailo_services.tool_retrieval import _embedding
+    from hailo_services.shared.tool_retrieval import _embedding
 
     class Encoder:
         calls = 0
@@ -763,7 +763,7 @@ Static Context:
     parameters = request.tools[0]["function"]["parameters"]["properties"]
     assert parameters["area"]["enum"] == ["ArbeitsraumA", "ArbeitsraumB"]
     assert "brightness" in parameters and "color" not in parameters
-    from hailo_services.ha_request_plan import validate_action
+    from hailo_services.assistants.ha.ha_request_plan import validate_action
 
     assert validate_action(
         request, "light__HassLightSet", {"area": "ArbeitsraumA", "brightness": 70}
@@ -773,7 +773,7 @@ Static Context:
 
 
 def test_close_runner_up_is_retained_even_below_acceptance_threshold():
-    from hailo_services.ha_fuzzy import slot_rankings
+    from hailo_services.assistants.ha.ha_fuzzy import slot_rankings
 
     matches = slot_rankings("Licht im ArbeitsraumC an", ["ArbeitsraumA", "ArbeitsraumAB"])
     assert len(matches) == 1 and matches[0]["ambiguous"]

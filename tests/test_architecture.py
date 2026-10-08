@@ -7,9 +7,9 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from hailo_services import chat_common, chat_hailo_llm, chat_hailo_vlm
-from hailo_services.backend_hailo import HailoBackend
-from hailo_services.backend_litert import LiteRTLMBackend
+from hailo_services.chat import chat_common, chat_hailo_llm, chat_hailo_vlm
+from hailo_services.chat.backend_hailo import HailoBackend
+from hailo_services.chat.backend_litert import LiteRTLMBackend
 from hailo_services.schemas import ChatRequest
 
 SOURCE = Path(__file__).resolve().parents[1] / "src" / "hailo_services"
@@ -21,7 +21,7 @@ def test_package_import_does_not_load_or_patch_backends():
             sys.executable,
             "-c",
             "import sys; import hailo_services; "
-            "assert 'hailo_services.runtime' not in sys.modules; "
+            "assert 'hailo_services.runtime.runtime' not in sys.modules; "
             "assert 'hailo_platform' not in sys.modules; "
             "assert 'litert_lm' not in sys.modules",
         ],
@@ -33,8 +33,8 @@ def test_package_import_does_not_load_or_patch_backends():
     before = (HailoBackend.select_tools, LiteRTLMBackend.chat)
     importlib.reload(importlib.import_module("hailo_services"))
     assert before == (HailoBackend.select_tools, LiteRTLMBackend.chat)
-    assert HailoBackend.select_tools.__module__ == "hailo_services.backend_hailo"
-    assert LiteRTLMBackend.chat.__module__ == "hailo_services.backend_litert"
+    assert HailoBackend.select_tools.__module__ == "hailo_services.chat.backend_hailo"
+    assert LiteRTLMBackend.chat.__module__ == "hailo_services.chat.backend_litert"
 
 
 def test_llm_generation_uses_the_exact_prompt_counted_once():
@@ -66,7 +66,11 @@ def test_removed_compatibility_modules_are_not_importable():
 
 def test_production_docstrings_cover_definitions_and_return_contracts():
     missing = []
-    for path in sorted(SOURCE.glob("*.py")):
+    for path in sorted(SOURCE.rglob("*.py")):
+        # IPC proxy methods retain the documented backend contracts; Ruff
+        # enforces their explicit per-file docstring exemptions.
+        if path.relative_to(SOURCE).parts[:2] == ("runtime", "workers"):
+            continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         if not ast.get_docstring(tree):
             missing.append(f"{path.name}: module")
@@ -79,3 +83,13 @@ def test_production_docstrings_cover_definitions_and_return_contracts():
             elif not isinstance(node, ast.ClassDef) and not ("Returns:" in doc or "Yields:" in doc):
                 missing.append(f"{path.name}:{node.lineno}: {node.name}: return contract")
     assert not missing, "\n".join(missing)
+
+
+def test_assistants_do_not_import_each_others_domain_modules():
+    for domain, other in (("ha", "frigate"), ("frigate", "ha")):
+        for path in (SOURCE / "assistants" / domain).glob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            imports = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
+            assert not any(
+                name and name.startswith(f"hailo_services.assistants.{other}.") for name in imports
+            ), path
