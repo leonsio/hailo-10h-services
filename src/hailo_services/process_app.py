@@ -10,6 +10,9 @@ def create_process_app(settings):
     The protocol/application layer is intentionally unchanged. Only the three
     runtime constructors are substituted before ``create_app`` composes the
     service, preserving all HTTP, MCP, Wyoming, MQTT and ZMQ contracts.
+
+    Returns:
+        FastAPI: Application using process-isolated resident inference backends.
     """
     app_module.Runtime = ProcessRuntime
     app_module.SpeechRuntime = ProcessSpeechRuntime
