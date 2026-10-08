@@ -1,12 +1,24 @@
-"""Command-line entry point starting one uvicorn service worker."""
+"""Command-line entry point starting the gateway and resident worker processes."""
 
 import logging
+import os
 
 import uvicorn
 
 from .app import create_app
 from .config import Settings
 from .logging_utils import install_inline_data_redaction
+from .process_app import create_process_app
+
+
+def _process_mode_enabled() -> bool:
+    """Return whether production inference should use isolated child processes."""
+    return os.getenv("HAILO_PROCESS_MODE", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
 
 
 def main():
@@ -16,7 +28,8 @@ def main():
         None: Runs the configured command until completion.
 
     Notes:
-        No application-specific exceptions are raised for valid inputs.
+        ``HAILO_PROCESS_MODE=0`` keeps the previous owner-thread architecture as
+        an emergency compatibility fallback without changing public APIs.
     """
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -25,8 +38,15 @@ def main():
     settings = Settings.from_env()
     if settings.debug_log:
         logging.getLogger("hailo_services").setLevel(logging.DEBUG)
+    process_mode = _process_mode_enabled()
+    logging.getLogger(__name__).info(
+        "Execution mode=%s cpu_count=%s",
+        "process-isolated" if process_mode else "legacy-threaded",
+        os.cpu_count(),
+    )
+    application = create_process_app(settings) if process_mode else create_app(settings)
     uvicorn.run(
-        create_app(settings),
+        application,
         host=settings.host,
         port=settings.port,
         workers=1,
