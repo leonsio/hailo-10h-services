@@ -1,7 +1,7 @@
 """Production application composition using process-isolated resident backends."""
 
 from . import app as app_module
-from .process_workers import ProcessRuntime, ProcessSpeechRuntime, ProcessVisionRuntime
+from .process_runtime import ProcessRuntime, ProcessSpeechRuntime, ProcessVisionRuntime
 
 
 def create_process_app(settings):
