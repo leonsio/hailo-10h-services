@@ -711,9 +711,7 @@ def deterministic_plan(request, settings, images):
     now = _local_datetime(server_time(request.messages))
     interval = _interval(text, now) if now else None
     user_texts = [
-        text_content(message)
-        for message in request.messages
-        if message.get("role") == "user"
+        text_content(message) for message in request.messages if message.get("role") == "user"
     ]
     previous_recap = len(user_texts) >= 2 and bool(_tokens(user_texts[-2]) & _RECAP)
     if interval and "get_recap" in names and not results and (tokens & _RECAP or previous_recap):
