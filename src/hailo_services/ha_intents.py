@@ -11,7 +11,13 @@ from jsonschema import ValidationError, validate
 
 from .ha_fuzzy import slot_repairs
 from .ha_state_routing import _entries
-from .intent_engine import mapped_text_slot, recognize_bounded, restrict_grammar, result_slots, text_slot
+from .intent_engine import (
+    mapped_text_slot,
+    recognize_bounded,
+    restrict_grammar,
+    result_slots,
+    text_slot,
+)
 from .tool_retrieval import latest_user_text
 
 # Only tool names supplied by this client are reachable. No HA connection here.

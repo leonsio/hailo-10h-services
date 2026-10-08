@@ -24,7 +24,7 @@ from .frigate_deterministic import (
     _local_datetime,
 )
 from .frigate_prompt import camera_catalogue, server_time, text_content
-from .intent_engine import mapped_text_slot, result_slots, restrict_grammar, unique_recognition
+from .intent_engine import mapped_text_slot, restrict_grammar, result_slots, unique_recognition
 from .tool_calling import response_message, selected_tools
 
 # These sentence templates cover only requests whose full meaning can be preserved
