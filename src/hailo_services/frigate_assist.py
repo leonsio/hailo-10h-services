@@ -30,6 +30,22 @@ def _tool_names(tools):
     return {tool["function"]["name"] for tool in tools or []}
 
 
+def _has_active_tool_result(request):
+    """Check whether the latest user turn already has a tool response.
+
+    Args:
+        request: Incoming Frigate request.
+
+    Returns:
+        bool: True when a tool response belongs to the current user turn.
+    """
+    last_user = max(
+        (index for index, message in enumerate(request.messages) if message.get("role") == "user"),
+        default=-1,
+    )
+    return any(message.get("role") == "tool" for message in request.messages[last_user + 1 :])
+
+
 def prepare(settings, request):
     """Prepare a deterministic call or exactly one native text/vision request.
 
@@ -49,19 +65,36 @@ def prepare(settings, request):
         raise ValueError("Frigate-Assist requires a user question or image")
     started = time.perf_counter()
     images = uses_images(request)
-    deterministic = deterministic_plan(request, settings, images)
-    if deterministic is None:
+
+    # Keep the established planner in charge after a tool has returned. It already
+    # contains deterministic follow-up summaries, event-image chaining, profile
+    # recap handling and exact timestamp preservation. The multilingual planner is
+    # intentionally an early-routing layer, not a replacement for those contracts.
+    if _has_active_tool_result(request):
         tools, direct, reason = plan(request, settings, images)
     else:
-        tools, direct, reason = deterministic
-        # The deterministic layer may narrow a single obvious read tool before
-        # semantic inference. If the conservative legacy planner sees additional
-        # tools, retain them: that indicates a compound intent or an unknown/new
-        # Frigate capability which this layer must not silently discard.
-        if direct is None and reason == "deterministic_historical_search_tool_selection":
-            legacy_tools, legacy_direct, legacy_reason = plan(request, settings, images)
-            if legacy_direct is None and _tool_names(legacy_tools) - _tool_names(tools):
+        legacy_tools, legacy_direct, legacy_reason = plan(request, settings, images)
+        deterministic = deterministic_plan(request, settings, images)
+        if deterministic is None:
+            tools, direct, reason = legacy_tools, legacy_direct, legacy_reason
+        else:
+            tools, direct, reason = deterministic
+            # Prefer an existing deterministic legacy answer whenever one exists.
+            # This retains mature handling for phrases such as open-ended ranges,
+            # unknown camera names and specialized Frigate actions while allowing
+            # the new planner to cover language-neutral gaps such as arbitrary
+            # "last N hours" requests.
+            if legacy_direct is not None:
                 tools, direct, reason = legacy_tools, legacy_direct, legacy_reason
+            elif (
+                direct is None
+                and reason == "deterministic_historical_search_tool_selection"
+                and _tool_names(legacy_tools) - _tool_names(tools)
+            ):
+                # Never discard a second capability from compound requests or a
+                # future Frigate tool which the deterministic layer does not know.
+                tools, direct, reason = legacy_tools, legacy_direct, legacy_reason
+
     target = settings.frigate_vision_model if images else settings.frigate_text_model
     # Compilation validates the entire active round even for deterministic calls.
     context = resolved_context(request)
