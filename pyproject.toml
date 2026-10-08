@@ -48,3 +48,6 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D"]
+# These methods intentionally mirror existing backend/runtime interfaces; their
+# behavior is documented on the interface implementations and process classes.
+"src/hailo_services/process_runtime.py" = ["D102", "D107"]
