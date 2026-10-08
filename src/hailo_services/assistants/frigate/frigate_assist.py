@@ -15,6 +15,7 @@ from hailo_services.assistants.frigate.frigate_prompt import (
     uses_images,
 )
 from hailo_services.assistants.frigate.frigate_routing import plan, resolved_context
+from hailo_services.assistants.frigate.frigate_shortcuts import shortcut_plan
 from hailo_services.config import FRIGATE_ASSIST_MODEL, LLM_MODEL
 
 _LOG = logging.getLogger(__name__)
@@ -75,11 +76,13 @@ def prepare(settings, request):
     started = time.perf_counter()
     images = uses_images(request)
 
-    # Keep the established planner in charge after a tool has returned. It already
-    # contains deterministic follow-up summaries, event-image chaining, profile
-    # recap handling and exact timestamp preservation. HassIL is deliberately only
-    # an initial-turn recognition layer, never a replacement for result validation.
-    if _has_active_tool_result(request):
+    # Result-aware shortcuts may finish a canonical read round without inference.
+    # Everything they cannot prove falls through to the established planner, which
+    # remains authoritative for image chaining, profile recaps, actions and errors.
+    shortcut = shortcut_plan(request, settings, images)
+    if shortcut is not None:
+        tools, direct, reason = shortcut
+    elif _has_active_tool_result(request):
         tools, direct, reason = plan(request, settings, images)
     else:
         legacy_tools, legacy_direct, legacy_reason = plan(request, settings, images)
