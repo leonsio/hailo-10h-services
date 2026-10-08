@@ -135,12 +135,24 @@ _SEEN = set(
     "visto detectado увиден замечен обнаружен обнаружена обнаружено".split()
 )
 _LABEL_ALIASES = {
-    "person": set("person people mensch menschen personne personnes persona personas persona persone persoon personen pessoa pessoas человек люди".split()),
-    "car": set("car cars auto autos voiture voitures coche coches auto automobili wagen wagens carro carros машина машины автомобиль автомобили".split()),
-    "dog": set("dog dogs hund hunde chien chiens perro perros cane cani hond honden cao cão cães собака собаки".split()),
-    "cat": set("cat cats katze katzen chat chats gato gatos gatto gatti kat katten кошка кошки кот коты".split()),
-    "package": set("package packages paket pakete colis paquete paquetes pacco pacchi pakket pakketten pacote pacotes посылка посылки".split()),
-    "bicycle": set("bicycle bicycles bike bikes fahrrad fahrräder velo vélo vélos bicicleta bicicletas bicicletta biciclette fiets fietsen bicicleta bicicletas велосипед велосипеды".split()),
+    "person": set(
+        "person people mensch menschen personne personnes persona personas persona persone persoon personen pessoa pessoas человек люди".split()
+    ),
+    "car": set(
+        "car cars auto autos voiture voitures coche coches auto automobili wagen wagens carro carros машина машины автомобиль автомобили".split()
+    ),
+    "dog": set(
+        "dog dogs hund hunde chien chiens perro perros cane cani hond honden cao cão cães собака собаки".split()
+    ),
+    "cat": set(
+        "cat cats katze katzen chat chats gato gatos gatto gatti kat katten кошка кошки кот коты".split()
+    ),
+    "package": set(
+        "package packages paket pakete colis paquete paquetes pacco pacchi pakket pakketten pacote pacotes посылка посылки".split()
+    ),
+    "bicycle": set(
+        "bicycle bicycles bike bikes fahrrad fahrräder velo vélo vélos bicicleta bicicletas bicicletta biciclette fiets fietsen bicicleta bicicletas велосипед велосипеды".split()
+    ),
 }
 _MESSAGES = {
     "empty": {
