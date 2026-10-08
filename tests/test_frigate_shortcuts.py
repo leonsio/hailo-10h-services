@@ -85,16 +85,8 @@ def name_and_args(message):
     return function["name"], json.loads(arguments) if isinstance(arguments, str) else arguments
 
 
-def test_nonempty_recap_listing_is_direct_and_keeps_every_event():
-    body = payload("Zeige mir die Ereignisse der letzten 5 Stunden")
-    request = ChatRequest(**body)
-    _prepared, call = prepare(Settings(), request)
-    assert name_and_args(call) == (
-        "get_recap",
-        {"after": "2026-10-08T17:14:29", "before": "2026-10-08T22:14:29"},
-    )
-
-    events = [
+def recap_events(count=14):
+    return [
         {
             "camera": "eingang",
             "severity": "alert" if index % 2 == 0 else "detection",
@@ -103,8 +95,27 @@ def test_nonempty_recap_listing_is_direct_and_keeps_every_event():
             "time": f"{5 + index // 4:02d}:{59 - index:02d} PM",
             "duration_seconds": index,
         }
-        for index in range(14)
+        for index in range(count)
     ]
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Zeige mir die Ereignisse der letzten 5 Stunden",
+        "Zeige mir die Ereignisse der letzten 5 Stunden an",
+    ],
+)
+def test_nonempty_recap_listing_is_direct_and_keeps_every_event(question):
+    body = payload(question)
+    request = ChatRequest(**body)
+    _prepared, call = prepare(Settings(), request)
+    assert name_and_args(call) == (
+        "get_recap",
+        {"after": "2026-10-08T17:14:29", "before": "2026-10-08T22:14:29"},
+    )
+
+    events = recap_events()
     result_request = ChatRequest(**followup(body, call, {"events": events}))
     _prepared, direct = prepare(Settings(), result_request)
 
@@ -112,6 +123,49 @@ def test_nonempty_recap_listing_is_direct_and_keeps_every_event():
     assert direct.count("\n") == 13
     assert "Eingang" in direct and "@ Alles" in direct
     assert events[0]["time"] in direct and events[-1]["time"] in direct
+    assert result_request._metrics["frigate_route"]["reason"] == "deterministic_recap_list"
+    assert result_request._metrics["frigate_route"]["inference_calls"] == 0
+
+
+def test_recap_time_followup_inherits_previous_listing_and_stays_direct():
+    first_body = payload("Zeige mir die Ereignisse der letzten Stunde")
+    first_request = ChatRequest(**first_body)
+    _prepared, first_call = prepare(Settings(), first_request)
+    assert name_and_args(first_call) == (
+        "get_recap",
+        {"after": "2026-10-08T21:14:29", "before": "2026-10-08T22:14:29"},
+    )
+
+    empty_request = ChatRequest(
+        **followup(
+            first_body,
+            first_call,
+            {"events": [], "message": "No activity was found during this time period."},
+        )
+    )
+    _prepared, empty_answer = prepare(Settings(), empty_request)
+    assert isinstance(empty_answer, str)
+
+    second_body = followup(
+        first_body,
+        first_call,
+        {"events": [], "message": "No activity was found during this time period."},
+    )
+    second_body["messages"] += [
+        {"role": "assistant", "content": empty_answer},
+        {"role": "user", "content": "und die letzten 5 Stunden?"},
+    ]
+    second_request = ChatRequest(**second_body)
+    _prepared, second_call = prepare(Settings(), second_request)
+    assert name_and_args(second_call) == (
+        "get_recap",
+        {"after": "2026-10-08T17:14:29", "before": "2026-10-08T22:14:29"},
+    )
+
+    result_request = ChatRequest(**followup(second_body, second_call, {"events": recap_events()}))
+    _prepared, direct = prepare(Settings(), result_request)
+    assert isinstance(direct, str)
+    assert direct.count("\n") == 13
     assert result_request._metrics["frigate_route"]["reason"] == "deterministic_recap_list"
     assert result_request._metrics["frigate_route"]["inference_calls"] == 0
 
@@ -141,6 +195,32 @@ def test_recap_summary_wording_is_not_forced_into_direct_listing():
             {"events": [{"camera": "eingang", "time": "06:15 PM", "objects": ["person"]}]},
         )
     )
+    assert shortcut_plan(request, Settings(), False) is None
+
+
+def test_semantic_time_followup_is_not_misclassified_as_plain_recap_listing():
+    body = payload("Zeige mir die Ereignisse der letzten Stunde")
+    body["messages"] += [
+        {"role": "assistant", "content": "Keine Aktivitäten."},
+        {"role": "user", "content": "und was war auffällig in den letzten 5 Stunden?"},
+    ]
+    call = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "recap-semantic",
+                "type": "function",
+                "function": {
+                    "name": "get_recap",
+                    "arguments": json.dumps(
+                        {"after": "2026-10-08T17:14:29", "before": "2026-10-08T22:14:29"}
+                    ),
+                },
+            }
+        ],
+    }
+    request = ChatRequest(**followup(body, call, {"events": recap_events(2)}))
     assert shortcut_plan(request, Settings(), False) is None
 
 
