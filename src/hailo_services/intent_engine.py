@@ -25,7 +25,9 @@ def base_language(language: str | None, *, default: str = "en") -> str:
     return language.strip().casefold().split("-", 1)[0].split("_", 1)[0]
 
 
-def restrict_grammar(document: Mapping[str, Any], supported: Iterable[str] | None = None) -> Intents:
+def restrict_grammar(
+    document: Mapping[str, Any], supported: Iterable[str] | None = None
+) -> Intents:
     """Compile a HassIL document, optionally restricting it to named intents.
 
     Args:

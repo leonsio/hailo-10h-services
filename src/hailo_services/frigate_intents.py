@@ -114,7 +114,9 @@ _SENTENCES = {
         "FrigateAbsenceRecap": ["qué pasó durante mi ausencia", "qué pasó mientras estaba fuera"],
         "FrigateRecap": ["muestra [me] [los] (eventos|actividad|detecciones|historial) {period}"],
         "FrigateSearchObjects": ["(muestra|busca) [me] [los] {label} {period}"],
-        "FrigateSetCameraState": ["(activa|desactiva) [la] {feature} (en|para) [la cámara] {camera} {state}"],
+        "FrigateSetCameraState": [
+            "(activa|desactiva) [la] {feature} (en|para) [la cámara] {camera} {state}"
+        ],
         "FrigateStopWatch": ["(detén|deten|cancela) [la] vigilancia"],
         "FrigateLastSighting": [
             "cuándo fue visto por última vez (un|una|el|la) {label} (en|por) [la cámara] {camera}"
@@ -128,7 +130,9 @@ _SENTENCES = {
         "FrigateAbsenceRecap": ["cosa è successo durante la mia assenza"],
         "FrigateRecap": ["mostra [mi] [gli] (eventi|attività|attivita|rilevamenti) {period}"],
         "FrigateSearchObjects": ["(mostra|cerca) [mi] [tutti] {label} {period}"],
-        "FrigateSetCameraState": ["(attiva|disattiva) [il] {feature} (su|per) [telecamera] {camera} {state}"],
+        "FrigateSetCameraState": [
+            "(attiva|disattiva) [il] {feature} (su|per) [telecamera] {camera} {state}"
+        ],
         "FrigateStopWatch": ["(ferma|annulla) [il] monitoraggio"],
         "FrigateLastSighting": [
             "quando è stato visto l'ultima volta (un|una|il|la) {label} (su|alla) [telecamera] {camera}"
@@ -140,7 +144,9 @@ _SENTENCES = {
             "wat is er nu zichtbaar (op|bij) [camera] {camera}",
         ],
         "FrigateAbsenceRecap": ["wat is er gebeurd tijdens mijn afwezigheid"],
-        "FrigateRecap": ["toon [mij] [de] (gebeurtenissen|activiteit|detecties|geschiedenis) {period}"],
+        "FrigateRecap": [
+            "toon [mij] [de] (gebeurtenissen|activiteit|detecties|geschiedenis) {period}"
+        ],
         "FrigateSearchObjects": ["(toon|zoek) [mij] [alle] {label} {period}"],
         "FrigateSetCameraState": ["zet [de] {feature} (op|voor) [camera] {camera} {state}"],
         "FrigateStopWatch": ["(stop|annuleer) [de] bewaking"],
@@ -154,9 +160,13 @@ _SENTENCES = {
             "o que está visível agora (na|pela) [câmera] {camera}",
         ],
         "FrigateAbsenceRecap": ["o que aconteceu durante minha ausência"],
-        "FrigateRecap": ["mostra [me] [os] (eventos|atividade|detecções|historico|histórico) {period}"],
+        "FrigateRecap": [
+            "mostra [me] [os] (eventos|atividade|detecções|historico|histórico) {period}"
+        ],
         "FrigateSearchObjects": ["(mostra|procura) [me] [todos] {label} {period}"],
-        "FrigateSetCameraState": ["(ative|desative) [a] {feature} (na|para) [câmera] {camera} {state}"],
+        "FrigateSetCameraState": [
+            "(ative|desative) [a] {feature} (na|para) [câmera] {camera} {state}"
+        ],
         "FrigateStopWatch": ["(pare|cancele) [o] monitoramento"],
         "FrigateLastSighting": [
             "quando (um|uma|o|a) {label} foi visto pela última vez (na|pela) [câmera] {camera}"
@@ -172,9 +182,7 @@ _SENTENCES = {
         "FrigateSearchObjects": ["(покажи|найди) [мне] [все] {label} {period}"],
         "FrigateSetCameraState": ["(включи|выключи) {feature} [на] [камере] {camera} {state}"],
         "FrigateStopWatch": ["(останови|отмени) наблюдение"],
-        "FrigateLastSighting": [
-            "когда {label} последний раз был замечен [на] [камере] {camera}"
-        ],
+        "FrigateLastSighting": ["когда {label} последний раз был замечен [на] [камере] {camera}"],
     },
 }
 
@@ -245,7 +253,11 @@ def recognize_request(request):
     """
     started = time.perf_counter()
     text = next(
-        (text_content(message).strip() for message in reversed(request.messages) if message.get("role") == "user"),
+        (
+            text_content(message).strip()
+            for message in reversed(request.messages)
+            if message.get("role") == "user"
+        ),
         "",
     )
     trace = {"stage": "hassil", "matched": False, "reason": "no_match"}
@@ -264,7 +276,9 @@ def recognize_request(request):
         slot_lists=_slot_lists(language, cameras),
         language=language,
     )
-    trace.update(reason=reason, language=language, duration_ms=(time.perf_counter() - started) * 1000)
+    trace.update(
+        reason=reason, language=language, duration_ms=(time.perf_counter() - started) * 1000
+    )
     if result is None:
         return None, trace
     slots = result_slots(result)
@@ -378,7 +392,11 @@ def hassil_plan(request, settings, images):
     if intent in {"FrigateRecap", "FrigateSearchObjects"}:
         now = _local_datetime(server_time(request.messages))
         text = next(
-            (text_content(message) for message in reversed(request.messages) if message.get("role") == "user"),
+            (
+                text_content(message)
+                for message in reversed(request.messages)
+                if message.get("role") == "user"
+            ),
             "",
         )
         interval = _interval(text, now) if now else None
