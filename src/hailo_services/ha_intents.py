@@ -5,15 +5,13 @@ import json
 import time
 import uuid
 from functools import lru_cache
-from itertools import islice
 
-from hassil import Intents, TextSlotList, recognize_all
-from hassil.errors import HassilError
 from home_assistant_intents import get_intents
 from jsonschema import ValidationError, validate
 
 from .ha_fuzzy import slot_repairs
 from .ha_state_routing import _entries
+from .intent_engine import mapped_text_slot, recognize_bounded, restrict_grammar, result_slots, text_slot
 from .tool_retrieval import latest_user_text
 
 # Only tool names supplied by this client are reachable. No HA connection here.
@@ -50,9 +48,6 @@ def _grammar(language, supported):
     if document is None:
         return None
     document = copy.deepcopy(document)
-    document["intents"] = {
-        name: data for name, data in document["intents"].items() if name in supported
-    }
     # Small declarative supplements for existing service phrases absent from the
     # upstream grammar. They use the same HassIL slots and validation path.
     brightness = {
@@ -66,7 +61,7 @@ def _grammar(language, supported):
         document["intents"]["HassLightSet"]["data"].append(
             {"sentences": brightness[language], "slots": {"domain": "light"}}
         )
-    return Intents.from_dict(document)
+    return restrict_grammar(document, supported)
 
 
 def _arguments(result, tool, entities):
@@ -83,7 +78,7 @@ def _arguments(result, tool, entities):
     Notes:
         No application-specific exceptions are raised for valid inputs.
     """
-    slots = {key: value.value for key, value in result.entities.items()}
+    slots = result_slots(result)
     intent = result.intent.name
     schema = tool["function"].get("parameters", {})
     properties = schema.get("properties", {})
@@ -169,12 +164,10 @@ def deterministic_intent(request, settings, language):
         {"in": e["name"], "out": e["name"], "context": {"domain": e["domain"]}} for e in entities
     ]
     lists = {
-        "area": TextSlotList.from_strings(sorted({e["area"] for e in entities if e["area"]})),
-        "floor": TextSlotList.from_strings([]),
+        "area": text_slot(sorted({e["area"] for e in entities if e["area"]}), name="area"),
+        "floor": text_slot([], name="floor"),
+        "name": mapped_text_slot(language, "name", names),
     }
-    lists["name"] = Intents.from_dict(
-        {"language": language, "intents": {}, "lists": {"name": {"values": names}}}
-    ).slot_lists["name"]
 
     def match(text):
         """Recognize and validate distinct candidate calls for one utterance.
@@ -189,17 +182,15 @@ def deterministic_intent(request, settings, language):
             No application-specific exceptions are raised for valid inputs.
         """
         calls = {}
-        try:
-            results = list(
-                islice(recognize_all(text, grammar, slot_lists=lists, language=language), 65)
-            )
-        except HassilError as exc:
-            # A grammar may require a context/slot absent from this OpenAI client.
-            trace["reason"] = "grammar_context_unavailable"
-            trace["error"] = str(exc)
-            return {}
-        if len(results) > 64:
-            trace["reason"] = "too_many_matches"
+        results, error = recognize_bounded(
+            text,
+            grammar,
+            slot_lists=lists,
+            language=language,
+            max_results=64,
+        )
+        if error:
+            trace["reason"] = error
             return {}
         for result in results:
             for tool in tools[result.intent.name]:
@@ -207,7 +198,7 @@ def deterministic_intent(request, settings, language):
                 trace["candidates"].append(
                     {
                         "intent": result.intent.name,
-                        "slots": {k: v.value for k, v in result.entities.items()},
+                        "slots": result_slots(result),
                         "validated": args is not None,
                     }
                 )

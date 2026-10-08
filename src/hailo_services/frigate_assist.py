@@ -6,6 +6,7 @@ import time
 
 from .config import FRIGATE_ASSIST_MODEL, LLM_MODEL
 from .frigate_deterministic import deterministic_plan, resolved_facts
+from .frigate_intents import hassil_plan
 from .frigate_prompt import compile_request, text_content, uses_images
 from .frigate_routing import plan, resolved_context
 
@@ -15,6 +16,7 @@ _LOG = logging.getLogger(__name__)
 _MODEL_TOOL_ROUTES = {
     "deterministic_historical_search_tool_selection",
     "deterministic_watch_tool_selection",
+    "hassil_object_search_tool_selection",
 }
 
 
@@ -68,25 +70,29 @@ def prepare(settings, request):
 
     # Keep the established planner in charge after a tool has returned. It already
     # contains deterministic follow-up summaries, event-image chaining, profile
-    # recap handling and exact timestamp preservation. The multilingual planner is
-    # intentionally an early-routing layer, not a replacement for those contracts.
+    # recap handling and exact timestamp preservation. HassIL is deliberately only
+    # an initial-turn recognition layer, never a replacement for result validation.
     if _has_active_tool_result(request):
         tools, direct, reason = plan(request, settings, images)
     else:
         legacy_tools, legacy_direct, legacy_reason = plan(request, settings, images)
+        hassil = hassil_plan(request, settings, images)
         deterministic = deterministic_plan(request, settings, images)
-        if deterministic is None:
+
+        # Mature legacy deterministic answers remain authoritative. This protects
+        # specialized follow-ups/clarifications that already carry strict tests.
+        if legacy_direct is not None:
+            tools, direct, reason = legacy_tools, legacy_direct, legacy_reason
+        elif hassil is not None:
+            # A full-sentence HassIL match has explicit, request-scoped slots and
+            # schema validation, so it can safely bypass inference. Compound/free-
+            # form requests do not match this grammar and continue below.
+            tools, direct, reason = hassil
+        elif deterministic is None:
             tools, direct, reason = legacy_tools, legacy_direct, legacy_reason
         else:
             tools, direct, reason = deterministic
-            # Prefer an existing deterministic legacy answer whenever one exists.
-            # This retains mature handling for phrases such as open-ended ranges,
-            # unknown camera names and specialized Frigate actions while allowing
-            # the new planner to cover language-neutral gaps such as arbitrary
-            # "last N hours" requests.
-            if legacy_direct is not None:
-                tools, direct, reason = legacy_tools, legacy_direct, legacy_reason
-            elif (
+            if (
                 direct is None
                 and reason == "deterministic_historical_search_tool_selection"
                 and _tool_names(legacy_tools) - _tool_names(tools)
