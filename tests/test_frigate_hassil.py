@@ -129,8 +129,9 @@ def test_hassil_object_search_constrains_the_model_without_losing_filters():
     ],
 )
 def test_recap_grammar_covers_existing_multilingual_router_languages(language, text):
-    match, trace = recognize_request(request(text, language=language))
+    match, trace = recognize_request(request(text))
     assert trace["matched"], trace
+    assert match["language"] == language
     assert match["intent"] == "FrigateRecap"
     assert match["slots"]["period"] == "yesterday"
 
