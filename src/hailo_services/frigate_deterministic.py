@@ -60,13 +60,35 @@ _LAST = set(
     "último última ultimos ultimas últimos últimas ultime ultimi afgelopen laatste последний последняя последние последних".split()
 )
 _ONE = set("one a an ein eine einer einen einem un une uno una een um uma один одна одну".split())
-_TODAY = {"today", "heute", "aujourd'hui", "aujourdhui", "hoy", "oggi", "vandaag", "hoje", "сегодня"}
+_TODAY = {
+    "today",
+    "heute",
+    "aujourd'hui",
+    "aujourdhui",
+    "hoy",
+    "oggi",
+    "vandaag",
+    "hoje",
+    "сегодня",
+}
 _YESTERDAY = {"yesterday", "gestern", "hier", "ayer", "ieri", "gisteren", "ontem", "вчера"}
 _UNITS = {
-    **{word: 1 for word in "minute minutes min mins minuten minuto minutos minuti minuut минута минуты минут".split()},
-    **{word: 60 for word in "hour hours hr hrs stunde stunden heure heures hora horas ora ore uur uren час часа часов".split()},
-    **{word: 1440 for word in "day days tag tage tagen jour jours dia dias giorno giorni dag dagen день дня дней".split()},
-    **{word: 10080 for word in "week weeks woche wochen semaine semaines semana semanas settimana settimane неделя недели недель".split()},
+    **{
+        word: 1
+        for word in "minute minutes min mins minuten minuto minutos minuti minuut минута минуты минут".split()
+    },
+    **{
+        word: 60
+        for word in "hour hours hr hrs stunde stunden heure heures hora horas ora ore uur uren час часа часов".split()
+    },
+    **{
+        word: 1440
+        for word in "day days tag tage tagen jour jours dia dias giorno giorni dag dagen день дня дней".split()
+    },
+    **{
+        word: 10080
+        for word in "week weeks woche wochen semaine semaines semana semanas settimana settimane неделя недели недель".split()
+    },
 }
 _FROM = {"from", "von", "de", "desde", "da", "dal", "dalle", "van", "das", "с"}
 _TO = {"to", "until", "bis", "a", "à", "hasta", "alle", "tot", "as", "às", "ate", "até", "до"}
@@ -77,22 +99,34 @@ _WATCH = set(
     "watch monitor notify notification überwachung ueberwachung überwache ueberwache benachrichtige surveille avertis "
     "notifie vigila notifica avvisa monitora bewaak meld monitoriza avise notifique наблюдение следи уведомляй".split()
 )
-_STOP = set("stop cancel stoppe beende annule arrete arrête deten detén ferma pare останови отмени".split())
+_STOP = set(
+    "stop cancel stoppe beende annule arrete arrête deten detén ferma pare останови отмени".split()
+)
 _ACTION = set(
     "turn set enable disable schalte aktiviere deaktiviere active désactive activa desactiva attiva disattiva zet "
     "ative desative включи выключи".split()
 )
-_ON = set("on enable enabled ein an active actif activo attivo aan ligado ativado включи включено".split())
+_ON = set(
+    "on enable enabled ein an active actif activo attivo aan ligado ativado включи включено".split()
+)
 _OFF = set(
     "off disable disabled aus inaktiv desactive désactive desactivado disattiva uit desligado desativado выключи выключено".split()
 )
 _FEATURES = {
-    "detect": set("detect detection erkennung détection deteccion detección rilevamento detectie deteccao detecção обнаружение".split()),
-    "record": set("record recording aufnahme enregistrement grabacion grabación registrazione opname gravacao gravação запись".split()),
-    "snapshots": set("snapshot snapshots schnappschuss schnappschuesse schnappschüsse instantane instantané captura istantanea momentopname снимок снимки".split()),
+    "detect": set(
+        "detect detection erkennung détection deteccion detección rilevamento detectie deteccao detecção обнаружение".split()
+    ),
+    "record": set(
+        "record recording aufnahme enregistrement grabacion grabación registrazione opname gravacao gravação запись".split()
+    ),
+    "snapshots": set(
+        "snapshot snapshots schnappschuss schnappschuesse schnappschüsse instantane instantané captura istantanea momentopname снимок снимки".split()
+    ),
     "audio": set("audio ton son sonido suono geluid som звук".split()),
     "motion": set("motion bewegung mouvement movimiento movimento beweging движение".split()),
-    "notifications": set("notification notifications benachrichtigung benachrichtigungen notificacion notificación notifiche melding meldingen notificacao notificação уведомление уведомления".split()),
+    "notifications": set(
+        "notification notifications benachrichtigung benachrichtigungen notificacion notificación notifiche melding meldingen notificacao notificação уведомление уведомления".split()
+    ),
 }
 _MESSAGES = {
     "empty": {
@@ -158,7 +192,12 @@ def _message(request, text, key):
 def _local_datetime(value):
     if not isinstance(value, str):
         return None
-    for fmt in ("%Y-%m-%d at %I:%M:%S %p", "%Y-%m-%d %I:%M:%S %p", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+    for fmt in (
+        "%Y-%m-%d at %I:%M:%S %p",
+        "%Y-%m-%d %I:%M:%S %p",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+    ):
         try:
             return datetime.strptime(value, fmt)
         except ValueError:
@@ -167,7 +206,9 @@ def _local_datetime(value):
 
 
 def _latest_text(request):
-    return next((text_content(m).strip() for m in reversed(request.messages) if m.get("role") == "user"), "")
+    return next(
+        (text_content(m).strip() for m in reversed(request.messages) if m.get("role") == "user"), ""
+    )
 
 
 def _results(request):
@@ -192,7 +233,10 @@ def _cameras(text, catalogue):
     return [
         identifier
         for identifier, friendly in catalogue.items()
-        if any(re.search(r"(?<!\w)" + re.escape(value) + r"(?!\w)", text, re.I) for value in {identifier, friendly})
+        if any(
+            re.search(r"(?<!\w)" + re.escape(value) + r"(?!\w)", text, re.I)
+            for value in {identifier, friendly}
+        )
     ]
 
 
@@ -201,7 +245,10 @@ def _relative(text, now):
     for i, word in enumerate(words):
         if word not in _LAST:
             continue
-        pairs = [(words[j], words[j + 1] if j + 1 < len(words) else None) for j in range(i + 1, min(len(words), i + 4))]
+        pairs = [
+            (words[j], words[j + 1] if j + 1 < len(words) else None)
+            for j in range(i + 1, min(len(words), i + 4))
+        ]
         if i > 0 and i + 1 < len(words):
             pairs.append((words[i - 1], words[i + 1]))
         for raw, unit in pairs:
@@ -256,7 +303,9 @@ def _explicit_range(text, now):
 
 
 def _since(text, now):
-    match = re.search(rf"(?:{_alternatives(_SINCE)})\s+(\d{{1,2}}(?::\d{{2}})?)", _normalize(text), re.I)
+    match = re.search(
+        rf"(?:{_alternatives(_SINCE)})\s+(\d{{1,2}}(?::\d{{2}})?)", _normalize(text), re.I
+    )
     value = _time(match[1]) if match else None
     if not value:
         return None
@@ -269,7 +318,9 @@ def _interval(text, now):
 
 
 def _call(request, name, arguments):
-    return response_message({"tool_calls": [{"function": {"name": name, "arguments": arguments}}]}, request, "")
+    return response_message(
+        {"tool_calls": [{"function": {"name": name, "arguments": arguments}}]}, request, ""
+    )
 
 
 def _tools(tools, name):
@@ -300,13 +351,23 @@ def _toggle(request, text, tools, catalogue):
             if feature:
                 return None
             feature = candidate
-    allowed = tool["function"].get("parameters", {}).get("properties", {}).get("feature", {}).get("enum")
+    allowed = (
+        tool["function"].get("parameters", {}).get("properties", {}).get("feature", {}).get("enum")
+    )
     cameras = _cameras(text, catalogue)
     if not feature or len(cameras) != 1 or isinstance(allowed, list) and feature not in allowed:
         return None
     chosen = _tools(tools, "set_camera_state")
     prepared = request.model_copy(update={"tools": chosen})
-    return chosen, _call(prepared, "set_camera_state", {"camera": cameras[0], "feature": feature, "value": "ON" if on else "OFF"}), "deterministic_camera_state"
+    return (
+        chosen,
+        _call(
+            prepared,
+            "set_camera_state",
+            {"camera": cameras[0], "feature": feature, "value": "ON" if on else "OFF"},
+        ),
+        "deterministic_camera_state",
+    )
 
 
 def resolved_facts(request):
@@ -355,11 +416,17 @@ def deterministic_plan(request, settings, images):
     catalogue, results = camera_catalogue(request.messages), _results(request)
     recap = results.get("get_recap")
     if isinstance(recap, dict) and set(results).issubset({"get_recap", "get_profile_status"}):
-        if set(recap).issubset({"events", "message"}) and recap.get("events") == [] and recap.get("message") in (None, "No activity was found during this time period."):
+        if (
+            set(recap).issubset({"events", "message"})
+            and recap.get("events") == []
+            and recap.get("message") in (None, "No activity was found during this time period.")
+        ):
             return [], _message(request, text, "empty"), "deterministic_empty_recap"
         if not recap.get("error"):
             return [], None, "deterministic_recap_summary"
-    if any(name in results for name in {"set_camera_state", "start_camera_watch", "stop_camera_watch"}):
+    if any(
+        name in results for name in {"set_camera_state", "start_camera_watch", "stop_camera_watch"}
+    ):
         return [], None, "deterministic_action_summary"
     similar = bool(tokens & _SIMILAR)
     if "search_objects" in results and not similar:
@@ -371,46 +438,81 @@ def deterministic_plan(request, settings, images):
             if interval and "get_recap" in names:
                 chosen = _tools(tools, "get_recap")
                 prepared = request.model_copy(update={"tools": chosen})
-                return chosen, _call(prepared, "get_recap", interval), "deterministic_absence_interval"
+                return (
+                    chosen,
+                    _call(prepared, "get_recap", interval),
+                    "deterministic_absence_interval",
+                )
             return [], _message(request, text, "absence"), "deterministic_absence_ambiguous"
         if not results and "get_profile_status" in names:
             chosen = _tools(tools, "get_profile_status")
             prepared = request.model_copy(update={"tools": chosen})
-            return chosen, _call(prepared, "get_profile_status", {}), "deterministic_absence_profile"
+            return (
+                chosen,
+                _call(prepared, "get_profile_status", {}),
+                "deterministic_absence_profile",
+            )
     anchor = re.match(r"\[attached_event:([^]\s]+)\]", text, re.I)
     if anchor and similar and "find_similar_objects" in names and not results:
         arguments = {"event_id": anchor[1]}
         now = _local_datetime(server_time(request.messages))
         interval = _interval(text, now) if now else None
         if interval:
-            arguments.update(after=interval[0].isoformat(timespec="seconds"), before=interval[1].isoformat(timespec="seconds"))
+            arguments.update(
+                after=interval[0].isoformat(timespec="seconds"),
+                before=interval[1].isoformat(timespec="seconds"),
+            )
         matches = _cameras(text, catalogue)
         if len(matches) == 1:
             arguments["cameras"] = [matches[0]]
         chosen = _tools(tools, "find_similar_objects")
         prepared = request.model_copy(update={"tools": chosen})
-        return chosen, _call(prepared, "find_similar_objects", arguments), "deterministic_similarity"
+        return (
+            chosen,
+            _call(prepared, "find_similar_objects", arguments),
+            "deterministic_similarity",
+        )
     now = _local_datetime(server_time(request.messages))
     interval = _interval(text, now) if now else None
-    previous_recap = any(_tokens(text_content(message)) & _RECAP for message in request.messages[:-1] if message.get("role") == "user")
+    previous_recap = any(
+        _tokens(text_content(message)) & _RECAP
+        for message in request.messages[:-1]
+        if message.get("role") == "user"
+    )
     if interval and "get_recap" in names and not results and (tokens & _RECAP or previous_recap):
         after, before = interval
         if before > now:
             return [], _message(request, text, "future"), "deterministic_future_range"
-        arguments = {"after": after.isoformat(timespec="seconds"), "before": before.isoformat(timespec="seconds")}
+        arguments = {
+            "after": after.isoformat(timespec="seconds"),
+            "before": before.isoformat(timespec="seconds"),
+        }
         matches = _cameras(text, catalogue)
         if len(matches) == 1:
             arguments["cameras"] = matches[0]
         chosen = _tools(tools, "get_recap")
         prepared = request.model_copy(update={"tools": chosen})
         return chosen, _call(prepared, "get_recap", arguments), "deterministic_recap_interval"
-    if interval and "search_objects" in names and not results and tokens & _SEARCH and not tokens & _RECAP:
+    if (
+        interval
+        and "search_objects" in names
+        and not results
+        and tokens & _SEARCH
+        and not tokens & _RECAP
+    ):
         after, before = interval
-        fixed = {"after": after.isoformat(timespec="seconds"), "before": before.isoformat(timespec="seconds")}
+        fixed = {
+            "after": after.isoformat(timespec="seconds"),
+            "before": before.isoformat(timespec="seconds"),
+        }
         matches = _cameras(text, catalogue)
         if len(matches) == 1:
             fixed["camera"] = matches[0]
-        return _fixed_tool(tools, "search_objects", fixed), None, "deterministic_historical_search_tool_selection"
+        return (
+            _fixed_tool(tools, "search_objects", fixed),
+            None,
+            "deterministic_historical_search_tool_selection",
+        )
     if "get_live_context" in names and not results and tokens & _LIVE:
         matches = _cameras(text, catalogue)
         if tokens & _PRESENCE or matches:
@@ -418,7 +520,11 @@ def deterministic_plan(request, settings, images):
                 camera = matches[0] if matches else next(iter(catalogue))
                 chosen = _tools(tools, "get_live_context")
                 prepared = request.model_copy(update={"tools": chosen})
-                return chosen, _call(prepared, "get_live_context", {"camera": camera}), "deterministic_live_context"
+                return (
+                    chosen,
+                    _call(prepared, "get_live_context", {"camera": camera}),
+                    "deterministic_live_context",
+                )
     toggle = _toggle(request, text, tools, catalogue)
     if toggle and not results:
         return toggle
