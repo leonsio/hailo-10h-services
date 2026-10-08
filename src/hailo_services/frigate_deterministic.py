@@ -12,26 +12,26 @@ from .frigate_routing import recap_interval
 from .tool_calling import response_message, selected_tools
 
 _LANG_HINTS = {
-    "de": "was zeige letzten heute gestern passiert kamera ereignisse",
-    "en": "what show last today yesterday happened camera events",
-    "fr": "quoi montre dernières aujourd'hui hier passé caméra événements",
-    "es": "qué muestra últimas hoy ayer pasó cámara eventos",
-    "it": "cosa mostra ultime oggi ieri successo telecamera eventi",
-    "nl": "wat toon afgelopen vandaag gisteren gebeurd gebeurde camera gebeurtenissen",
-    "pt": "que mostra últimas hoje ontem aconteceu câmera eventos",
-    "ru": "что покажи последние сегодня вчера произошло камера события",
+    "de": "was zeige letzten heute gestern passiert kamera ereignisse erkennung überwache schalte wann gesehen",
+    "en": "what show last today yesterday happened camera events detection watch turn when seen",
+    "fr": "quoi montre dernières aujourd'hui hier passé caméra événements détection surveille quand vu",
+    "es": "qué muestra últimas hoy ayer pasó cámara eventos detección vigila cuándo visto",
+    "it": "cosa mostra ultime oggi ieri successo telecamera eventi rilevamento avvisa quando visto",
+    "nl": "wat toon afgelopen vandaag gisteren gebeurd camera gebeurtenissen detectie bewaak wanneer gezien",
+    "pt": "que mostra últimas hoje ontem aconteceu câmera eventos detecção monitora quando visto",
+    "ru": "что покажи последние сегодня вчера произошло камера события обнаружение следи когда видел",
 }
 _LANG_HINTS = {key: set(value.split()) for key, value in _LANG_HINTS.items()}
 
 _RECAP = set(
-    "event events activity activities history happened incident incidents recap "
-    "ereignis ereignisse aktivitaet aktivitaeten aktivität aktivitäten historie passiert vorfaelle vorfälle "
-    "evenement evenements événement événements activite activites activité activités historique passe passé "
-    "evento eventos actividad actividades historial paso pasó ocurrio ocurrió "
-    "eventi attivita attività cronologia successo "
-    "gebeurtenis gebeurtenissen activiteit activiteiten geschiedenis gebeurd gebeurde "
-    "atividade atividades historico histórico aconteceu "
-    "событие события активность история произошло случилось".split()
+    "event events activity activities history happened incident incidents recap detection detections alert alerts "
+    "ereignis ereignisse aktivitaet aktivitaeten aktivität aktivitäten historie passiert vorfaelle vorfälle erkennung erkennungen alarm alarme "
+    "evenement evenements événement événements activite activites activité activités historique passe passé détection détections alerte alertes "
+    "evento eventos actividad actividades historial paso pasó ocurrio ocurrió deteccion detección detecciones alerta alertas "
+    "eventi attivita attività cronologia successo rilevamento rilevamenti avviso avvisi "
+    "gebeurtenis gebeurtenissen activiteit activiteiten geschiedenis gebeurd gebeurde detectie detecties melding meldingen "
+    "atividade atividades historico histórico aconteceu deteccao detecção detecções alerta alertas "
+    "событие события активность история произошло случилось обнаружение обнаружения тревога тревоги".split()
 )
 _LIVE = set(
     "now live current currently visible jetzt gerade aktuell livebild sichtbar maintenant actuel actuelle direct "
@@ -56,8 +56,9 @@ _AWAY = set(
     "отсутствие отсутствовал отсутствовала".split()
 )
 _LAST = set(
-    "last past letzte letzten letzter letztes dernier derniere dernière derniers dernieres dernières ultimo ultima "
-    "último última ultimos ultimas últimos últimas ultime ultimi afgelopen laatste последний последняя последние последних".split()
+    "last past letzte letzten letzter letztes zuletzt dernier derniere dernière derniers dernieres dernières ultimo ultima "
+    "último última ultimos ultimas últimos últimas ultime ultimi scorso scorsa afgelopen laatste laatst "
+    "последний последняя последние последних последний раз".split()
 )
 _ONE = set("one a an ein eine einer einen einem un une uno una een um uma один одна одну".split())
 _TODAY = {
@@ -75,7 +76,7 @@ _YESTERDAY = {"yesterday", "gestern", "hier", "ayer", "ieri", "gisteren", "ontem
 _UNITS = {
     **{
         word: 1
-        for word in "minute minutes min mins minuten minuto minutos minuti minuut минута минуты минут".split()
+        for word in "minute minutes min mins minuten minuto minutos minuti minuut minuten minuto minutos минута минуты минут".split()
     },
     **{
         word: 60
@@ -94,7 +95,7 @@ _FROM = {"from", "von", "de", "desde", "da", "dal", "dalle", "van", "das", "с"}
 _TO = {"to", "until", "bis", "a", "à", "hasta", "alle", "tot", "as", "às", "ate", "até", "до"}
 _BETWEEN = {"between", "zwischen", "entre", "tra", "tussen", "между"}
 _AND = {"and", "und", "et", "y", "e", "en", "и"}
-_SINCE = {"since", "seit", "depuis", "desde", "da", "vanaf", "с"}
+_SINCE = {"since", "seit", "ab", "depuis", "desde", "da", "vanaf", "с"}
 _WATCH = set(
     "watch monitor notify notification überwachung ueberwachung überwache ueberwache benachrichtige surveille avertis "
     "notifie vigila notifica avvisa monitora bewaak meld monitoriza avise notifique наблюдение следи уведомляй".split()
@@ -127,6 +128,19 @@ _FEATURES = {
     "notifications": set(
         "notification notifications benachrichtigung benachrichtigungen notificacion notificación notifiche melding meldingen notificacao notificação уведомление уведомления".split()
     ),
+}
+_WHEN = set("when wann quand cuando cuándo quando wanneer когда".split())
+_SEEN = set(
+    "seen detected spotted gesehen erkannt vue vu détecté detecte detectado vista visto rilevato gezien gedetecteerd "
+    "visto detectado увиден замечен обнаружен обнаружена обнаружено".split()
+)
+_LABEL_ALIASES = {
+    "person": set("person people mensch menschen personne personnes persona personas persona persone persoon personen pessoa pessoas человек люди".split()),
+    "car": set("car cars auto autos voiture voitures coche coches auto automobili wagen wagens carro carros машина машины автомобиль автомобили".split()),
+    "dog": set("dog dogs hund hunde chien chiens perro perros cane cani hond honden cao cão cães собака собаки".split()),
+    "cat": set("cat cats katze katzen chat chats gato gatos gatto gatti kat katten кошка кошки кот коты".split()),
+    "package": set("package packages paket pakete colis paquete paquetes pacco pacchi pakket pakketten pacote pacotes посылка посылки".split()),
+    "bicycle": set("bicycle bicycles bike bikes fahrrad fahrräder velo vélo vélos bicicleta bicicletas bicicletta biciclette fiets fietsen bicicleta bicicletas велосипед велосипеды".split()),
 }
 _MESSAGES = {
     "empty": {
@@ -163,14 +177,39 @@ _MESSAGES = {
 
 
 def _normalize(text):
+    """Normalize user text for multilingual lexical matching.
+
+    Args:
+        text: User-supplied text.
+
+    Returns:
+        str: Case-folded text with normalized whitespace and dash characters.
+    """
     return re.sub(r"\s+", " ", text.casefold().replace("–", "-").replace("—", "-")).strip()
 
 
 def _tokens(text):
+    """Tokenize supported scripts without translating the request.
+
+    Args:
+        text: User-supplied text.
+
+    Returns:
+        set[str]: Normalized lexical tokens found in the text.
+    """
     return set(re.findall(r"[\wÀ-ÖØ-öø-ÿА-Яа-яЁё'’]+", _normalize(text), re.UNICODE))
 
 
 def _language(request, text):
+    """Resolve a response language from an explicit hint or lexical evidence.
+
+    Args:
+        request: Incoming chat request which may contain an explicit language.
+        text: Latest user text used only when no explicit language is supplied.
+
+    Returns:
+        str: Supported two-letter language code, defaulting to English.
+    """
     explicit = getattr(request, "language", None)
     if isinstance(explicit, str) and explicit:
         code = explicit.casefold().split("-")[0].split("_")[0]
@@ -185,11 +224,29 @@ def _language(request, text):
 
 
 def _message(request, text, key):
+    """Return a deterministic response in the resolved request language.
+
+    Args:
+        request: Incoming chat request.
+        text: Latest user text used for language detection.
+        key: Message catalogue key.
+
+    Returns:
+        str: Localized deterministic response text.
+    """
     language = _language(request, text)
     return _MESSAGES[key].get(language, _MESSAGES[key]["en"])
 
 
 def _local_datetime(value):
+    """Parse a supplied Frigate local timestamp without timezone assumptions.
+
+    Args:
+        value: Timestamp string from the Frigate prompt or tool result.
+
+    Returns:
+        datetime | None: Parsed naive local datetime, or None when unsupported.
+    """
     if not isinstance(value, str):
         return None
     for fmt in (
@@ -206,12 +263,28 @@ def _local_datetime(value):
 
 
 def _latest_text(request):
+    """Read the latest user text without copying assistant suggestions.
+
+    Args:
+        request: Incoming chat request.
+
+    Returns:
+        str: Latest user message text, or an empty string when absent.
+    """
     return next(
         (text_content(m).strip() for m in reversed(request.messages) if m.get("role") == "user"), ""
     )
 
 
 def _results(request):
+    """Decode tool results that belong to the latest user turn.
+
+    Args:
+        request: Incoming chat request containing assistant calls and tool responses.
+
+    Returns:
+        dict: Tool names mapped to decoded JSON results for the active turn.
+    """
     users = [i for i, m in enumerate(request.messages) if m.get("role") == "user"]
     if not users:
         return {}
@@ -230,6 +303,15 @@ def _results(request):
 
 
 def _cameras(text, catalogue):
+    """Match exact camera IDs or friendly names without fuzzy guessing.
+
+    Args:
+        text: Latest user text.
+        catalogue: Mapping of camera IDs to friendly names.
+
+    Returns:
+        list[str]: Exact camera IDs mentioned in the text.
+    """
     return [
         identifier
         for identifier, friendly in catalogue.items()
@@ -241,6 +323,15 @@ def _cameras(text, catalogue):
 
 
 def _relative(text, now):
+    """Resolve multilingual elapsed, today, and yesterday expressions.
+
+    Args:
+        text: Latest user text.
+        now: Authoritative Frigate server-local time.
+
+    Returns:
+        tuple[datetime, datetime] | None: Resolved local interval, or None when ambiguous.
+    """
     words = re.findall(r"[\wÀ-ÖØ-öø-ÿА-Яа-яЁё]+", _normalize(text), re.UNICODE)
     for i, word in enumerate(words):
         if word not in _LAST:
@@ -268,6 +359,14 @@ def _relative(text, now):
 
 
 def _time(value):
+    """Parse an unambiguous 24-hour clock fragment.
+
+    Args:
+        value: Hour or hour-and-minute text.
+
+    Returns:
+        tuple[int, int] | None: Hour and minute, or None for an invalid clock value.
+    """
     match = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?", value)
     if not match:
         return None
@@ -276,10 +375,27 @@ def _time(value):
 
 
 def _alternatives(values):
+    """Build a longest-first escaped regex alternation for a lexical set.
+
+    Args:
+        values: Literal lexical values.
+
+    Returns:
+        str: Regex-safe alternation fragment.
+    """
     return "|".join(sorted((re.escape(value) for value in values), key=len, reverse=True))
 
 
 def _explicit_range(text, now):
+    """Resolve explicit two-clock ranges without inventing a date.
+
+    Args:
+        text: Latest user text.
+        now: Authoritative Frigate server-local time.
+
+    Returns:
+        tuple[datetime, datetime] | None: Resolved range on today or yesterday.
+    """
     normalized = _normalize(text)
     stamp = r"(\d{1,2}(?::\d{2})?)"
     patterns = [
@@ -303,8 +419,19 @@ def _explicit_range(text, now):
 
 
 def _since(text, now):
+    """Resolve a multilingual start-clock expression ending at supplied now.
+
+    Args:
+        text: Latest user text.
+        now: Authoritative Frigate server-local time.
+
+    Returns:
+        tuple[datetime, datetime] | None: Start-to-now interval, or None when invalid.
+    """
     match = re.search(
-        rf"(?:{_alternatives(_SINCE)})\s+(\d{{1,2}}(?::\d{{2}})?)", _normalize(text), re.I
+        rf"(?:{_alternatives(_SINCE)})\s+(?:(?:{_alternatives(_TODAY)})\s+)?(\d{{1,2}}(?::\d{{2}})?)",
+        _normalize(text),
+        re.I,
     )
     value = _time(match[1]) if match else None
     if not value:
@@ -314,20 +441,58 @@ def _since(text, now):
 
 
 def _interval(text, now):
+    """Resolve the supported deterministic time expressions by specificity.
+
+    Args:
+        text: Latest user text.
+        now: Authoritative Frigate server-local time.
+
+    Returns:
+        tuple[datetime, datetime] | None: Resolved interval, or None when ambiguous.
+    """
     return _explicit_range(text, now) or _since(text, now) or _relative(text, now)
 
 
 def _call(request, name, arguments):
+    """Build a schema-validated assistant tool call.
+
+    Args:
+        request: Request whose selected tool schema validates the call.
+        name: Tool name.
+        arguments: Exact deterministic arguments.
+
+    Returns:
+        dict: OpenAI-compatible assistant tool-call message.
+    """
     return response_message(
         {"tool_calls": [{"function": {"name": name, "arguments": arguments}}]}, request, ""
     )
 
 
 def _tools(tools, name):
+    """Select declarations for one exact tool name.
+
+    Args:
+        tools: Available OpenAI function tool declarations.
+        name: Function name to retain.
+
+    Returns:
+        list[dict]: Matching tool declarations.
+    """
     return [tool for tool in tools if tool["function"]["name"] == name]
 
 
 def _fixed_tool(tools, name, fixed):
+    """Constrain known tool properties to deterministic enum values.
+
+    Args:
+        tools: Available OpenAI function tool declarations.
+        name: Function name to retain.
+        fixed: Property values already resolved without inference.
+
+    Returns:
+        list[dict]: Deep-copied declaration with resolved properties constrained.
+    """
     chosen = copy.deepcopy(_tools(tools, name))
     if chosen:
         properties = chosen[0]["function"].get("parameters", {}).get("properties", {})
@@ -338,6 +503,17 @@ def _fixed_tool(tools, name, fixed):
 
 
 def _toggle(request, text, tools, catalogue):
+    """Resolve an exact camera feature on/off action across supported languages.
+
+    Args:
+        request: Incoming chat request.
+        text: Latest user text.
+        tools: Available tool declarations.
+        catalogue: Mapping of camera IDs to friendly names.
+
+    Returns:
+        tuple | None: Deterministic tool selection/call/reason, or None when ambiguous.
+    """
     tool = next((tool for tool in tools if tool["function"]["name"] == "set_camera_state"), None)
     tokens = _tokens(text)
     if not tool or not tokens & _ACTION:
@@ -368,6 +544,41 @@ def _toggle(request, text, tools, catalogue):
         ),
         "deterministic_camera_state",
     )
+
+
+def _last_sighting(text, tools, catalogue):
+    """Resolve a class-based latest-sighting query without translating free text.
+
+    The routine intentionally handles only canonical object classes. Named people,
+    appearance descriptions, and compound conditions remain model/legacy-planner work.
+
+    Args:
+        text: Latest user text.
+        tools: Available tool declarations.
+        catalogue: Mapping of camera IDs to friendly names.
+
+    Returns:
+        tuple[list[dict], dict] | None: Selected tool and exact arguments, or None.
+    """
+    tokens = _tokens(text)
+    if not tokens & _WHEN or not tokens & _LAST or not tokens & _SEEN:
+        return None
+    labels = [canonical for canonical, aliases in _LABEL_ALIASES.items() if tokens & aliases]
+    if len(labels) != 1:
+        return None
+    selected = _tools(tools, "search_objects")
+    if not selected:
+        return None
+    properties = selected[0]["function"].get("parameters", {}).get("properties", {})
+    if "label" not in properties or "limit" not in properties:
+        return None
+    matches = _cameras(text, catalogue)
+    if len(matches) > 1:
+        return None
+    arguments = {"label": labels[0], "limit": 1}
+    if len(matches) == 1 and "camera" in properties:
+        arguments["camera"] = matches[0]
+    return selected, arguments
 
 
 def resolved_facts(request):
@@ -412,7 +623,8 @@ def deterministic_plan(request, settings, images):
     if not tools:
         return None
     names = {tool["function"]["name"] for tool in tools}
-    text, tokens = _latest_text(request), _tokens(_latest_text(request))
+    text = _latest_text(request)
+    tokens = _tokens(text)
     catalogue, results = camera_catalogue(request.messages), _results(request)
     recap = results.get("get_recap")
     if isinstance(recap, dict) and set(results).issubset({"get_recap", "get_profile_status"}):
@@ -472,6 +684,16 @@ def deterministic_plan(request, settings, images):
             _call(prepared, "find_similar_objects", arguments),
             "deterministic_similarity",
         )
+    if not results and "search_objects" in names:
+        sighting = _last_sighting(text, tools, catalogue)
+        if sighting:
+            chosen, arguments = sighting
+            prepared = request.model_copy(update={"tools": chosen})
+            return (
+                chosen,
+                _call(prepared, "search_objects", arguments),
+                "deterministic_class_last_sighting",
+            )
     now = _local_datetime(server_time(request.messages))
     interval = _interval(text, now) if now else None
     previous_recap = any(
@@ -533,5 +755,11 @@ def deterministic_plan(request, settings, images):
         prepared = request.model_copy(update={"tools": chosen})
         return chosen, _call(prepared, "stop_camera_watch", {}), "deterministic_stop_watch"
     if "start_camera_watch" in names and not results and tokens & _WATCH:
-        return _tools(tools, "start_camera_watch"), None, "deterministic_watch_tool_selection"
+        matches = _cameras(text, catalogue)
+        chosen = (
+            _fixed_tool(tools, "start_camera_watch", {"camera": matches[0]})
+            if len(matches) == 1
+            else _tools(tools, "start_camera_watch")
+        )
+        return chosen, None, "deterministic_watch_tool_selection"
     return None
