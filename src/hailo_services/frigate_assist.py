@@ -5,6 +5,7 @@ import logging
 import time
 
 from .config import FRIGATE_ASSIST_MODEL, LLM_MODEL
+from .frigate_deterministic import deterministic_plan, resolved_facts
 from .frigate_prompt import compile_request, text_content, uses_images
 from .frigate_routing import plan, resolved_context
 
@@ -30,10 +31,16 @@ def prepare(settings, request):
         raise ValueError("Frigate-Assist requires a user question or image")
     started = time.perf_counter()
     images = uses_images(request)
-    tools, direct, reason = plan(request, settings, images)
+    deterministic = deterministic_plan(request, settings, images)
+    if deterministic is None:
+        tools, direct, reason = plan(request, settings, images)
+    else:
+        tools, direct, reason = deterministic
     target = settings.frigate_vision_model if images else settings.frigate_text_model
     # Compilation validates the entire active round even for deterministic calls.
-    prepared = compile_request(request, settings, tools, images, context=resolved_context(request))
+    context = resolved_context(request)
+    context.update(resolved_facts(request))
+    prepared = compile_request(request, settings, tools, images, context=context)
     if direct is None:
         if images and (not settings.vlm_enabled or target != settings.vlm_model):
             raise ValueError(
