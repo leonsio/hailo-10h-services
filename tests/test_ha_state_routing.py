@@ -287,3 +287,56 @@ def test_global_light_list_without_static_catalogue():
     assert json.loads(response['tool_calls'][0]['function']['arguments']) == {
         'domain': ['light']
     }
+
+
+def test_generic_state_lists_query_all_domains_without_name_filter():
+    for query in ('was ist noch an?', 'Was ist jetzt noch an?',
+                  'Welche Geräte sind an?', 'welche Geräte sind eingeschaltet?',
+                  'Welche Geräte sind ausgeschaltet?'):
+        response = direct_live_context_response(request(query))
+        assert response is not None, query
+        assert json.loads(response['tool_calls'][0]['function']['arguments']) == {}
+
+
+def test_generic_state_list_uses_latest_question_not_previous_device():
+    req = request('Welche Geräte sind eingeschaltet?')
+    req.messages.insert(1, {'role': 'user', 'content': 'Ist Licht Tisch an?'})
+    req.messages.insert(2, {'role': 'assistant', 'content': 'Licht Tisch ist an.'})
+    response = direct_live_context_response(req)
+    assert json.loads(response['tool_calls'][0]['function']['arguments']) == {}
+
+
+def test_generic_state_list_includes_all_on_domains():
+    text = 'Live Context:\n' + '\n'.join(
+        f"- names: {name}\n  domain: {domain}\n  state: '{state}'\n  areas: Flur"
+        for name, domain, state in [('Lampe', 'light', 'on'),
+                                   ('Steckdose', 'switch', 'on'),
+                                   ('Andere Lampe', 'light', 'off')]
+    )
+    for query in ('was ist noch an?', 'Welche Geräte sind eingeschaltet?'):
+        response = deterministic_live_response(live_followup(
+            query, {}, {'data': {'result': text}, 'error': False},
+        ))
+        assert response == 'An: Lampe, Steckdose.'
+
+
+def test_generic_state_shortcut_does_not_claim_complex_questions():
+    for query in ('Was ist noch an Arbeit zu erledigen?',
+                  'Welche Geräte sind an und verbrauchen mehr als 100 Watt?',
+                  'Schalte alle Geräte an'):
+        assert direct_live_context_response(request(query)) is None
+
+
+def test_partial_device_lookup_is_refreshed_for_generic_list():
+    from types import SimpleNamespace
+
+    from hailo_services.assistants.ha.ha_state_routing import prepare_request
+
+    req = live_followup('Welche Geräte sind eingeschaltet?', {'name': 'Licht Tisch'},
+                        {'Licht Tisch': 'on'})
+    assert deterministic_live_response(req) is None
+    assert compact_live_followup_request(req) is None
+    backend = SimpleNamespace(settings=SimpleNamespace(debug_log=False))
+    prepared = prepare_request(backend, req, lambda _: None)
+    response = prepared._direct_ha_response
+    assert json.loads(response['tool_calls'][0]['function']['arguments']) == {}

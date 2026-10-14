@@ -1275,7 +1275,8 @@
     "ha_request_plan.lexical.217.25": "(?<![\\w.,-])(\\d{1,3})\\s*(?:%|prozent|percent|процент\\w*)",
     "ha_request_plan.lexical.221.29": "\\b(?:auf|to|на)\\s+(\\d{1,3})\\s*[.!?]?$",
     "ha_request_plan.lexical.322.47": "\\b(im|in der|in dem|in the|in|в)\\s+\\w+",
-    "ha_pipeline.lexical.213.28": "\\b(?:auf|to|на)\\s+(\\d{1,3})\\s*[.!?]?$"
+    "ha_pipeline.lexical.213.28": "\\b(?:auf|to|на)\\s+(\\d{1,3})\\s*[.!?]?$",
+    "ha_state_routing.generic_state_list": "^(?:was\\s+(?:ist|sind)|welche\\s+ger(?:a|ae)te\\s+sind)\\s+(?:(?:jetzt|noch|aktuell|derzeit|gerade|alles)\\s+)*(?:an|aus|ein|eingeschaltet|angeschaltet|ausgeschaltet)$"
   },
   "states": {
     "on": "an",

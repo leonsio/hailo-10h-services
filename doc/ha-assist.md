@@ -533,3 +533,9 @@ multiple entities share a generic name. Lists spanning multiple areas include th
 area names. Both plain results and HA’s `data.result` / `error: false` envelope are
 supported. Only entities supplied by Home Assistant can be listed; missing exposed
 entities or incorrect upstream states cannot be recovered from the tool result.
+
+General current-state lists such as “Was ist noch an?” and “Welche Geräte sind
+eingeschaltet?” request unfiltered live context across domains. They include both
+lights and switches whose state is `on`; earlier device-specific conversation
+turns do not narrow the query. If an older tool round queried individual devices,
+the service requests full live context before producing this whole-home list.

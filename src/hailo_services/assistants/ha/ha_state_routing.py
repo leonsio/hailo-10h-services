@@ -103,6 +103,8 @@ def _query_kind(text: str) -> str | None:
     normalized = _normalized(text)
     if not normalized or _has_action_verb(normalized):
         return None
+    if re.fullmatch(lexicon("ha_state_routing.generic_state_list"), normalized):
+        return "list"
     if re.search(lexicon("ha_state_routing.pattern.57.17"), normalized) and _expected_state(
         normalized
     ):
@@ -353,6 +355,12 @@ def _target_arguments(messages, query: str):
     if domain_hint is not None and kind in {"list", "count", "all"}:
         return {"domain": [domain_hint]}
 
+    # Generic state lists must not inherit a specific device from earlier turns.
+    if kind == "list" and re.fullmatch(
+        lexicon("ha_state_routing.generic_state_list"), normalized_query
+    ):
+        return {}
+
     # Without an area, retain the original exact-name behaviour.
     explicit = [
         entity
@@ -454,6 +462,25 @@ def _live_followup(messages):
     if not calls or {identifier for identifier, _ in results} != call_ids:
         return None
     return question, calls, [content for _, content in results]
+
+
+def _needs_full_live_context(question, calls):
+    """Reject partial device lookups as evidence for a whole-home state list.
+
+    Args:
+        question (str): Latest user state question.
+        calls (list[dict]): Live-context calls in the current tool round.
+
+    Returns:
+        bool: Whether an unfiltered lookup is needed before answering.
+    """
+    if not re.fullmatch(lexicon("ha_state_routing.generic_state_list"), _normalized(question)):
+        return False
+    return any(
+        any((_json_object(call.get("function", {}).get("arguments")) or {}).get(key)
+            for key in ("name", "domain", "area"))
+        for call in calls
+    )
 
 
 def _block_value(block: str, key: str):
@@ -721,6 +748,8 @@ def deterministic_live_response(request):
     if followup is None:
         return None
     question, calls, results = followup
+    if _needs_full_live_context(question, calls):
+        return None
     friendly_error = _friendly_live_error(calls, results)
     if friendly_error is not None:
         return friendly_error
@@ -827,7 +856,9 @@ def compact_live_followup_request(request):
     followup = _live_followup(request.messages)
     if followup is None:
         return None
-    question, _, results = followup
+    question, calls, results = followup
+    if _needs_full_live_context(question, calls):
+        return None
     live_text = "\n".join(str(result) for result in results)
     messages = [
         {"role": "system", "content": t(_FINAL_SYSTEM_KEY)},
