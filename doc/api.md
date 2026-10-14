@@ -973,3 +973,7 @@ Physical-model requests do not apply this metadata to routing or prompts.
 MiniLM embedding counts, observed Hailo context snapshot methods and the current
 backend isolation policy. No state snapshot methods are called by this inspection.
 See [HA recognition and caching](ha-recognition.md) for policy and SDK findings.
+
+## Settings UI and API
+
+`GET /settings` serves the configuration editor. `GET /v1/settings` returns existing scalar YAML fields and a file version; secrets are redacted. `PUT /v1/settings` accepts `{ "version": "…", "changes": { "settings.debug_log": true } }`, validates the complete YAML and atomically replaces it. Version conflicts return 409; invalid settings return 400. Empty secret fields leave existing values intact; `null` explicitly clears `settings.api_key` or `settings.mqtt_password`. YAML comments are reformatted on save. `POST /v1/settings/restart` requests a graceful systemd restart when available, otherwise returns 409. All three API routes use the same bearer key and `settings.api_no_auth_networks` exemption as `/v1/monitor`. YAML settings are read at startup by gateway and workers; every change needs a restart and `HAILO_*` environment overrides take precedence.

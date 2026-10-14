@@ -32,6 +32,13 @@ if systemctl cat "${SERVICE}" >/dev/null 2>&1; then
   systemctl stop "${SERVICE}"
 fi
 
+# Migrate older /etc configurations before activating the writable state path.
+install -d -o hailo-services -g hailo-services -m 0750 /var/lib/hailo-10h-services
+if [[ ! -L /etc/hailo-10h-services.yaml ]]; then
+  install -o hailo-services -g hailo-services -m 0600 /etc/hailo-10h-services.yaml /var/lib/hailo-10h-services/config.yaml
+fi
+ln -sfn /var/lib/hailo-10h-services/config.yaml /etc/hailo-10h-services.yaml
+
 # Reinstall the application package even when its Python package version did not
 # change. --no-deps deliberately leaves the known-good runtime dependency set
 # untouched while replacing all hailo_services package files from this checkout.

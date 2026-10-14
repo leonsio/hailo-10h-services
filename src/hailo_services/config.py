@@ -314,7 +314,7 @@ class Settings:
         return name[:-4] if name.endswith(".hef") else name
 
     @classmethod
-    def from_env(cls):
+    def from_env(cls, *, path=None, use_env=True):
         """Load typed settings from YAML and environment overrides.
 
         Returns:
@@ -325,7 +325,7 @@ class Settings:
         """
         defaults = cls()
         values = {}
-        config_path = os.getenv("HAILO_CONFIG")
+        config_path = str(path) if path is not None else os.getenv("HAILO_CONFIG")
         if config_path:
             path = Path(config_path)
         else:
@@ -446,7 +446,7 @@ class Settings:
             if "endpoint" in zmq:
                 values["vision_zmq_endpoint"] = zmq["endpoint"]
         for key, value in vars(defaults).items():
-            raw = os.getenv("HAILO_" + key.upper())
+            raw = os.getenv("HAILO_" + key.upper()) if use_env else None
             if raw is not None:
                 if isinstance(value, bool):
                     values[key] = raw.lower() in {"true", "yes", "1"}

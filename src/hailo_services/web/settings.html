@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hailo-10H · Einstellungen</title><link rel="stylesheet" href="/ui/monitor.css"><script src="/ui/settings.js" defer></script></head>
+<body><main>
+<header><div><p class="eyebrow">HAILO-10H SERVICES</p><h1>Einstellungen</h1><p>Konfiguration der YAML-Datei</p></div><nav class="main-nav" aria-label="Seiten"><a href="/">Playground</a><a href="/monitor">Monitoring</a><a href="/settings" aria-current="page">Einstellungen</a></nav></header>
+<section id="access"><label for="key">API-Schlüssel</label><div class="key"><input id="key" type="password" autocomplete="off" placeholder="HAILO_API_KEY"><button id="apply">Laden</button></div><small>Freigegebene Netzwerke benötigen keinen Schlüssel. Der Schlüssel bleibt für diesen Browser-Tab gespeichert.</small></section>
+<section><h2>Wirkung der Änderungen</h2><p>Alle YAML-Einstellungen werden beim Start geladen. Auch Modellwechsel und Debug-Logging erfordern einen Neustart. Änderungen werden vor dem Speichern validiert. Beim Speichern werden YAML-Kommentare neu formatiert. Umgebungsvariablen HAILO_… haben weiterhin Vorrang.</p><p id="config-path"></p><p id="notice" role="status"></p><button id="restart" type="button" hidden>Gespeicherte Änderungen durch Neustart übernehmen</button></section>
+<form id="form"><div id="fields"></div><button id="save" type="submit" disabled>Änderungen speichern · Neustart erforderlich</button></form>
+<footer><a href="/">Playground</a> · <a href="/monitor">Monitoring</a></footer>
+</main></body></html>

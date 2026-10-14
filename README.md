@@ -122,7 +122,7 @@ git pull --ff-only
 sudo bash scripts/install.sh
 ```
 
-The primary configuration file is `/etc/hailo-10h-services.yaml`. Existing
+The primary configuration is available at `/etc/hailo-10h-services.yaml` (a link to the service-owned state file in systemd installations). The authenticated `/settings` page saves validated YAML changes and can restart the systemd service to apply them. Existing
 `HAILO_<SETTING>` environment variables remain optional overrides.
 
 ### Docker Compose

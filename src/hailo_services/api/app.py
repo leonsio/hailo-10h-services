@@ -4,6 +4,9 @@ import asyncio
 import hmac
 import json
 import logging
+import os
+import signal
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager, suppress
@@ -32,6 +35,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
 from hailo_services.api.protocols import LANGUAGES, MQTTBridge, WyomingServer, dispatch
+from hailo_services.api.settings_store import SettingsStore, SettingsStoreError
 from hailo_services.config import (
     FRIGATE_ASSIST_MODEL,
     HA_ASSIST_MODEL,
@@ -69,6 +73,8 @@ _WEB_FILES = {
     "/ui/monitor.js": "monitor.js",
     "/ui/monitor.css": "monitor.css",
     "/monitor": "monitor.html",
+    "/settings": "settings.html",
+    "/ui/settings.js": "settings.js",
 }
 
 
@@ -151,18 +157,19 @@ class AccessAndSizeLimit:
             else "http"
         )
         transport = "websocket" if is_websocket else "http"
-        _debug(
-            self.settings,
-            "protocol=%s transport=%s event=request_start request_id=%s method=%s path=%s peer=%s content_type=%s content_length=%s",
-            protocol,
-            transport,
-            request_id,
-            method,
-            path,
-            peer[0],
-            headers.get(b"content-type", b"-").decode("latin1"),
-            headers.get(b"content-length", b"-").decode("latin1"),
-        )
+        if path not in {"/v1/monitor", "/ui/config"}:
+            _debug(
+                self.settings,
+                "protocol=%s transport=%s event=request_start request_id=%s method=%s path=%s peer=%s content_type=%s content_length=%s",
+                protocol,
+                transport,
+                request_id,
+                method,
+                path,
+                peer[0],
+                headers.get(b"content-type", b"-").decode("latin1"),
+                headers.get(b"content-length", b"-").decode("latin1"),
+            )
         response_status = "accepted"
 
         async def debug_send(message):
@@ -205,17 +212,18 @@ class AccessAndSizeLimit:
                     response_status = "failed" if is_websocket else 500
                 raise
             finally:
-                _debug(
-                    self.settings,
-                    "protocol=%s transport=%s event=request_end request_id=%s method=%s path=%s status=%s duration_ms=%.1f",
-                    protocol,
-                    transport,
-                    request_id,
-                    method,
-                    path,
-                    response_status,
-                    (time.perf_counter() - started) * 1000,
-                )
+                if path not in {"/v1/monitor", "/ui/config"}:
+                    _debug(
+                        self.settings,
+                        "protocol=%s transport=%s event=request_end request_id=%s method=%s path=%s status=%s duration_ms=%.1f",
+                        protocol,
+                        transport,
+                        request_id,
+                        method,
+                        path,
+                        response_status,
+                        (time.perf_counter() - started) * 1000,
+                    )
 
         expected = f"Bearer {self.settings.api_key}".encode()
         public = scope["path"] == "/health" or (
@@ -267,7 +275,7 @@ class AccessAndSizeLimit:
                 return
             if not message.get("more_body", False):
                 break
-        if self.settings.debug_log:
+        if self.settings.debug_log and path not in {"/v1/monitor", "/ui/config"}:
             # Log the complete inbound HTTP request after the bounded body has
             # been collected. Keep credentials out of logs while preserving all
             # other headers and the exact JSON/body sent by the client.
@@ -400,6 +408,7 @@ def create_app(
     wyoming = WyomingServer(runtime, settings, speech)
     mqtt = MQTTBridge(runtime, settings)
     monitor = Monitor(settings)
+    settings_store = SettingsStore()
     instrument(runtime, vision, speech, monitor)
     supervisor = getattr(runtime, "worker_supervisor", None)
     if supervisor is not None:
@@ -772,6 +781,47 @@ def create_app(
             if runtime.ready and (not settings.vision_enabled or vision.ready)
             else 503,
         )
+
+    @app.get("/v1/settings", include_in_schema=False)
+    async def settings_read():
+        """Read redacted settings.
+
+        Returns:
+            dict: Editable configuration metadata.
+        """
+        try:
+            return settings_store.read()
+        except SettingsStoreError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+    @app.put("/v1/settings", include_in_schema=False)
+    async def settings_write(request: Request):
+        """Validate and persist configuration changes.
+
+        Returns:
+            dict: Updated configuration metadata.
+        """
+        try:
+            payload = await request.json()
+            result = settings_store.write(payload)
+            _LOG.info("event=settings_saved path=%s", settings_store.path)
+            return result
+        except SettingsStoreError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+    @app.post("/v1/settings/restart", include_in_schema=False)
+    async def settings_restart():
+        """Request a systemd managed service restart.
+
+        Returns:
+            dict: Accepted restart notification.
+        """
+        if not os.getenv("INVOCATION_ID"):
+            raise HTTPException(status_code=409, detail="Neustart ist nur unter systemd verfügbar.")
+        _LOG.warning("event=restart_requested source=web")
+        # systemd Restart=always starts a fresh gateway after graceful SIGTERM.
+        threading.Timer(1.0, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
+        return {"message": "Neustart eingeleitet"}
 
     @app.get("/v1/monitor", include_in_schema=False)
     async def monitoring():

@@ -194,3 +194,50 @@ def test_worker_completion_emits_activity_without_debug_logging(caplog):
         _finish(responses, "test-id", future, (), "chat", time.perf_counter())
     assert responses.get_nowait()["value"] == "answer"
     assert "event=worker_request operation=chat status=completed" in caplog.text
+
+
+def test_settings_ui_validates_saves_and_hides_secrets(tmp_path, monkeypatch):
+    import yaml
+    path = tmp_path / "config.yaml"
+    path.write_text('settings:\n  api_key: "secret"\n  mqtt_password: "private"\n  debug_log: false\nmodels:\n  vlm:\n    enabled: true\n', encoding="utf-8")
+    monkeypatch.setenv("HAILO_CONFIG", str(path))
+    with TestClient(create_app(settings(api_key="secret"), FakeBackend())) as client:
+        assert client.get("/settings").status_code == 200
+        assert client.get("/v1/settings").status_code == 401
+        auth = {"Authorization": "Bearer secret"}
+        response = client.get("/v1/settings", headers=auth).json()
+        fields = {entry["path"]: entry for entry in response["fields"]}
+        assert fields["settings.api_key"]["value"] is None
+        assert fields["settings.mqtt_password"]["value"] is None
+        assert fields["settings.api_key"]["secret_set"]
+        bad = client.put("/v1/settings", headers=auth, json={"version": response["version"], "changes": {"settings.debug_log": "yes"}})
+        assert bad.status_code == 400
+        assert yaml.safe_load(path.read_text())["settings"]["debug_log"] is False
+        saved = client.put("/v1/settings", headers=auth, json={"version": response["version"], "changes": {"models.vlm.enabled": False, "settings.debug_log": True}})
+        assert saved.status_code == 200
+        result = yaml.safe_load(path.read_text())
+        assert result["settings"]["api_key"] == "secret"
+        assert result["settings"]["debug_log"] is True
+        assert result["models"]["vlm"]["enabled"] is False
+        assert client.put("/v1/settings", headers=auth, json={"version": response["version"], "changes": {"settings.debug_log": False}}).status_code == 409
+        monkeypatch.delenv("INVOCATION_ID", raising=False)
+        assert client.post("/v1/settings/restart", headers=auth).status_code == 409
+
+
+def test_monitor_polling_is_absent_from_gateway_logs(caplog):
+    with caplog.at_level(logging.DEBUG, logger="hailo_services.api.app"), TestClient(create_app(settings(debug_log=True), FakeBackend())) as client:
+        for _ in range(2):
+            client.get("/v1/monitor")
+        assert "path=/v1/monitor" not in caplog.text
+        assert not any("path=/v1/monitor" in line for line in client.get("/v1/monitor").json()["logs"][0]["lines"])
+
+
+def test_settings_write_rejects_invalid_model_combination(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text("models:\n  vlm:\n    enabled: true\n  hailo_llm:\n    enabled: false\n", encoding="utf-8")
+    monkeypatch.setenv("HAILO_CONFIG", str(path))
+    with TestClient(create_app(settings(), FakeBackend())) as client:
+        version = client.get("/v1/settings").json()["version"]
+        result = client.put("/v1/settings", json={"version": version, "changes": {"models.hailo_llm.enabled": True}})
+        assert result.status_code == 400
+        assert "enabled: false" in path.read_text()

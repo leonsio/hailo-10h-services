@@ -49,8 +49,13 @@ if [[ ! -f /etc/hailo-10h-services.yaml ]]; then
   SERVICE_KEY=$("${SERVICE_DIR}/venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(32))')
   sed -i "s/api_key: \"\"/api_key: \"${SERVICE_KEY}\"/" /etc/hailo-10h-services.yaml
 fi
-chown root:hailo-services /etc/hailo-10h-services.yaml
-chmod 0640 /etc/hailo-10h-services.yaml
+# Keep /etc as a familiar link; write atomically inside the service state directory.
+if [[ ! -L /etc/hailo-10h-services.yaml ]]; then
+  install -o hailo-services -g hailo-services -m 0600 /etc/hailo-10h-services.yaml "${SERVICE_STATE}/config.yaml"
+  ln -sfn "${SERVICE_STATE}/config.yaml" /etc/hailo-10h-services.yaml
+fi
+chown hailo-services:hailo-services "${SERVICE_STATE}/config.yaml"
+chmod 0600 "${SERVICE_STATE}/config.yaml"
 # Existing ENV files remain optional overrides; new installations use YAML.
 # The small catalogue is package data; never clone/install a helper repository.
 LITERT_MODEL_PATH=$(HAILO_CONFIG=/etc/hailo-10h-services.yaml "${SERVICE_DIR}/venv/bin/python" - <<'CONFIGPY'

@@ -48,7 +48,8 @@ class RecentLogs(logging.Handler):
         try:
             if (record.levelno >= self.level and record.name.startswith("hailo_services")
                     and "event=request_payload" not in record.getMessage()
-                    and "event=validated_request" not in record.getMessage()):
+                    and "event=validated_request" not in record.getMessage()
+                    and "path=/v1/monitor" not in record.getMessage()):
                 line = redact_inline_data(self.format(record))
                 with self.lock:
                     pid = record.process

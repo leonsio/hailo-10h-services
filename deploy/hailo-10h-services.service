@@ -13,12 +13,12 @@ StateDirectory=hailo-10h-services
 StateDirectoryMode=0750
 WorkingDirectory=/var/lib/hailo-10h-services
 EnvironmentFile=-/etc/hailo-10h-services.env
-Environment=HAILO_CONFIG=/etc/hailo-10h-services.yaml
+Environment=HAILO_CONFIG=/var/lib/hailo-10h-services/config.yaml
 Environment=PYTHONUNBUFFERED=1
 Environment=HOME=/var/lib/hailo-10h-services
 ExecStartPre=/opt/hailo-10h-services/venv/bin/python -m hailo_services.preflight
 ExecStart=/opt/hailo-10h-services/venv/bin/hailo-10h-services
-Restart=on-failure
+Restart=always
 RestartSec=15
 # First launch downloads large HEFs. Type=simple has no readiness deadline.
 TimeoutStopSec=240

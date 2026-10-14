@@ -87,10 +87,11 @@ test('API key survives navigation between Playground and monitoring in one brows
   assert.equal(values.has('hailo-api-key'), false);
 });
 
-test('monitoring renders separate log groups and process resources', async () => {
+test('monitoring switches full-width process and service log tabs', async () => {
   class Element {
-    constructor() { this.children = []; this.value = ''; this.hidden = false; }
-    addEventListener() {}
+    constructor() { this.children = []; this.value = ''; this.hidden = false; this.events = {}; }
+    addEventListener(type, fn) { this.events[type] = fn; }
+    setAttribute(name, value) { this[name] = value; }
     append(...items) { this.children.push(...items); }
     replaceChildren(...items) { this.children = items; }
   }
@@ -104,16 +105,23 @@ test('monitoring renders separate log groups and process resources', async () =>
       : { ok: true, json: async () => ({ health: {ready: true}, resources: {
         processes: [{name: 'gateway', pid: 101, rss_bytes: 1048576, cpu_percent: 2},
           {name: 'hailo', pid: 102, rss_bytes: 2097152, cpu_percent: 10}]},
-        logs: [{name: 'gateway', pid: 101, lines: ['gateway line']},
+        logs: [{name: 'gateway', pid: 101, lines: ['gateway line', 'event=monitor_request service=VLM duration_ms=1']},
           {name: 'hailo', pid: 102, lines: ['worker line']}] }) },
   });
   vm.runInContext(fs.readFileSync(path.join(web, 'monitor.js'), 'utf8'), context);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(elements.access.hidden, true);
   assert.equal(elements.processes.children.length, 2);
-  assert.equal(elements.logs.children.length, 2);
+  assert.equal(elements['log-tabs'].children.length, 2);
+  assert.equal(elements.logs.children.length, 1);
   assert.match(elements.logs.children[0].children[1].textContent, /gateway line/);
-  assert.match(elements.logs.children[1].children[1].textContent, /worker line/);
+  assert.equal(elements['service-tabs'].children.length, 2);
+  elements['service-tabs'].children[1].events.click();
+  assert.doesNotMatch(elements.logs.children[0].children[1].textContent, /gateway line/);
+  assert.match(elements.logs.children[0].children[1].textContent, /service=VLM/);
+  elements['log-tabs'].children[1].events.click();
+  assert.equal(elements.logs.children.length, 1);
+  assert.match(elements.logs.children[0].children[1].textContent, /worker line/);
 });
 
 test('PCM WAV header, rate, length, signed samples and clipping', async () => {

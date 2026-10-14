@@ -17,6 +17,32 @@ const item = (label, value) => {
   const row = document.createElement("div"), name = document.createElement("span"), content = document.createElement("strong");
   name.textContent = label; content.textContent = String(value ?? "—"); row.append(name, content); return row;
 };
+let selectedProcess = "gateway", selectedService = "Alle";
+const processNames = {gateway: "Gateway", llm: "LLM", hailo: "Hailo", piper: "Piper"};
+function tab(label, selected, onClick) {
+  const button = document.createElement("button");
+  button.type = "button"; button.role = "tab"; button.textContent = label;
+  button.setAttribute("aria-selected", String(selected)); button.addEventListener("click", onClick);
+  return button;
+}
+function serviceOf(line) {
+  const match = line.match(/\bservice=([^ ]+)/) || line.match(/\boperation=([^ ]+)/);
+  return match ? match[1] : null;
+}
+function renderLogs(groups) {
+  const ordered = ["gateway", "llm", "hailo", "piper"].map(name => groups.find(group => group.name === name)).filter(Boolean);
+  if (!ordered.some(group => group.name === selectedProcess)) selectedProcess = ordered[0]?.name || "gateway";
+  $("log-tabs").replaceChildren(...ordered.map(group => tab(`${processNames[group.name] || group.name} · ${group.pid ?? "—"}`, group.name === selectedProcess, () => {selectedProcess = group.name; selectedService = "Alle"; renderLogs(groups);} )));
+  const group = ordered.find(entry => entry.name === selectedProcess);
+  const services = ["Alle", ...new Set((group?.lines || []).map(serviceOf).filter(Boolean))];
+  if (!services.includes(selectedService)) selectedService = "Alle";
+  $("service-tabs").replaceChildren(...services.map(service => tab(service, selectedService === service, () => {selectedService = service; renderLogs(groups);} )));
+  const article = document.createElement("article"), heading = document.createElement("h3"), lines = document.createElement("pre");
+  const selected = (group?.lines || []).filter(line => selectedService === "Alle" || serviceOf(line) === selectedService);
+  heading.textContent = `${processNames[group?.name] || group?.name || "Prozess"} · PID ${group?.pid ?? "—"} · ${selected.length}/${group?.lines.length || 0} Zeilen`;
+  lines.textContent = selected.join("\n") || "Keine passenden Logeinträge. Dienstfilter zeigen nur Einträge mit service= oder operation= an.";
+  article.append(heading, lines); $("logs").replaceChildren(article);
+}
 function render(data) {
   const h = data.health || {}, r = data.resources || {};
   const ready = h.ready && (!h.vision?.enabled || h.vision?.ready);
@@ -56,12 +82,7 @@ function render(data) {
     item("Piper", h.piper?.ready ? "Bereit" : h.piper?.enabled ? "Nicht bereit" : "Deaktiviert"),
     item("MQTT", h.mqtt_connected ? "Verbunden" : "Nicht verbunden"));
   $("health-raw").textContent = JSON.stringify(h, null, 2);
-  $("logs").replaceChildren(...(data.logs || []).map(group => {
-    const article = document.createElement("article"), title = document.createElement("h3"), lines = document.createElement("pre");
-    title.textContent = `${group.name} · PID ${group.pid ?? "—"} · ${group.lines.length}/50`;
-    lines.textContent = group.lines.join("\n") || "Noch keine Logeinträge für diesen Prozess.";
-    article.append(title, lines); return article;
-  }));
+  renderLogs(data.logs || []);
 }
 async function refresh() {
   try {
