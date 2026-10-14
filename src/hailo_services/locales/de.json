@@ -608,7 +608,8 @@
           "lampen",
           "led",
           "licht",
-          "lichter"
+          "lichter",
+          "licher"
         ]
       },
       "switch": {
@@ -666,7 +667,12 @@
       "locked": "locked",
       "entsperrt": "unlocked",
       "entriegelt": "unlocked",
-      "unlocked": "unlocked"
+      "unlocked": "unlocked",
+      "eingeschaltet": "on",
+      "angeschaltet": "on",
+      "leuchten": "on",
+      "brennen": "on",
+      "ausgeschaltet": "off"
     },
     "ha_prompt_compiler._CAPABILITIES": {
       "state.query": "read current Home Assistant device state or value",

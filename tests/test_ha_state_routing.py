@@ -245,3 +245,45 @@ def test_live_followup_is_reduced_to_tiny_text_only_prompt_as_fallback():
     assert "Static Context" not in routed.messages[0]["content"]
     assert "Ist das Licht im Wohnzimmer an?" in routed.messages[1]["content"]
     assert '"Licht Tisch":"on"' in routed.messages[1]["content"]
+
+
+def test_global_light_lists_ignore_generic_entity_names_and_support_variants():
+    for query in (
+        "welche lampen sind noch an", "Welche Lampen sind jetzt an",
+        "welche Licher sind jetzt noch an", "welche Lichter sind noch an?",
+        "Welche Lichter sind aus?", "Welche Lampen leuchten noch?",
+        "Welche Lampen sind eingeschaltet?", "Welche Lichter brennen noch?",
+    ):
+        req = request(query)
+        req.messages[0]['content'] = SYSTEM.replace('Licht Tisch', 'Licht')
+        response = direct_live_context_response(req)
+        assert response is not None, query
+        assert json.loads(response['tool_calls'][0]['function']['arguments']) == {
+            'domain': ['light']
+        }
+
+
+def test_wrapped_live_context_lists_every_on_light_with_area():
+    text = "Live Context:\n" + "\n".join(
+        f"- names: Licht\n  domain: light\n  state: '{state}'\n  areas: {area}"
+        for area, state in [('Küche', 'on'), ('Flur', 'on'), ('Bad', 'off'),
+                            ('Garten', 'unavailable')]
+    )
+    response = deterministic_live_response(live_followup(
+        'welche Licher sind noch an?', {'domain': ['light']},
+        {'data': {'result': text}, 'error': False},
+    ))
+    assert response is not None
+    assert 'Licht (Küche)' in response
+    assert 'Licht (Flur)' in response
+    assert 'Bad' not in response
+    assert 'Garten' not in response
+
+
+def test_global_light_list_without_static_catalogue():
+    req = request('Welche Lampen sind jetzt an?')
+    req.messages = [req.messages[-1]]
+    response = direct_live_context_response(req)
+    assert json.loads(response['tool_calls'][0]['function']['arguments']) == {
+        'domain': ['light']
+    }

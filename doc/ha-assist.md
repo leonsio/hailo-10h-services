@@ -523,3 +523,13 @@ generative reasoning.
 
 Hailo's current GenAI concurrency limitation is documented in the upstream
 [Hailo Model Zoo GenAI usage guide](https://github.com/hailo-ai/hailo_model_zoo_genai/blob/main/docs/USAGE.rst).
+
+### Deterministic light state lists
+
+Questions such as “Welche Lampen sind jetzt noch an?”, “Welche Lichter leuchten noch?”
+and the spelling variant “Licher” use GetLiveContext directly and format all matching
+states without an LLM. Global lists query the complete light domain, even when
+multiple entities share a generic name. Lists spanning multiple areas include the
+area names. Both plain results and HA’s `data.result` / `error: false` envelope are
+supported. Only entities supplied by Home Assistant can be listed; missing exposed
+entities or incorrect upstream states cannot be recovered from the tool result.

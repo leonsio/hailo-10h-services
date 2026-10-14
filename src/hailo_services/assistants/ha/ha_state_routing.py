@@ -283,9 +283,6 @@ def _target_arguments(messages, query: str):
         No application-specific exceptions are raised for valid inputs.
     """
     entities = _entries(messages)
-    if not entities:
-        return None
-
     normalized_query = _normalized(query)
     domain_hint = _query_domain(query)
     kind = _query_kind(query)
@@ -350,6 +347,11 @@ def _target_arguments(messages, query: str):
         if normalized_location in _HOME_LOCATIONS:
             return {"domain": [domain_hint]}
         return {"area": location, "domain": [domain_hint]}
+
+    # Plural list/count/all questions select the complete domain before generic
+    # entity names such as "Licht" can narrow or invalidate the query.
+    if domain_hint is not None and kind in {"list", "count", "all"}:
+        return {"domain": [domain_hint]}
 
     # Without an area, retain the original exact-name behaviour.
     explicit = [
@@ -592,8 +594,13 @@ def _live_entities(results, calls):
         payload = _json_object(content)
         if payload is None:
             continue
+        if payload.get("error") or payload.get("success") is False:
+            continue
+        data = payload.get("data")
+        if isinstance(data, dict):
+            payload = data
         result = payload.get("result")
-        if payload.get("success") is True and isinstance(result, str):
+        if payload.get("success") is not False and isinstance(result, str):
             entities.extend(_entities_from_live_text(result))
             continue
         call = calls[index] if index < len(calls) else next(iter(call_by_id.values()), {})
@@ -760,7 +767,12 @@ def deterministic_live_response(request):
             return t("ha_state_routing.463", label=label, expected_label=expected_label)
         return (
             f"{expected_label.capitalize()}: "
-            + ", ".join(entity["name"] for entity in matching)
+            + ", ".join(
+                f"{entity['name']} ({entity['area']})"
+                if entity["area"] and len({item["area"] for item in matching}) > 1
+                else entity["name"]
+                for entity in matching
+            )
             + "."
         )
 
@@ -983,7 +995,7 @@ def _friendly_live_error(calls, results) -> str | None:
             continue
         error = payload.get("error")
         failed = payload.get("success") is False
-        if error is None and not failed:
+        if not error and not failed:
             continue
 
         call = calls[index] if index < len(calls) else (calls[0] if calls else {})
