@@ -7,7 +7,7 @@ let ttsBusy = false, ttsReady = false;
 const ttsURLs = new Set();
 let recording = null, starting = false, stopping = false, pageHidden = false;
 
-let uiLanguage = "de", uiStrings = {}, uiChoice = "auto", languageNames = {};
+let uiLanguage = "de", uiStrings = {}, uiChoice = "auto", languageNames = {}, playgroundReady = false;
 const keyStorageName = "hailo-api-key";
 try { $("api-key").value = sessionStorage.getItem(keyStorageName) || ""; } catch { /* Private browsing can disable storage. */ }
 $("api-key").addEventListener("input", () => {
@@ -24,59 +24,25 @@ $("api-key").addEventListener("input", () => {
  * @returns {string} Localized text or the original key.
  */
 function tr(key, values = {}) {
-  return (uiStrings[key] || key).replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ""));
+  return window.HailoUI.t(key, values);
 }
-/**
- * Read the persisted UI language preference when browser storage is available.
- * @returns {string|null} Saved preference, or null when unavailable.
- */
-function savedChoice() {
-  try { return localStorage.getItem("hailo-ui-language") || "auto"; } catch { return "auto"; }
-}
-/**
- * Resolve an explicit or automatic language choice to a supported locale.
- * @param {string} choice Selected preference or auto.
- * @returns {string} Supported locale code.
- */
-function chooseLanguage(choice) {
-  const supported = config?.ui_languages || ["de", "en", "ru"];
-  if (supported.includes(choice)) return choice;
-  for (const value of navigator.languages || [navigator.language || ""]) {
-    const code = value.toLowerCase().split("-")[0];
-    if (supported.includes(code)) return code;
-  }
-  return config?.service_language || "de";
-}
-/**
- * Load localized UI labels and refresh language-dependent controls.
- * @param {string} choice Language preference.
- * @returns {Promise<void>} Resolves after the UI catalogue is applied.
- */
-async function loadLanguage(choice) {
-  const language = chooseLanguage(choice);
-  const response = await fetch(`ui/locales/${language}.json`);
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const data = await response.json();
-  uiLanguage = language; uiStrings = data.ui || {}; uiChoice = choice;
+/** @returns {string} Stored shared interface language choice. */
+function savedChoice() { return window.HailoUI.savedChoice(); }
+/** @returns {string} Supported language for the shared browser preference. */
+function chooseLanguage(choice) { return window.HailoUI.chooseLanguage(choice, config); }
+/** @returns {Promise<void>} Loads the shared language for the playground. */
+async function loadLanguage(choice) { await window.HailoUI.load(choice, config); }
+window.HailoUI.subscribe(async () => {
+  const data = window.HailoUI.catalogue;
+  uiLanguage = window.HailoUI.language; uiStrings = data.ui || {}; uiChoice = window.HailoUI.choice;
   languageNames = data.language_names || {};
-  $("ui-language").replaceChildren(new Option(tr("ui_81"), "auto"),
-    ...(config?.ui_languages || ["de", "en", "ru"]).map(code => new Option(languageNames[code] || code, code)));
-  $("ui-language").value = choice;
   const selectedSTT = $("language").value;
   $("language").replaceChildren(new Option(tr("ui_71"), ""),
     ...(config?.stt_languages || ["de", "en", "ru"]).map(code => new Option(languageNames[code] || code, code)));
   $("language").value = selectedSTT;
   updateTTSVoice();
-  document.documentElement.lang = language;
-  for (const element of document.querySelectorAll("[data-i18n]")) element.textContent = tr(element.dataset.i18n);
-  for (const element of document.querySelectorAll("[data-i18n-placeholder]")) element.placeholder = tr(element.dataset.i18nPlaceholder);
-  for (const element of document.querySelectorAll("[data-i18n-alt]")) element.alt = tr(element.dataset.i18nAlt);
-  for (const element of document.querySelectorAll("[data-i18n-aria]")) element.setAttribute("aria-label", tr(element.dataset.i18nAria));
-}
-$("ui-language").addEventListener("change", async () => {
-  const choice = $("ui-language").value;
-  try { await loadLanguage(choice); updateChatMode(); localStorage.setItem("hailo-ui-language", choice); await refreshStatus(); }
-  catch (error) { note("status-note", error.message, true); }
+  if (config) updateChatMode();
+  if (playgroundReady) await refreshStatus();
 });
 
 /**
@@ -575,9 +541,8 @@ async function init() {
   try {
     config = await request("ui/config");
     $("tts-input").maxLength = config.piper?.max_input_chars || 4096;
-    $("ui-language").value = savedChoice();
-    await loadLanguage($("ui-language").value);
-    await refreshStatus(); setInterval(refreshStatus, 5000);
+    await loadLanguage(savedChoice());
+    await refreshStatus(); playgroundReady = true; setInterval(refreshStatus, 5000);
     $("chat-model").replaceChildren();
     for (const model of config.chat_models || [config.vlm_model]) {
       $("chat-model").add(new Option(`${model} · ${model === config.ha_assist_model ? "Home Assistant" : model === config.llm_model ? "LiteRT-LM / CPU" : "Hailo"}`, model));

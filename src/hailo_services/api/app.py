@@ -77,6 +77,8 @@ _WEB_FILES = {
     "/monitor": "monitor.html",
     "/settings": "settings.html",
     "/ui/settings.js": "settings.js",
+    "/ui/common.js": "common.js",
+    "/ui/common.css": "common.css",
 }
 
 
@@ -846,16 +848,32 @@ def create_app(
         zmq_enabled = bool(settings.vision_enabled and settings.vision_zmq_enabled)
         zmq_listening = bool(frigate_zmq.socket is not None and not frigate_zmq.socket.closed
                              and frigate_zmq.task is not None and not frigate_zmq.task.done())
+        hardware = supervisor.hailo.telemetry_status() if supervisor is not None else {
+            **device_telemetry.snapshot(),
+            "resident_models": resident_models(runtime.backend, vision.backend, settings),
+        }
+        loaded = {role: [model["name"] for model in hardware["resident_models"] if model["role"] == role]
+                  for role in ("VLM", "LLM", "Whisper", "YOLO")}
+        cpu_worker = status.get("workers", {}).get("llm")
+        piper_worker = status.get("workers", {}).get("piper")
+        cpu_models = [status["litert_lm"]["model"]] if status["litert_lm"]["ready"] and (not cpu_worker or cpu_worker["status"] == "ready") else []
+        available = set(sum(loaded.values(), []) + cpu_models)
+        service_models = {
+            "VLM": loaded["VLM"], "Hailo LLM": loaded["LLM"], "Whisper": loaded["Whisper"], "YOLO": loaded["YOLO"], "LLM": cpu_models,
+            "Piper": [Path(status["piper"]["voice"]).stem] if status["piper"]["ready"] and (not piper_worker or piper_worker["status"] == "ready") else [],
+            "HA-Assist": list(dict.fromkeys(model for model in (settings.ha_assist_text_model, settings.ha_assist_vision_model) if model in available)),
+            "Frigate-Assist": list(dict.fromkeys(model for model in (settings.frigate_text_model, settings.frigate_vision_model) if model in available)),
+        }
+        services = monitor.snapshot()
+        for name, values in services.items():
+            values["models"] = service_models.get(name, [])
         return {
             "started_at": monitor.started,
             "generated_at": timestamp(),
-            "services": monitor.snapshot(),
+            "services": services,
             "health": status,
             "resources": monitor.resources(status.get("workers")),
-            "hailo_device": supervisor.hailo.telemetry_status() if supervisor is not None else {
-                **device_telemetry.snapshot(),
-                "resident_models": resident_models(runtime.backend, vision.backend, settings),
-            },
+            "hailo_device": hardware,
             "system_services": {
                 "host": {"name": socket.gethostname(), "status": "running"},
                 "http": {"enabled": True, "status": "listening", "host": settings.host, "port": settings.port,

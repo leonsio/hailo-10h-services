@@ -10,9 +10,39 @@ from pathlib import Path
 import yaml
 
 from hailo_services.config import Settings
+from hailo_services.runtime.models import ModelManager
 
 _LOCK = threading.RLock()
 _SECRET = {"settings.api_key", "settings.mqtt_password"}
+
+_MODEL_KINDS = {
+    "models.vlm.model": ("vlm",), "settings.vlm_hef": ("vlm",),
+    "models.whisper.model": ("whisper",), "settings.whisper_hef": ("whisper",),
+    "models.hailo_llm.model": ("llm",), "settings.hailo_llm_model": ("llm",),
+    "vision.model": ("vision",), "models.vision.model": ("vision",), "settings.vision_model": ("vision",),
+    "settings.ha_assist_text_model": ("llm", "vlm", "litert"),
+    "settings.ha_assist_vision_model": ("vlm",),
+    "settings.frigate_assist_text_model": ("llm", "vlm", "litert"),
+    "settings.frigate_assist_vision_model": ("vlm",),
+}
+
+
+def _catalogue(document):
+    """Read selectable model IDs from the configured catalogue without downloads.
+
+    Returns:
+        dict: Catalogue entries keyed by model ID.
+    """
+    path = os.getenv("HAILO_MODEL_CATALOG", (document.get("settings") or {}).get("model_catalog", ""))
+    if not isinstance(path, str):
+        raise ValueError("Modellkatalog-Pfad muss eine Zeichenfolge sein")
+    try:
+        entries = ModelManager(Settings(model_catalog=path)).entries
+    except KeyError as exc:
+        raise ValueError("Modellkatalog muss eine models-Zuordnung enthalten") from exc
+    if not isinstance(entries, dict) or any(not isinstance(name, str) or not isinstance(entry, dict) for name, entry in entries.items()):
+        raise ValueError("Ungültige Modelle im Modellkatalog")
+    return entries
 
 
 class SettingsStoreError(Exception):
@@ -87,9 +117,21 @@ class SettingsStore:
         """
         with _LOCK:
             raw, document = self._load()
-            return {"version": hashlib.sha256(raw).hexdigest(), "fields": self._fields(document),
+            fields = self._fields(document)
+            catalog_error = None
+            try:
+                entries = _catalogue(document)
+            except (OSError, ValueError, yaml.YAMLError) as exc:
+                entries = {}
+                catalog_error = str(exc)
+            for field in fields:
+                kinds = _MODEL_KINDS.get(field["path"])
+                if kinds:
+                    field["options"] = sorted(name for name, entry in entries.items() if entry.get("kind") in kinds)
+                    field["allow_empty"] = field["path"].startswith("settings.frigate_assist_")
+            return {"version": hashlib.sha256(raw).hexdigest(), "fields": fields,
                     "path": str(self.path), "restart_available": bool(os.getenv("INVOCATION_ID")),
-                    "restart_required": True}
+                    "restart_required": True, "catalog_error": catalog_error}
 
     def write(self, payload):
         """Validate a sparse patch and replace the YAML file.
@@ -116,7 +158,9 @@ class SettingsStore:
                     continue  # Empty password fields keep the existing secret.
                 if path in _SECRET and value is None:
                     value = ""  # Explicit clear from the settings UI.
-                if original == "NoneType" and value == "":
+                if original == "NoneType" and path in {"settings.frigate_assist_text_model", "settings.frigate_assist_vision_model"} and type(value) is str:
+                    value = value or None
+                elif original == "NoneType" and value == "":
                     value = None
                 elif original == "float" and type(value) in (int, float):
                     value = float(value)
@@ -127,6 +171,26 @@ class SettingsStore:
                 for name in parents:
                     cursor = cursor[name]
                 cursor[leaf] = value
+            # Validate changed named selections against the target catalogue and
+            # role. Existing explicit local HEF paths remain supported.
+            model_changes = set(changes) & set(_MODEL_KINDS)
+            if model_changes:
+                try:
+                    entries = _catalogue(document)
+                    for path in model_changes:
+                        cursor = document
+                        for name in path.split("."):
+                            cursor = cursor[name]
+                        if not cursor:
+                            if path not in {"settings.frigate_assist_text_model", "settings.frigate_assist_vision_model"}:
+                                raise ValueError(f"Modell darf nicht leer sein: {path}")
+                            continue
+                        if Path(cursor).is_absolute() or cursor.endswith(".hef"):
+                            continue
+                        if entries.get(cursor, {}).get("kind") not in _MODEL_KINDS[path]:
+                            raise ValueError(f"Modell {cursor!r} passt nicht zu {path}")
+                except (OSError, ValueError, yaml.YAMLError) as exc:
+                    raise SettingsStoreError(str(exc)) from exc
             encoded = yaml.safe_dump(document, allow_unicode=True, sort_keys=False).encode()
             # Validate with exactly the same loader as the next service start,
             # without environment overrides masking broken YAML values.

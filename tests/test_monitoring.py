@@ -369,3 +369,45 @@ def test_worker_listener_receives_telemetry_without_an_inference_request():
     alive[0] = False
     assert client.telemetry_status()["nnc_percent"] is None
     assert client.telemetry_status()["resident_models"] == []
+
+
+def test_settings_model_choices_match_catalogue_roles_and_validate_writes(tmp_path, monkeypatch):
+    path = tmp_path / "config.yaml"
+    path.write_text("settings:\n  frigate_assist_text_model: null\nmodels:\n  vlm:\n    model: Qwen2-VL-2B-Instruct\n  whisper:\n    model: Whisper-Base\nvision:\n  model: yolov11m\n", encoding="utf-8")
+    monkeypatch.setenv("HAILO_CONFIG", str(path))
+    with TestClient(create_app(settings(), FakeBackend())) as client:
+        data = client.get("/v1/settings").json()
+        fields = {field["path"]: field for field in data["fields"]}
+        assert set(fields["models.vlm.model"]["options"]) == {"Qwen2-VL-2B-Instruct", "Qwen3-VL-2B-Instruct"}
+        assert set(fields["models.whisper.model"]["options"]) == {"Whisper-Base", "Whisper-Small", "Whisper-Tiny"}
+        assert "yolov11m" in fields["vision.model"]["options"]
+        assert "gemma-4-E2B-it" in fields["settings.frigate_assist_text_model"]["options"]
+        assert fields["settings.frigate_assist_text_model"]["allow_empty"]
+        bad = client.put("/v1/settings", json={"version": data["version"], "changes": {"models.vlm.model": "Whisper-Base"}})
+        assert bad.status_code == 400
+        saved = client.put("/v1/settings", json={"version": data["version"], "changes": {"models.vlm.model": "Qwen3-VL-2B-Instruct", "settings.frigate_assist_text_model": "gemma-4-E2B-it"}})
+        assert saved.status_code == 200
+
+
+def test_settings_choices_use_custom_catalogue_without_reading_model_files(tmp_path, monkeypatch):
+    catalog = tmp_path / "models.yaml"
+    catalog.write_text("schema_version: 1\nmodels:\n  custom-vlm:\n    kind: vlm\n  custom-whisper:\n    kind: whisper\n  ignored-asset:\n    kind: asset\n", encoding="utf-8")
+    config = tmp_path / "config.yaml"
+    config.write_text(f"settings:\n  model_catalog: {catalog}\nmodels:\n  vlm:\n    model: custom-vlm\n", encoding="utf-8")
+    monkeypatch.setenv("HAILO_CONFIG", str(config))
+    with TestClient(create_app(settings(), FakeBackend())) as client:
+        data = client.get("/v1/settings").json()
+        fields = {field["path"]: field for field in data["fields"]}
+        assert fields["models.vlm.model"]["options"] == ["custom-vlm"]
+        assert data["catalog_error"] is None
+
+
+def test_monitor_service_caption_lists_only_successfully_loaded_models():
+    backend = FakeBackend()
+    backend.vlm = object()
+    with TestClient(create_app(settings(vlm_hef="Qwen3-VL-2B-Instruct"), backend)) as client:
+        data = client.get("/v1/monitor").json()
+        assert data["services"]["VLM"]["models"] == ["Qwen3-VL-2B-Instruct"]
+        assert data["services"]["Whisper"]["models"] == []
+        backend.vlm = None
+        assert client.get("/v1/monitor").json()["services"]["VLM"]["models"] == []
