@@ -13,6 +13,9 @@ settings:
   wyoming_host: 0.0.0.0
   wyoming_port: 10300
   api_key: ""
+  # Optional HTTP/WebSocket key exemption for socket peer IPs or CIDR networks.
+  # Empty (default) keeps key authentication for every non-public API route.
+  api_no_auth_networks: ""
   language: de
   service_language: de
   # CPU text-to-speech; provision the ONNX/JSON voice pair before enabling.

@@ -1,5 +1,14 @@
 "use strict";
 const $ = id => document.getElementById(id);
+const keyStorageName = "hailo-api-key";
+try { $("key").value = sessionStorage.getItem(keyStorageName) || ""; } catch { /* Storage may be disabled. */ }
+$("key").addEventListener("input", () => {
+  try {
+    const key = $("key").value.trim();
+    if (key) sessionStorage.setItem(keyStorageName, key);
+    else sessionStorage.removeItem(keyStorageName);
+  } catch { /* The page can still send a key without storage. */ }
+});
 const locale = navigator.language || "de";
 const fmt = value => typeof value === "number" ? new Intl.NumberFormat(locale, {maximumFractionDigits: 1}).format(value) : "—";
 const bytes = value => typeof value === "number" ? `${fmt(value / 1048576)} MiB` : "—";

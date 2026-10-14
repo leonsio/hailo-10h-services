@@ -130,7 +130,7 @@
     "ui_46": "Clé API",
     "ui_47": "HAILO_API_KEY de la configuration du service",
     "ui_48": "Vérifier l’accès",
-    "ui_49": "La clé reste uniquement en mémoire dans cette page et n’est pas enregistrée.",
+    "ui_49": "La clé reste enregistrée pour cet onglet et disparaît à sa fermeture.",
     "ui_50": "MODÈLES LOCAUX",
     "ui_51": "Nouvelle conversation",
     "ui_52": "Modèle",

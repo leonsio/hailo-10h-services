@@ -54,6 +54,11 @@ def test_yaml_rejects_invalid_config(tmp_path, monkeypatch, text):
         Settings.from_env()
 
 
+def test_api_no_auth_networks_rejects_invalid_cidr():
+    with pytest.raises(ValueError, match="api_no_auth_networks"):
+        Settings(api_no_auth_networks="127.0.0.1,not-a-network")
+
+
 def test_yaml_vision_block_selects_model_and_zmq(tmp_path, monkeypatch):
     path = tmp_path / "config.yaml"
     path.write_text("""vision:

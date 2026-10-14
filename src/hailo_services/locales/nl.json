@@ -130,7 +130,7 @@
     "ui_46": "API-sleutel",
     "ui_47": "HAILO_API_KEY uit de serviceconfiguratie",
     "ui_48": "Toegang controleren",
-    "ui_49": "De sleutel blijft uitsluitend in het paginageheugen en wordt niet opgeslagen.",
+    "ui_49": "De sleutel blijft voor dit browsertabblad bewaard en wordt bij het sluiten verwijderd.",
     "ui_50": "LOKALE MODELLEN",
     "ui_51": "Nieuwe chat",
     "ui_52": "Model",

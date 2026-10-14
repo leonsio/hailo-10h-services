@@ -130,7 +130,7 @@
     "ui_46": "API-Schlüssel",
     "ui_47": "HAILO_API_KEY aus der Service-Konfiguration",
     "ui_48": "Zugang prüfen",
-    "ui_49": "Der Schlüssel bleibt nur im Speicher dieser Seite und wird nicht gespeichert.",
+    "ui_49": "Der Schlüssel bleibt für diesen Browser-Tab gespeichert und wird beim Schließen des Tabs gelöscht.",
     "ui_50": "LOKALE MODELLE",
     "ui_51": "Neuer Chat",
     "ui_52": "Modell",

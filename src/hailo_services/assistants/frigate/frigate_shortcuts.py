@@ -53,7 +53,11 @@ from hailo_services.shared.tool_calling import arguments_object, selected_tools
 
 
 def _latest_text(request):
-    """Return the latest user text without copying assistant text."""
+    """Return the latest user text without copying assistant text.
+
+    Returns:
+        str: Most recent user text or an empty string.
+    """
     return next(
         (
             text_content(message).strip()
@@ -65,7 +69,11 @@ def _latest_text(request):
 
 
 def _user_texts(request):
-    """Return all user texts in conversation order."""
+    """Return all user texts in conversation order.
+
+    Returns:
+        list[str]: User messages in conversation order.
+    """
     return [
         text_content(message).strip()
         for message in request.messages
@@ -74,7 +82,11 @@ def _user_texts(request):
 
 
 def _active_call_arguments(request, name):
-    """Return arguments for the latest active-round call of ``name``."""
+    """Return arguments for the latest active-round call of ``name``.
+
+    Returns:
+        dict | None: Latest matching call arguments, if present.
+    """
     last_user = max(
         (index for index, message in enumerate(request.messages) if message.get("role") == "user"),
         default=-1,
@@ -91,7 +103,11 @@ def _active_call_arguments(request, name):
 
 
 def _zone_catalogue(messages):
-    """Extract zone IDs and friendly names from Frigate's supplied camera catalogue."""
+    """Extract zone IDs and friendly names from Frigate's supplied camera catalogue.
+
+    Returns:
+        dict: Supplied zone IDs and labels.
+    """
     zones = {}
     for message in messages:
         if message.get("role") != "system":
@@ -106,7 +122,11 @@ def _zone_catalogue(messages):
 
 
 def _string_list(value):
-    """Validate a compact list of strings returned by Frigate."""
+    """Validate a compact list of strings returned by Frigate.
+
+    Returns:
+        list[str] | None: Validated strings or no usable list.
+    """
     if value is None:
         return []
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
@@ -115,7 +135,11 @@ def _string_list(value):
 
 
 def _render_recap(request, events):
-    """Render every canonical recap event without truncation or model inference."""
+    """Render every canonical recap event without truncation or model inference.
+
+    Returns:
+        str | None: Rendered event lines or no available recap.
+    """
     cameras = camera_catalogue(request.messages)
     zones = _zone_catalogue(request.messages)
     lines = []
@@ -158,13 +182,21 @@ def _render_recap(request, events):
 
 
 def _explicit_recap_listing(text):
-    """Return whether text explicitly asks to show/list recap records."""
+    """Return whether text explicitly asks to show/list recap records.
+
+    Returns:
+        bool: Whether the user requested a recap listing.
+    """
     tokens = _tokens(text)
     return bool(tokens & _RECAP and tokens & _SEARCH)
 
 
 def _time_only_recap_followup(request, text):
-    """Accept only conservative time refinements of an explicit recap-list request."""
+    """Accept only conservative time refinements of an explicit recap-list request.
+
+    Returns:
+        bool: Whether the follow-up only changes the time range.
+    """
     users = _user_texts(request)
     if len(users) < 2 or not _explicit_recap_listing(users[-2]):
         return False
@@ -210,7 +242,11 @@ def _time_only_recap_followup(request, text):
 
 
 def _recap_listing_interval(request):
-    """Resolve the interval for a direct recap-list result without reinterpreting filters."""
+    """Resolve the interval for a direct recap-list result without reinterpreting filters.
+
+    Returns:
+        dict | None: Normalized range or no safe match.
+    """
     recognized, interval, clarification = event_interval(request)
     if recognized and interval is not None and clarification is None:
         return interval
@@ -229,7 +265,11 @@ def _recap_listing_interval(request):
 
 
 def _simple_recap_result(request, results):
-    """Finish an explicit event-list request when get_recap returned canonical data."""
+    """Finish an explicit event-list request when get_recap returned canonical data.
+
+    Returns:
+        str | None: Direct recap response or no shortcut.
+    """
     if set(results) != {"get_recap"}:
         return None
     recap = results.get("get_recap")
@@ -251,7 +291,11 @@ def _simple_recap_result(request, results):
 
 
 def _home_span(request, text):
-    """Locate a localized home/house reference using the existing locale aliases."""
+    """Locate a localized home/house reference using the existing locale aliases.
+
+    Returns:
+        tuple[int, int] | None: Matching text span, if any.
+    """
     language = _language(request, text)
     aliases = set(catalogue(language).get("aliases", {}).get("haus", []))
     aliases.add("haus")
@@ -280,6 +324,9 @@ def _named_home_query(request, text):
     The shortcut intentionally returns evidence (the latest matching sighting), not
     a claim that the sighting proves an arrival. Ambiguous/lower-case free-form names
     fall through to the normal model path.
+
+    Returns:
+        dict | None: Search arguments or no safe named-person match.
     """
     words = re.findall(r"[^\W\d_]+(?:[-'’][^\W\d_]+)*", text, re.UNICODE)
     if not any(word.casefold() in _WHEN for word in words):
@@ -333,7 +380,11 @@ def _named_home_query(request, text):
 
 
 def _named_home_plan(request, tools, results):
-    """Call/search and then deterministically summarize a named home sighting."""
+    """Call/search and then deterministically summarize a named home sighting.
+
+    Returns:
+        tuple | None: Deterministic response or tool call, if applicable.
+    """
     text = _latest_text(request)
     query = _named_home_query(request, text)
     if query is None:
@@ -362,7 +413,11 @@ def _named_home_plan(request, tools, results):
 
 
 def shortcut_plan(request, settings, images):
-    """Return a safe deterministic shortcut or ``None`` for the established planners."""
+    """Return a safe deterministic shortcut or ``None`` for the established planners.
+
+    Returns:
+        tuple | None: Selected shortcut result or no shortcut.
+    """
     del settings
     if images:
         return None

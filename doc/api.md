@@ -58,11 +58,27 @@ Authorization: Bearer API_KEY
 ```
 
 `/health` and the browser UI remain public according to the service middleware rules.
-`/v1/monitor` requires the bearer key when configured; the public monitoring page
-requests the key in its own browser session and never stores it.
+`/v1/monitor` requires the bearer key when configured unless the connecting socket
+peer matches `settings.api_no_auth_networks`. The Playground and monitoring page
+share the key in the current browser tab using `sessionStorage`; closing the tab
+clears it.
 MCP may omit the API key for configured peer networks in
 `settings.mcp_no_auth_networks`; `settings.mcp_hosts` separately protects allowed Host
 headers.
+
+To allow keyless HTTP and WebSocket requests from selected IPs or CIDR networks,
+set `settings.api_no_auth_networks` to a comma-separated list (default: empty):
+
+```yaml
+settings:
+  api_key: "YOUR_SECRET"
+  api_no_auth_networks: "127.0.0.1,192.168.2.0/24,2001:db8::/64"
+```
+
+Only the actual TCP socket peer is checked; `X-Forwarded-For` and other client
+headers cannot grant access. Behind a reverse proxy, the peer seen by the service
+is the proxy, so only exempt that proxy if all traffic through it may be keyless.
+MCP uses its separate `mcp_no_auth_networks` list.
 
 Wyoming and the Frigate ZMQ listener do not use the HTTP bearer token. Keep them on a
 trusted network. In particular, **ZMQ is unauthenticated**: bind
@@ -703,8 +719,8 @@ settings:
   mcp_no_auth_networks: "127.0.0.0/8,::1/128,192.168.0.0/16"
 ```
 
-The peer-network exemption applies only to MCP. Normal HTTP/WebSocket bearer auth is
-unchanged.
+The MCP exemption is independent from `api_no_auth_networks`, which applies to
+normal HTTP/WebSocket requests and defaults to no exempt networks.
 
 ## WebSocket and MQTT
 

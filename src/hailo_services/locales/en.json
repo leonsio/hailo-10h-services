@@ -130,7 +130,7 @@
     "ui_46": "API key",
     "ui_47": "HAILO_API_KEY from service configuration",
     "ui_48": "Check access",
-    "ui_49": "The key stays only in page memory and is not saved.",
+    "ui_49": "The key is kept for this browser tab and removed when the tab is closed.",
     "ui_50": "LOCAL MODELS",
     "ui_51": "New chat",
     "ui_52": "Model",

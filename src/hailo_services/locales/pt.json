@@ -130,7 +130,7 @@
     "ui_46": "Chave API",
     "ui_47": "HAILO_API_KEY da configuração do serviço",
     "ui_48": "Verificar acesso",
-    "ui_49": "A chave fica apenas na memória da página e não é guardada.",
+    "ui_49": "A chave fica guardada nesta aba e é removida quando a aba é fechada.",
     "ui_50": "MODELOS LOCAIS",
     "ui_51": "Nova conversa",
     "ui_52": "Modelo",

@@ -591,6 +591,43 @@ def test_mcp_local_auth_bypass(peer, networks, status):
                 pass
 
 
+@pytest.mark.parametrize(
+    "peer,networks,status",
+    [
+        ("192.168.2.4", "192.168.2.4", 200),
+        ("::ffff:192.168.2.4", "192.168.2.0/24", 200),
+        ("2001:db8::12", "2001:db8::/64", 200),
+        ("192.168.2.5", "192.168.2.4", 401),
+        ("203.0.113.5", "192.168.0.0/16", 401),
+        ("192.168.2.4", "", 401),
+    ],
+)
+def test_http_network_auth_exemption_uses_socket_peer(peer, networks, status):
+    config = settings(api_key="secret", api_no_auth_networks=networks, mcp_no_auth_networks="")
+    with TestClient(create_app(config, FakeBackend()), client=(peer, 1234)) as client:
+        response = client.get("/v1/monitor", headers={"X-Forwarded-For": "192.168.2.4"})
+        assert response.status_code == status
+        assert client.get("/v1/models").status_code == status
+        assert client.get("/ui/config").json()["auth_required"] is (status == 401)
+        assert client.get("/v1/models", headers={"Authorization": "Bearer secret"}).status_code == 200
+        # The MCP auth policy remains independent from normal HTTP access.
+        assert client.post("/mcp/").status_code == 401
+
+
+def test_websocket_network_auth_exemption():
+    from starlette.websockets import WebSocketDisconnect
+
+    config = settings(api_key="secret", api_no_auth_networks="192.0.2.0/24")
+    with TestClient(create_app(config, FakeBackend()), client=("192.0.2.8", 1234)) as client:
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_json({"id": "monitor-auth", "op": "health"})
+            assert websocket.receive_json()["result"]["ready"]
+    with TestClient(create_app(config, FakeBackend()), client=("203.0.113.8", 1234)) as client:
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/ws", headers={"X-Forwarded-For": "192.0.2.8"}):
+                pass
+
+
 def test_keyless_mcp_keeps_host_and_body_limits():
     config = settings(api_key="secret", mcp_hosts="testserver", max_body=2048)
     with TestClient(create_app(config, FakeBackend()), client=("192.168.2.4", 1234)) as client:

@@ -149,6 +149,7 @@ settings:
   host: 0.0.0.0
   port: 8090
   api_key: ""
+  api_no_auth_networks: "" # Optional keyless HTTP/WebSocket peer IPs/CIDRs
   ha_assist_enabled: true
   ha_assist_text_model: gemma-4-E2B-it
   ha_assist_vision_model: Qwen2-VL-2B-Instruct

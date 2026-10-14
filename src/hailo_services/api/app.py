@@ -112,6 +112,11 @@ class AccessAndSizeLimit:
             for network in settings.mcp_no_auth_networks.split(",")
             if network.strip()
         )
+        self.api_no_auth_networks = tuple(
+            ip_network(network.strip())
+            for network in settings.api_no_auth_networks.split(",")
+            if network.strip()
+        )
 
     async def __call__(self, scope, receive, send):
         """Enforce access/body policy before dispatching an ASGI request.
@@ -222,14 +227,21 @@ class AccessAndSizeLimit:
             )
         )
         # Trust the socket peer only, never client-supplied forwarding headers.
-        if protocol == "mcp" and not is_websocket:
-            try:
-                address = ip_address(peer[0])
-                if address.version == 6 and address.ipv4_mapped:
-                    address = address.ipv4_mapped
-                public = any(address in network for network in self.mcp_no_auth_networks)
-            except ValueError:
-                pass
+        peer_exempt = False
+        try:
+            address = ip_address(peer[0])
+            if address.version == 6 and address.ipv4_mapped:
+                address = address.ipv4_mapped
+            networks = (
+                self.mcp_no_auth_networks
+                if protocol == "mcp" and not is_websocket
+                else self.api_no_auth_networks
+            )
+            peer_exempt = any(address in network for network in networks)
+            public = public or peer_exempt
+        except ValueError:
+            pass
+        scope["state"]["auth_required"] = bool(self.settings.api_key and not peer_exempt)
         if self.settings.api_key and not public:
             if not hmac.compare_digest(headers.get(b"authorization", b""), expected):
                 if scope["type"] == "websocket":
@@ -561,7 +573,7 @@ def create_app(
         app.add_route(path, web_file, methods=["GET", "HEAD"], include_in_schema=False)
 
     @app.get("/ui/config", include_in_schema=False)
-    async def web_config():
+    async def web_config(request: Request):
         """Expose enabled models, limits and language settings to the browser.
 
         Returns:
@@ -571,7 +583,7 @@ def create_app(
             No application-specific exceptions are raised for valid inputs.
         """
         return {
-            "auth_required": bool(settings.api_key),
+            "auth_required": request.scope["state"].get("auth_required", bool(settings.api_key)),
             "vlm_model": settings.vlm_model,
             "llm_model": LLM_MODEL,
             "hailo_llm_model": settings.hailo_llm_model_id,

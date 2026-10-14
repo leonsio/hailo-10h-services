@@ -8,6 +8,15 @@ const ttsURLs = new Set();
 let recording = null, starting = false, stopping = false, pageHidden = false;
 
 let uiLanguage = "de", uiStrings = {}, uiChoice = "auto", languageNames = {};
+const keyStorageName = "hailo-api-key";
+try { $("api-key").value = sessionStorage.getItem(keyStorageName) || ""; } catch { /* Private browsing can disable storage. */ }
+$("api-key").addEventListener("input", () => {
+  try {
+    const key = $("api-key").value.trim();
+    if (key) sessionStorage.setItem(keyStorageName, key);
+    else sessionStorage.removeItem(keyStorageName);
+  } catch { /* Keep the key usable in this page even without storage. */ }
+});
 /**
  * Format a translated UI string with named placeholder values.
  * @param {string} key Translation key.

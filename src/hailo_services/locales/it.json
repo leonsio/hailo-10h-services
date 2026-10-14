@@ -130,7 +130,7 @@
     "ui_46": "Chiave API",
     "ui_47": "HAILO_API_KEY dalla configurazione del servizio",
     "ui_48": "Verifica accesso",
-    "ui_49": "La chiave resta solo nella memoria della pagina e non viene salvata.",
+    "ui_49": "La chiave viene conservata per questa scheda e rimossa alla sua chiusura.",
     "ui_50": "MODELLI LOCALI",
     "ui_51": "Nuova chat",
     "ui_52": "Modello",

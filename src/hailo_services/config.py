@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass
+from ipaddress import ip_network
 from pathlib import Path
 
 import yaml
@@ -52,6 +53,7 @@ class Settings:
         wyoming_host (str): Wyoming speech listener bind address.
         wyoming_port (int): Wyoming listener port; zero disables the listener.
         api_key (str): Bearer credential for protected API requests; empty disables key checks.
+        api_no_auth_networks (str): CIDR ranges or IPs whose actual HTTP/WebSocket socket peers need no key.
         vlm_hef (str): Catalogue ID or local HEF path of the vision-language model.
         whisper_hef (str): Catalogue ID or local HEF path of the speech model.
         language (str): Default Whisper transcription language.
@@ -127,6 +129,7 @@ class Settings:
     wyoming_host: str = "0.0.0.0"
     wyoming_port: int = 10300
     api_key: str = ""
+    api_no_auth_networks: str = ""
     vlm_hef: str = VLM_MODEL
     whisper_hef: str = "Whisper-Base"
     language: str = "de"
@@ -235,6 +238,12 @@ class Settings:
             or self.vision_zmq_endpoint.startswith("ipc://")
         ):
             raise ValueError("vision_zmq_endpoint must use tcp:// or ipc://")
+        for network in self.api_no_auth_networks.split(","):
+            if network.strip():
+                try:
+                    ip_network(network.strip())
+                except ValueError as exc:
+                    raise ValueError(f"Invalid api_no_auth_networks entry: {network.strip()}") from exc
 
     @property
     def frigate_text_model(self):

@@ -6,7 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const web = path.join(__dirname, '../src/hailo_services/web');
 
-function page(overrides = {}) {
+function page(overrides = {}, sessionStorage = { getItem() { return null; }, setItem() {}, removeItem() {} }) {
   class Element {
     constructor() { this.value = ''; this.children = []; this.events = {}; this.disabled = false; this.hidden = false; this.files = []; this.options = []; this.classList = { toggle() {} }; }
     addEventListener(type, fn) { this.events[type] = fn; }
@@ -34,6 +34,7 @@ function page(overrides = {}) {
   const config = { auth_required: true, vlm_model: 'Qwen2-VL-2B-Instruct', whisper_model: 'whisper-base', max_body: 16 * 1024 * 1024, recording_seconds: 1, max_audio_seconds: 120, language: 'de', ...overrides };
   const context = vm.createContext({
     localStorage: { getItem() { return null; }, setItem() {} },
+    sessionStorage,
     document: { documentElement: {}, querySelectorAll() { return []; }, hidden: false, getElementById: id => elements[id], createElement: () => new Element(), addEventListener() {} },
     window: { isSecureContext: true, AudioContext, AudioWorkletNode, addEventListener() {} },
     navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => tracks }) } },
@@ -47,6 +48,42 @@ function page(overrides = {}) {
   vm.runInContext(fs.readFileSync(path.join(web, 'app.js'), 'utf8'), context);
   return { context, elements, tracks, contexts, nodes, calls, ready: () => new Promise(resolve => setImmediate(resolve)), run: code => vm.runInContext(code, context) };
 }
+
+test('API key survives navigation between Playground and monitoring in one browser tab', async () => {
+  assert.match(fs.readFileSync(path.join(web, 'index.html'), 'utf8'), /href="\/monitor"/);
+  assert.match(fs.readFileSync(path.join(web, 'monitor.html'), 'utf8'), /href="\/"[^>]*>Playground/);
+  const values = new Map();
+  const sessionStorage = {
+    getItem: key => values.get(key) || null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: key => values.delete(key),
+  };
+  const playground = page({}, sessionStorage); await playground.ready();
+  playground.elements['api-key'].value = 'shared-secret';
+  playground.elements['api-key'].events.input();
+  assert.equal(values.get('hailo-api-key'), 'shared-secret');
+
+  const monitorElements = Object.fromEntries([...fs.readFileSync(path.join(web, 'monitor.html'), 'utf8').matchAll(/id="([^"]+)"/g)]
+    .map(m => [m[1], { value: '', events: {}, addEventListener(type, fn) { this.events[type] = fn; } }]));
+  const monitorCalls = [];
+  const monitor = vm.createContext({
+    sessionStorage, document: { getElementById: id => monitorElements[id] },
+    navigator: { language: 'de' }, setInterval() {},
+    fetch: async (url, options) => {
+      monitorCalls.push({url, options});
+      return { ok: false, status: 401 };
+    },
+  });
+  vm.runInContext(fs.readFileSync(path.join(web, 'monitor.js'), 'utf8'), monitor);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(monitorElements.key.value, 'shared-secret');
+  assert.equal(monitorCalls[0].options.headers.Authorization, 'Bearer shared-secret');
+  monitorElements.key.value = 'changed-secret'; monitorElements.key.events.input();
+  const nextPlayground = page({}, sessionStorage); await nextPlayground.ready();
+  assert.equal(nextPlayground.elements['api-key'].value, 'changed-secret');
+  nextPlayground.elements['api-key'].value = ''; nextPlayground.elements['api-key'].events.input();
+  assert.equal(values.has('hailo-api-key'), false);
+});
 
 test('PCM WAV header, rate, length, signed samples and clipping', async () => {
   const p = page(); await p.ready();
