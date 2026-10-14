@@ -17,7 +17,7 @@ const item = (label, value) => {
   const row = document.createElement("div"), name = document.createElement("span"), content = document.createElement("strong");
   name.textContent = label; content.textContent = String(value ?? "—"); row.append(name, content); return row;
 };
-let selectedProcess = "gateway", selectedService = "Alle";
+let selectedProcess = "gateway", selectedService = "Alle", renderedLogKey = null;
 const processNames = {gateway: "Gateway", llm: "LLM", hailo: "Hailo", piper: "Piper"};
 function tab(label, selected, onClick) {
   const button = document.createElement("button");
@@ -37,13 +37,30 @@ function renderLogs(groups) {
   const services = ["Alle", ...new Set((group?.lines || []).map(serviceOf).filter(Boolean))];
   if (!services.includes(selectedService)) selectedService = "Alle";
   $("service-tabs").replaceChildren(...services.map(service => tab(service, selectedService === service, () => {selectedService = service; renderLogs(groups);} )));
-  const article = document.createElement("article"), heading = document.createElement("h3"), lines = document.createElement("pre");
   const selected = (group?.lines || []).filter(line => selectedService === "Alle" || serviceOf(line) === selectedService);
+  const key = `${group?.name}:${group?.pid}:${selectedService}`;
+  const panel = $("logs");
+  let article = panel.firstElementChild;
+  if (!article) {
+    article = document.createElement("article");
+    article.append(document.createElement("h3"), document.createElement("pre"));
+    panel.replaceChildren(article);
+  }
+  const [heading, lines] = article.children;
   heading.textContent = `${processNames[group?.name] || group?.name || "Prozess"} · PID ${group?.pid ?? "—"} · ${selected.length}/${group?.lines.length || 0} Zeilen`;
-  lines.textContent = selected.join("\n") || "Keine passenden Logeinträge. Dienstfilter zeigen nur Einträge mit service= oder operation= an.";
-  article.append(heading, lines); $("logs").replaceChildren(article);
+  const content = selected.join("\n") || "Keine passenden Logeinträge. Dienstfilter zeigen nur Einträge mit service= oder operation= an.";
+  if (lines.textContent !== content || key !== renderedLogKey) {
+    const sameTab = key === renderedLogKey;
+    const top = lines.scrollTop, left = lines.scrollLeft;
+    const atBottom = sameTab && lines.scrollHeight - lines.clientHeight - top <= 12;
+    lines.textContent = content;
+    lines.scrollTop = sameTab ? atBottom ? lines.scrollHeight : top : 0;
+    lines.scrollLeft = sameTab ? left : 0;
+  }
+  renderedLogKey = key;
 }
 function render(data) {
+  const pageX = window.scrollX, pageY = window.scrollY;
   const h = data.health || {}, r = data.resources || {};
   const ready = h.ready && (!h.vision?.enabled || h.vision?.ready);
   $("state").textContent = ready ? "Bereit" : "Eingeschränkt";
@@ -94,6 +111,7 @@ function render(data) {
     item("Geladene Hailo-Modelle", resident.join(", ") || "—"));
   $("health-raw").textContent = JSON.stringify(h, null, 2);
   renderLogs(data.logs || []);
+  if (window.scrollX !== pageX || window.scrollY !== pageY) window.scrollTo(pageX, pageY);
 }
 async function refresh() {
   try {

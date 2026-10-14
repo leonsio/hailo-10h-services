@@ -89,7 +89,8 @@ test('API key survives navigation between Playground and monitoring in one brows
 
 test('monitoring switches full-width process and service log tabs', async () => {
   class Element {
-    constructor() { this.children = []; this.value = ''; this.hidden = false; this.events = {}; }
+    constructor() { this.children = []; this.value = ''; this.hidden = false; this.events = {}; this.scrollTop = 0; this.scrollLeft = 0; this.scrollHeight = 200; this.clientHeight = 100; }
+    get firstElementChild() { return this.children[0] || null; }
     addEventListener(type, fn) { this.events[type] = fn; }
     setAttribute(name, value) { this[name] = value; }
     append(...items) { this.children.push(...items); }
@@ -100,6 +101,7 @@ test('monitoring switches full-width process and service log tabs', async () => 
   const context = vm.createContext({
     document: { getElementById: id => elements[id], createElement: () => new Element() },
     sessionStorage: { getItem() { return null; } }, navigator: { language: 'de' }, setInterval() {},
+    window: {scrollX: 0, scrollY: 500, scrollTo(x, y) {this.scrollX = x; this.scrollY = y;}},
     fetch: async url => url === '/ui/config'
       ? { ok: true, json: async () => ({auth_required: false}) }
       : { ok: true, json: async () => ({ health: {ready: true, workers: {hailo: {status: 'ready', pid: 102}}, model_paths: {vlm: '/models/qwen.hef'}}, hailo_device: {pci_address: '0000:02:00.0', link_speed: '8.0 GT/s', link_width: '1', driver: 'hailo1x_pci', temperature_c: 41.2}, resources: {
@@ -117,6 +119,18 @@ test('monitoring switches full-width process and service log tabs', async () => 
   assert.equal(elements['log-tabs'].children.length, 2);
   assert.equal(elements.logs.children.length, 1);
   assert.match(elements.logs.children[0].children[1].textContent, /gateway line/);
+  const logPane = elements.logs.children[0].children[1];
+  logPane.scrollTop = 45; logPane.scrollLeft = 23;
+  context.window.scrollY = 680;
+  vm.runInContext('renderLogs([{name: "gateway", pid: 101, lines: ["new gateway line", "event=monitor_request service=VLM duration_ms=2"]}, {name: "hailo", pid: 102, lines: ["worker line"]}])', context);
+  assert.equal(elements.logs.children[0].children[1], logPane);
+  assert.equal(logPane.scrollTop, 45);
+  assert.equal(logPane.scrollLeft, 23);
+  assert.equal(context.window.scrollY, 680);
+  logPane.scrollTop = 100;
+  vm.runInContext('renderLogs([{name: "gateway", pid: 101, lines: ["another line", "event=monitor_request service=VLM duration_ms=3"]}, {name: "hailo", pid: 102, lines: ["worker line"]}])', context);
+  assert.equal(logPane.scrollTop, 200); // Following the bottom keeps new entries visible.
+  assert.match(logPane.textContent, /another line/);
   assert.equal(elements['service-tabs'].children.length, 2);
   elements['service-tabs'].children[1].events.click();
   assert.doesNotMatch(elements.logs.children[0].children[1].textContent, /gateway line/);
@@ -124,6 +138,7 @@ test('monitoring switches full-width process and service log tabs', async () => 
   elements['log-tabs'].children[1].events.click();
   assert.equal(elements.logs.children.length, 1);
   assert.match(elements.logs.children[0].children[1].textContent, /worker line/);
+  assert.equal(logPane.scrollTop, 0);
 });
 
 test('PCM WAV header, rate, length, signed samples and clipping', async () => {
