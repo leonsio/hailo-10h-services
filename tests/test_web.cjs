@@ -102,7 +102,7 @@ test('monitoring switches full-width process and service log tabs', async () => 
     sessionStorage: { getItem() { return null; } }, navigator: { language: 'de' }, setInterval() {},
     fetch: async url => url === '/ui/config'
       ? { ok: true, json: async () => ({auth_required: false}) }
-      : { ok: true, json: async () => ({ health: {ready: true}, resources: {
+      : { ok: true, json: async () => ({ health: {ready: true, workers: {hailo: {status: 'ready', pid: 102}}, model_paths: {vlm: '/models/qwen.hef'}}, hailo_device: {pci_address: '0000:02:00.0', link_speed: '8.0 GT/s', link_width: '1', driver: 'hailo1x_pci', temperature_c: 41.2}, resources: {
         processes: [{name: 'gateway', pid: 101, rss_bytes: 1048576, cpu_percent: 2},
           {name: 'hailo', pid: 102, rss_bytes: 2097152, cpu_percent: 10}]},
         logs: [{name: 'gateway', pid: 101, lines: ['gateway line', 'event=monitor_request service=VLM duration_ms=1']},
@@ -112,6 +112,8 @@ test('monitoring switches full-width process and service log tabs', async () => 
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(elements.access.hidden, true);
   assert.equal(elements.processes.children.length, 2);
+  assert.match(elements['hailo-device'].children.map(row => row.children.map(child => child.textContent).join(' ')).join(' '), /41.2 °C/);
+  assert.match(elements['hailo-device'].children.map(row => row.children.map(child => child.textContent).join(' ')).join(' '), /qwen.hef/);
   assert.equal(elements['log-tabs'].children.length, 2);
   assert.equal(elements.logs.children.length, 1);
   assert.match(elements.logs.children[0].children[1].textContent, /gateway line/);

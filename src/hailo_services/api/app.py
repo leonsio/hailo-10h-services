@@ -43,6 +43,7 @@ from hailo_services.config import (
     STT_MODEL,
     Settings,
 )
+from hailo_services.diagnostics.hailo_device import hailo_device_status
 from hailo_services.diagnostics.metrics import response_metrics, timestamp
 from hailo_services.diagnostics.monitoring import Monitor, instrument
 from hailo_services.runtime.models import ModelManager
@@ -842,6 +843,7 @@ def create_app(
             "services": monitor.snapshot(),
             "health": status,
             "resources": monitor.resources(status.get("workers")),
+            "hailo_device": hailo_device_status(),
             "logs": monitor.logs.snapshot(status.get("workers")),
         }
 

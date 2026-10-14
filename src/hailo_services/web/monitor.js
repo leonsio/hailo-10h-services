@@ -81,6 +81,17 @@ function render(data) {
     item("Aufträge in Warteschlange", h.pending), item("Vision", h.vision?.ready ? "Bereit" : h.vision?.enabled ? "Nicht bereit" : "Deaktiviert"),
     item("Piper", h.piper?.ready ? "Bereit" : h.piper?.enabled ? "Nicht bereit" : "Deaktiviert"),
     item("MQTT", h.mqtt_connected ? "Verbunden" : "Nicht verbunden"));
+  const device = data.hailo_device || {}, worker = h.workers?.hailo;
+  const resident = Object.entries(h.model_paths || {}).map(([role, path]) => `${role.toUpperCase()}: ${path.split("/").pop()}`);
+  if (h.artifact_paths?.minilm_hef && h.minilm_ready) resident.push(`MiniLM: ${h.artifact_paths.minilm_hef.split("/").pop()}`);
+  if (h.vision?.ready && h.vision?.model_path) resident.push(`YOLO: ${h.vision.model_path.split("/").pop()}`);
+  $("hailo-device").replaceChildren(
+    item("Hailo-Worker", worker ? `${worker.status === "ready" ? "Bereit" : "Nicht bereit"} · PID ${worker.pid ?? "—"}` : h.ready ? "Bereit" : "Nicht bereit"),
+    item("Gerät", device.device_node || (device.pci_address ? "PCIe erkannt" : "Nicht erkannt")),
+    item("PCIe-Adresse", device.pci_address), item("PCIe-Verbindung", device.link_speed && device.link_width ? `${device.link_speed} × ${device.link_width}` : "—"),
+    item("Treiber", device.driver), item("HailoRT", device.hailort_version),
+    item("Temperatur", device.temperature_c == null ? "—" : `${fmt(device.temperature_c)} °C`),
+    item("Geladene Hailo-Modelle", resident.join(", ") || "—"));
   $("health-raw").textContent = JSON.stringify(h, null, 2);
   renderLogs(data.logs || []);
 }

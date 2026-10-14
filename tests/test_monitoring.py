@@ -14,6 +14,7 @@ from test_services import FakeBackend, settings
 
 from hailo_services.api.app import create_app
 from hailo_services.config import VLM_MODEL
+from hailo_services.diagnostics.hailo_device import hailo_device_status
 from hailo_services.diagnostics.monitoring import Monitor, RecentLogs, instrument
 from hailo_services.runtime.workers.worker import WorkerSupervisor, _finish, _worker_logging
 from hailo_services.schemas import ChatRequest
@@ -34,6 +35,8 @@ def test_monitoring_counts_chat_stream_and_whisper_once(caplog):
         assert vlm["last_request_at"]
         assert data["health"]["ready"]
         assert data["resources"]["process_rss_bytes"] > 0
+        assert "hailo_device" in data
+        assert "pci_address" in data["hailo_device"]
         assert any("event=monitor_request service=VLM" in line for line in data["logs"][0]["lines"])
 
 
@@ -241,3 +244,37 @@ def test_settings_write_rejects_invalid_model_combination(tmp_path, monkeypatch)
         result = client.put("/v1/settings", json={"version": version, "changes": {"models.hailo_llm.enabled": True}})
         assert result.status_code == 400
         assert "enabled: false" in path.read_text()
+
+
+def test_hailo_device_status_reads_only_matching_pci_function(tmp_path):
+    pci = tmp_path / "pci"
+    unrelated = pci / "0000:01:00.0"
+    device = pci / "0000:02:00.0"
+    for node, product in ((unrelated, "0x2804"), (device, "0x45c4")):
+        node.mkdir(parents=True)
+        (node / "vendor").write_text("0x1e60\n")
+        (node / "device").write_text(product + "\n")
+    (device / "current_link_speed").write_text("8.0 GT/s\n")
+    (device / "current_link_width").write_text("1\n")
+    sensor = device / "hwmon" / "hwmon0"
+    sensor.mkdir(parents=True)
+    (sensor / "temp1_input").write_text("41250\n")
+    drivers = tmp_path / "drivers" / "hailo1x_pci"
+    drivers.mkdir(parents=True)
+    (device / "driver").symlink_to(drivers, target_is_directory=True)
+    dev = tmp_path / "dev"
+    dev.mkdir()
+    (dev / "h1x-0").touch()
+    result = hailo_device_status(pci, dev)
+    assert result["pci_address"] == "0000:02:00.0"
+    assert result["driver"] == "hailo1x_pci"
+    assert result["temperature_c"] == 41.2  # Python round-to-even on 41.25.
+    assert result["link_speed"] == "8.0 GT/s"
+    assert result["device_node"] == str(dev / "h1x-0")
+
+
+def test_hailo_device_status_handles_hidden_pci_and_missing_sensors(tmp_path):
+    result = hailo_device_status(tmp_path / "missing", tmp_path)
+    assert result["pci_address"] is None
+    assert result["temperature_c"] is None
+    assert result["device_node"] is None
