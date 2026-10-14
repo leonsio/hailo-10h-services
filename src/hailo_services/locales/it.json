@@ -275,7 +275,7 @@
     "monitor.local_address": "IP / porta locale",
     "monitor.temperature": "Temperatura",
     "monitor.no_models": "Nessuno caricato",
-    "monitor.hailo_updated": "HailoRT · Aggiornato: {time}",
+    "monitor.hailo_updated": "HailoRT{version} · Aggiornato: {time}",
     "monitor.stale": "Misura non aggiornata",
     "monitor.partial": "Alcuni valori non disponibili",
     "monitor.no_measurements": "Nessuna misura hardware disponibile.",

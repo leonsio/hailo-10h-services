@@ -4,9 +4,24 @@ import logging
 import math
 import threading
 from datetime import datetime, timezone
+from functools import lru_cache
+from importlib.metadata import PackageNotFoundError, version
 
 _LOG = logging.getLogger(__name__)
 _FIELDS = ("nnc_percent", "cpu_percent", "ram_used_bytes", "ram_total_bytes", "temperature_c", "throttling")
+
+
+@lru_cache(maxsize=1)
+def hailort_version():
+    """Read the installed HailoRT package version without loading the native SDK.
+
+    Returns:
+        str | None: Installed runtime version, or None if not installed.
+    """
+    try:
+        return version("hailort")
+    except PackageNotFoundError:
+        return None
 
 
 def empty_telemetry(state="unavailable"):
@@ -15,7 +30,7 @@ def empty_telemetry(state="unavailable"):
     Returns:
         dict: Nullable hardware metrics and collection metadata.
     """
-    return {**dict.fromkeys(_FIELDS), "state": state, "sampled_at": None, "errors": {}}
+    return {**dict.fromkeys(_FIELDS), "state": state, "hailort_version": hailort_version(), "sampled_at": None, "errors": {}}
 
 
 def _number(value):

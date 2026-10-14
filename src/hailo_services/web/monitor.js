@@ -163,7 +163,7 @@ function render(data) {
   $("hailo-errors").hidden = !Object.keys(device.errors || {}).length;
   $("hailo-errors-text").textContent = Object.entries(device.errors || {}).map(([name, error]) => `${name}: ${error}`).join("\n");
   const age = device.sampled_at ? Date.now() - new Date(device.sampled_at).getTime() : null;
-  $("hailo-note").textContent = device.sampled_at ? tr("monitor.hailo_updated", {time: when(device.sampled_at)}) + (age > 15000 ? ` · ${tr("monitor.stale")}` : device.state === "partial" ? ` · ${tr("monitor.partial")}` : device.state === "unavailable" ? ` · ${tr("monitor.no_measurements")}` : "")
+  $("hailo-note").textContent = device.sampled_at ? tr("monitor.hailo_updated", {version: device.hailort_version ? ` ${device.hailort_version}` : "", time: when(device.sampled_at)}) + (age > 15000 ? ` · ${tr("monitor.stale")}` : device.state === "partial" ? ` · ${tr("monitor.partial")}` : device.state === "unavailable" ? ` · ${tr("monitor.no_measurements")}` : "")
     : device.state === "pending" ? tr("metrics.pending") : tr("monitor.no_measurements");
   $("resident-models").replaceChildren(...(device.resident_models || []).map(model => item(model.name, model.state === "loaded" ? tr("common.loaded") : model.state)));
   if (!device.resident_models?.length) $("resident-models").append(item(tr("ui_52"), tr("monitor.no_models")));

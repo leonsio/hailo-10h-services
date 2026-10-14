@@ -111,7 +111,7 @@ test('monitoring shows enabled services, native telemetry and preserves log scro
     window: {addEventListener() {}, scrollX: 0, scrollY: 500, scrollTo(x, y) {this.scrollX = x; this.scrollY = y;}},
     fetch: async url => url.startsWith('/ui/locales/') ? {ok: true, json: async () => JSON.parse(fs.readFileSync(path.join(web, '../locales', url.split('/').pop()), 'utf8'))} : url === '/ui/config'
       ? { ok: true, json: async () => ({auth_required: false}) }
-      : { ok: true, json: async () => ({ health: {ready: true, workers: {hailo: {status: 'ready', pid: 102}}, model_paths: {vlm: '/models/qwen.hef'}}, hailo_device: {nnc_percent: 37, cpu_percent: 12, dsp_percent: 0, ram_used_bytes: 5 * 1073741824, ram_total_bytes: 8 * 1073741824, temperature_c: 54, throttling: false, resident_models: [{name: 'Qwen3-VL-2B', state: 'loaded'}]}, services: {VLM: {enabled: true, active: 0, models: ['Qwen3-VL-2B']}, Piper: {enabled: false, active: 0}}, system_services: {host: {name: 'cm5', status: 'running'}, http: {host: '0.0.0.0', port: 8090, status: 'listening', local_address: ['192.168.2.5', 8090]}, wyoming: {host: '0.0.0.0', port: 10300, status: 'listening'}, mqtt: {host: 'broker.local', port: 1883, status: 'connected'}, zmq: {endpoint: 'tcp://127.0.0.1:5555', status: 'listening'}}, resources: {
+      : { ok: true, json: async () => ({ health: {ready: true, workers: {hailo: {status: 'ready', pid: 102}}, model_paths: {vlm: '/models/qwen.hef'}}, hailo_device: {hailort_version: "5.4.0", sampled_at: "2026-10-14T18:01:42Z", nnc_percent: 37, cpu_percent: 12, dsp_percent: 0, ram_used_bytes: 5 * 1073741824, ram_total_bytes: 8 * 1073741824, temperature_c: 54, throttling: false, resident_models: [{name: 'Qwen3-VL-2B', state: 'loaded'}]}, services: {VLM: {enabled: true, active: 0, models: ['Qwen3-VL-2B']}, Piper: {enabled: false, active: 0}}, system_services: {host: {name: 'cm5', status: 'running'}, http: {host: '0.0.0.0', port: 8090, status: 'listening', local_address: ['192.168.2.5', 8090]}, wyoming: {host: '0.0.0.0', port: 10300, status: 'listening'}, mqtt: {host: 'broker.local', port: 1883, status: 'connected'}, zmq: {endpoint: 'tcp://127.0.0.1:5555', status: 'listening'}}, resources: {
         processes: [{name: 'gateway', pid: 101, rss_bytes: 1048576, cpu_percent: 2},
           {name: 'hailo', pid: 102, rss_bytes: 2097152, cpu_percent: 10}]},
         logs: [{name: 'gateway', pid: 101, lines: ['gateway line', 'event=monitor_request service=VLM duration_ms=1']},
@@ -128,6 +128,7 @@ test('monitoring shows enabled services, native telemetry and preserves log scro
   assert.equal(elements.services.children[0].children[0].textContent, 'VLM');
   assert.equal(elements.services.children[0].children[0].children[0].textContent, ' (Qwen3-VL-2B)');
   assert.match(contents(elements['hailo-device']), /NNC 37 %/);
+  assert.match(elements['hailo-note'].textContent, /HailoRT 5\.4\.0/);
   assert.doesNotMatch(contents(elements['hailo-device']), /DSP/);
   assert.match(contents(elements['hailo-device']), /54 °C/);
   assert.match(contents(elements['hailo-device']), /Throttling No/);
