@@ -71,18 +71,49 @@ test('API key survives navigation between Playground and monitoring in one brows
     navigator: { language: 'de' }, setInterval() {},
     fetch: async (url, options) => {
       monitorCalls.push({url, options});
+      if (url === '/ui/config') return {ok: true, json: async () => ({auth_required: false})};
       return { ok: false, status: 401 };
     },
   });
   vm.runInContext(fs.readFileSync(path.join(web, 'monitor.js'), 'utf8'), monitor);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(monitorElements.key.value, 'shared-secret');
-  assert.equal(monitorCalls[0].options.headers.Authorization, 'Bearer shared-secret');
+  assert.equal(monitorElements.access.hidden, true);
+  assert.equal(monitorCalls.find(call => call.url === '/v1/monitor').options.headers.Authorization, 'Bearer shared-secret');
   monitorElements.key.value = 'changed-secret'; monitorElements.key.events.input();
   const nextPlayground = page({}, sessionStorage); await nextPlayground.ready();
   assert.equal(nextPlayground.elements['api-key'].value, 'changed-secret');
   nextPlayground.elements['api-key'].value = ''; nextPlayground.elements['api-key'].events.input();
   assert.equal(values.has('hailo-api-key'), false);
+});
+
+test('monitoring renders separate log groups and process resources', async () => {
+  class Element {
+    constructor() { this.children = []; this.value = ''; this.hidden = false; }
+    addEventListener() {}
+    append(...items) { this.children.push(...items); }
+    replaceChildren(...items) { this.children = items; }
+  }
+  const elements = Object.fromEntries([...fs.readFileSync(path.join(web, 'monitor.html'), 'utf8').matchAll(/id="([^"]+)"/g)]
+    .map(m => [m[1], new Element()]));
+  const context = vm.createContext({
+    document: { getElementById: id => elements[id], createElement: () => new Element() },
+    sessionStorage: { getItem() { return null; } }, navigator: { language: 'de' }, setInterval() {},
+    fetch: async url => url === '/ui/config'
+      ? { ok: true, json: async () => ({auth_required: false}) }
+      : { ok: true, json: async () => ({ health: {ready: true}, resources: {
+        processes: [{name: 'gateway', pid: 101, rss_bytes: 1048576, cpu_percent: 2},
+          {name: 'hailo', pid: 102, rss_bytes: 2097152, cpu_percent: 10}]},
+        logs: [{name: 'gateway', pid: 101, lines: ['gateway line']},
+          {name: 'hailo', pid: 102, lines: ['worker line']}] }) },
+  });
+  vm.runInContext(fs.readFileSync(path.join(web, 'monitor.js'), 'utf8'), context);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(elements.access.hidden, true);
+  assert.equal(elements.processes.children.length, 2);
+  assert.equal(elements.logs.children.length, 2);
+  assert.match(elements.logs.children[0].children[1].textContent, /gateway line/);
+  assert.match(elements.logs.children[1].children[1].textContent, /worker line/);
 });
 
 test('PCM WAV header, rate, length, signed samples and clipping', async () => {

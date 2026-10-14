@@ -6,13 +6,15 @@ import logging
 import os
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 
 from hailo_services.config import FRIGATE_ASSIST_MODEL, HA_ASSIST_MODEL, LLM_MODEL
 from hailo_services.diagnostics.logging_utils import redact_inline_data
 from hailo_services.shared.tool_calling import has_tool_context
+
+_LOG = logging.getLogger(__name__)
 
 
 def _now():
@@ -27,15 +29,15 @@ def _now():
 class RecentLogs(logging.Handler):
     """Keep a small, redacted copy of application logs in the gateway process."""
 
-    def __init__(self):
+    def __init__(self, debug=False):
         """Install a bounded INFO-level capture buffer.
 
         Returns:
             None: Initializes the log handler.
         """
-        super().__init__(logging.INFO)
-        self.entries = deque(maxlen=100)
-        self.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        super().__init__(logging.DEBUG if debug else logging.INFO)
+        self.entries = OrderedDict()
+        self.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(process)d] %(name)s: %(message)s"))
 
     def emit(self, record):
         """Capture a bounded line without recursive logging on formatting errors.
@@ -44,21 +46,36 @@ class RecentLogs(logging.Handler):
             None: Adds a log entry when applicable.
         """
         try:
-            if record.name.startswith("hailo_services"):
+            if (record.levelno >= self.level and record.name.startswith("hailo_services")
+                    and "event=request_payload" not in record.getMessage()
+                    and "event=validated_request" not in record.getMessage()):
                 line = redact_inline_data(self.format(record))
                 with self.lock:
-                    self.entries.append(line[:1000])
+                    pid = record.process
+                    self.entries.setdefault(pid, deque(maxlen=50)).append(line[:1000])
+                    self.entries.move_to_end(pid)
+                    while len(self.entries) > 12:
+                        self.entries.popitem(last=False)
         except Exception:
             pass
 
-    def snapshot(self):
-        """Return the most recent application log lines.
+    def snapshot(self, workers=None):
+        """Return the last 50 lines for each current service process.
 
         Returns:
-            list[str]: Recent redacted log entries.
+            list[dict]: Process names, PIDs and recent redacted log entries.
         """
+        processes = [("gateway", os.getpid())]
+        if workers:
+            processes.extend(
+                (name, detail.get("pid")) for name, detail in workers.items()
+                if name != "gateway" and detail.get("status") == "ready"
+            )
         with self.lock:
-            return list(self.entries)[-50:]
+            return [
+                {"name": name, "pid": pid, "lines": list(self.entries.get(pid, ())) }
+                for name, pid in processes
+            ]
 
 
 class Monitor:
@@ -78,10 +95,12 @@ class Monitor:
         self.last = {name: None for name in self.SERVICES}
         self.active = {name: 0 for name in self.SERVICES}
         self.started = _now()
-        self.logs = RecentLogs()
+        self.logs = RecentLogs(settings.debug_log)
         logging.getLogger().addHandler(self.logs)
         self._cpu = None
         self._cgroup_cpu = None
+        self._process_samples = {}
+        self._last_yolo_log = 0.0
 
     def close(self):
         """Detach the capture handler when its owning application stops.
@@ -114,6 +133,7 @@ class Monitor:
         if not isinstance(ttft, (int, float)) or not 0 <= ttft < float("inf"):
             ttft = None
         second = int(time.time())
+        log_request = name != "YOLO" or failed
         with self.lock:
             self.active[name] = max(0, self.active[name] - 1)
             bucket = self.buckets[name].setdefault(second, [0, 0, 0.0, 0.0, 0, 0.0])
@@ -125,6 +145,14 @@ class Monitor:
                 bucket[4] += 1
                 bucket[5] += ttft
             self._prune(self.buckets[name], second)
+            if name == "YOLO" and not log_request and time.monotonic() - self._last_yolo_log >= 10:
+                self._last_yolo_log = time.monotonic()
+                log_request = True
+        if log_request:
+            _LOG.info(
+                "event=monitor_request service=%s status=%s duration_ms=%.1f",
+                name, "error" if failed else "completed", duration,
+            )
 
     @staticmethod
     def _prune(buckets, now):
@@ -163,7 +191,7 @@ class Monitor:
                 }
         return result
 
-    def resources(self):
+    def resources(self, workers=None):
         """Read Linux process, host and cgroup consumption without psutil.
 
         Returns:
@@ -171,7 +199,7 @@ class Monitor:
         """
         data = {"cpu_cores": os.cpu_count(), "load_average": None, "host_memory": None,
                 "process_rss_bytes": None, "process_cpu_percent": None, "cgroup_memory_bytes": None,
-                "cgroup_memory_limit_bytes": None, "cgroup_cpu_percent": None}
+                "cgroup_memory_limit_bytes": None, "cgroup_cpu_percent": None, "processes": []}
         try:
             data["load_average"] = round(os.getloadavg()[0], 2)
             data["process_rss_bytes"] = int(Path("/proc/self/statm").read_text().split()[1]) * os.sysconf("SC_PAGE_SIZE")
@@ -208,6 +236,36 @@ class Monitor:
                 self._cpu = elapsed, cpu
         except (OSError, ValueError):
             pass
+        descriptions = [("gateway", os.getpid(), "ready")]
+        if workers:
+            descriptions.extend(
+                (name, detail.get("pid"), detail.get("status", "unknown"))
+                for name, detail in workers.items() if name != "gateway"
+            )
+        samples = {}
+        elapsed = time.monotonic()
+        for name, pid, status in descriptions:
+            row = {"name": name, "pid": pid, "status": status,
+                   "rss_bytes": None, "cpu_percent": None}
+            if status == "ready" and isinstance(pid, int) and pid > 0:
+                try:
+                    proc = "/proc/self" if pid == os.getpid() else f"/proc/{pid}"
+                    stat = Path(f"{proc}/stat").read_text().rsplit(") ", 1)[1].split()
+                    # stat fields after comm start with state (field 3).
+                    identity = (pid, int(stat[19]))  # PID and kernel process start time.
+                    used = (int(stat[11]) + int(stat[12])) / os.sysconf("SC_CLK_TCK")
+                    rss = int(Path(f"{proc}/statm").read_text().split()[1]) * os.sysconf("SC_PAGE_SIZE")
+                    row["rss_bytes"] = rss
+                    with self.lock:
+                        previous = self._process_samples.get(identity)
+                    if previous and elapsed > previous[0]:
+                        row["cpu_percent"] = round(100 * (used - previous[1]) / (elapsed - previous[0]), 1)
+                    samples[identity] = (elapsed, used)
+                except (OSError, ValueError, IndexError):
+                    row["status"] = "unavailable"
+            data["processes"].append(row)
+        with self.lock:
+            self._process_samples = samples
         return data
 
 

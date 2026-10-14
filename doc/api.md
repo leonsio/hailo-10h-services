@@ -506,13 +506,19 @@ and longest response times and the time of the last request for each inference
 service. Chat services include average TTFT when the backend supplies that metric;
 YOLO includes detection time across HTTP and Frigate ZMQ. The JSON endpoint also
 returns the full `/health` data, Linux host and service cgroup resource use, and
-up to 50 recent application log entries captured in the gateway process. CPU
+up to 50 recent application log entries per process, displayed separately for
+the gateway and each running resident worker.
+The resource view lists the gateway and each live worker separately by PID, CPU
+and RSS, alongside cgroup totals. Shared memory can appear in several RSS figures,
+so adding process RSS values is not equivalent to total service memory. CPU
 percentages are measured between refreshes; unavailable fields are `null`.
 
 Statistics use bounded per-second buckets in gateway memory and cover the last
-hour since process start. They reset on restart. Worker process log output is
-not copied into the web view; the regular systemd journal remains the source for
-complete logs. The browser refreshes automatically every five seconds.
+hour since process start. They reset on restart. Logs are kept in a bounded memory
+buffer per PID, so a process may contain fewer than 50 lines before enough log activity
+occurs. Detailed request and inference logs appear when `settings.debug_log` is
+enabled; request bodies are excluded from the web log view. The regular systemd
+journal remains the source for complete logs. The browser refreshes every five seconds.
 
 ## Home Assistant virtual model
 

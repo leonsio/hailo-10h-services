@@ -10,11 +10,13 @@ now block only on IPC instead of native inference.
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import multiprocessing as mp
 import os
 import queue
 import re
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -22,6 +24,7 @@ from typing import Any, Callable
 
 from hailo_services.chat.backend_hailo import HailoBackend
 from hailo_services.chat.backend_litert import LiteRTLMBackend
+from hailo_services.diagnostics.logging_utils import InlineDataRedactionFilter
 from hailo_services.runtime.models import ModelManager
 from hailo_services.runtime.runtime import Runtime
 from hailo_services.shared.errors import BusyError, LiteRTInferenceError
@@ -31,15 +34,33 @@ from hailo_services.speech.speech_runtime import SpeechRuntime
 from hailo_services.vision.vision import HailoVisionBackend, VisionRuntime
 
 _LOG = logging.getLogger(__name__)
+_LAST_VISION_LOG = 0.0
+_VISION_LOG_LOCK = threading.Lock()
 
 
-def _worker_logging(debug: bool) -> None:
+class _DropFullQueueHandler(logging.handlers.QueueHandler):
+    """Drop monitoring copies when their bounded queue is saturated."""
+
+    def handleError(self, record):
+        """Keep log backpressure out of native inference and stderr.
+
+        Returns:
+            None: The ordinary journal handler remains available.
+        """
+
+
+def _worker_logging(debug: bool, log_queue=None) -> None:
     logging.basicConfig(
         level=logging.DEBUG if debug else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     if debug:
         logging.getLogger("hailo_services").setLevel(logging.DEBUG)
+    if log_queue is not None:
+        handler = _DropFullQueueHandler(log_queue)
+        handler.setLevel(logging.DEBUG if debug else logging.INFO)
+        handler.addFilter(InlineDataRedactionFilter())
+        logging.getLogger("hailo_services").addHandler(handler)
 
 
 def _error_payload(exc: BaseException) -> dict[str, Any]:
@@ -93,7 +114,9 @@ def _metrics(args: tuple[Any, ...]) -> dict[str, Any] | None:
     return dict(value) if isinstance(value, dict) else None
 
 
-def _finish(response_queue, request_id: str, future, args: tuple[Any, ...]) -> None:
+def _finish(response_queue, request_id: str, future, args: tuple[Any, ...], op: str = "", started: float = 0) -> None:
+    global _LAST_VISION_LOG
+    status = "completed"
     try:
         response_queue.put(
             {
@@ -104,6 +127,7 @@ def _finish(response_queue, request_id: str, future, args: tuple[Any, ...]) -> N
             }
         )
     except BaseException as exc:  # Native bindings sometimes raise extension exceptions.
+        status = "error"
         response_queue.put(
             {
                 "kind": "error",
@@ -112,11 +136,24 @@ def _finish(response_queue, request_id: str, future, args: tuple[Any, ...]) -> N
                 "metrics": _metrics(args),
             }
         )
+    finally:
+        if op in {"chat", "transcribe", "vision_detect", "synthesize"}:
+            emit = op != "vision_detect" or status == "error"
+            if op == "vision_detect" and not emit:
+                with _VISION_LOG_LOCK:
+                    if time.monotonic() - _LAST_VISION_LOG >= 10:
+                        _LAST_VISION_LOG = time.monotonic()
+                        emit = True
+            if emit:
+                _LOG.info(
+                    "event=worker_request operation=%s status=%s duration_ms=%.1f",
+                    op, status, (time.perf_counter() - started) * 1000,
+                )
 
 
-def _hailo_worker(settings, request_queue, response_queue) -> None:
+def _hailo_worker(settings, request_queue, response_queue, log_queue=None) -> None:
     """Own every Hailo-backed model in one process."""
-    _worker_logging(settings.debug_log)
+    _worker_logging(settings.debug_log, log_queue)
     chat = HailoBackend(settings)
     vision = HailoVisionBackend(settings) if settings.vision_enabled else None
     chat_owner = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hailo-chat-owner")
@@ -194,10 +231,11 @@ def _hailo_worker(settings, request_queue, response_queue) -> None:
                     cancellations.pop(request_id, None)
 
             executor = vision_owner if op == "vision_detect" and vision_owner else chat_owner
+            submitted = time.perf_counter()
             future = executor.submit(invoke)
             future.add_done_callback(
-                lambda completed, rid=request_id, call_args=args: _finish(
-                    response_queue, rid, completed, call_args
+                lambda completed, rid=request_id, call_args=args, operation=op, begin=submitted: _finish(
+                    response_queue, rid, completed, call_args, operation, begin
                 )
             )
     except BaseException as exc:
@@ -220,9 +258,9 @@ def _hailo_worker(settings, request_queue, response_queue) -> None:
             vision_owner.shutdown(wait=True, cancel_futures=False)
 
 
-def _litert_worker(settings, request_queue, response_queue) -> None:
+def _litert_worker(settings, request_queue, response_queue, log_queue=None) -> None:
     """Own Gemma/LiteRT-LM in an independent CPU process."""
-    _worker_logging(settings.debug_log)
+    _worker_logging(settings.debug_log, log_queue)
     model_path = settings.litert_model_path or str(
         Path(settings.model_store) / "gemma-4-E2B-it.litertlm"
     )
@@ -289,10 +327,11 @@ def _litert_worker(settings, request_queue, response_queue) -> None:
                 finally:
                     cancellations.pop(request_id, None)
 
+            submitted = time.perf_counter()
             future = owner.submit(invoke)
             future.add_done_callback(
-                lambda completed, rid=request_id, call_args=args: _finish(
-                    response_queue, rid, completed, call_args
+                lambda completed, rid=request_id, call_args=args, begin=submitted: _finish(
+                    response_queue, rid, completed, call_args, "chat", begin
                 )
             )
     except BaseException as exc:
@@ -308,9 +347,9 @@ def _litert_worker(settings, request_queue, response_queue) -> None:
         owner.shutdown(wait=True, cancel_futures=False)
 
 
-def _piper_worker(settings, request_queue, response_queue) -> None:
+def _piper_worker(settings, request_queue, response_queue, log_queue=None) -> None:
     """Own Piper/ONNX inference in an independent CPU process."""
-    _worker_logging(settings.debug_log)
+    _worker_logging(settings.debug_log, log_queue)
     backend = PiperBackend(settings)
     owner = ThreadPoolExecutor(max_workers=1, thread_name_prefix="piper-owner")
     ready = False
@@ -328,10 +367,11 @@ def _piper_worker(settings, request_queue, response_queue) -> None:
                 continue
             request_id = message["id"]
             args = tuple(message.get("args", ()))
+            submitted = time.perf_counter()
             future = owner.submit(backend.synthesize, *args)
             future.add_done_callback(
-                lambda completed, rid=request_id, call_args=args: _finish(
-                    response_queue, rid, completed, call_args
+                lambda completed, rid=request_id, call_args=args, begin=submitted: _finish(
+                    response_queue, rid, completed, call_args, "synthesize", begin
                 )
             )
     except BaseException as exc:
@@ -353,9 +393,10 @@ _TARGETS = {"hailo": _hailo_worker, "litert": _litert_worker, "piper": _piper_wo
 class _WorkerClient:
     """Synchronous IPC endpoint called only by the existing bounded owner threads."""
 
-    def __init__(self, kind: str, settings):
+    def __init__(self, kind: str, settings, log_queue=None):
         self.kind = kind
         self.settings = settings
+        self.log_queue = log_queue
         self.context = mp.get_context("spawn")
         self.process = None
         self.request_queue = None
@@ -384,7 +425,7 @@ class _WorkerClient:
         self.response_queue = self.context.Queue(maxsize=max(32, self.settings.queue_size * 8))
         self.process = self.context.Process(
             target=_TARGETS[self.kind],
-            args=(self.settings, self.request_queue, self.response_queue),
+            args=(self.settings, self.request_queue, self.response_queue, self.log_queue),
             name=f"hailo-services-{self.kind}",
             daemon=False,
         )
@@ -548,9 +589,48 @@ class WorkerSupervisor:
     """Own the three workers and share Hailo between chat/STT and detector proxies."""
 
     def __init__(self, settings):
+        self.log_queue = None
+        self.log_sink = None
+        self.log_listener = None
         self.hailo = _WorkerClient("hailo", settings)
         self.litert = _WorkerClient("litert", settings)
         self.piper = _WorkerClient("piper", settings)
+
+    def set_log_sink(self, sink):
+        """Send worker log records to a bounded gateway monitoring handler."""
+        self.log_sink = sink
+        if sink is None and self.log_queue is not None:
+            try:
+                self.log_queue.put(None, timeout=1)
+            except queue.Full:
+                pass
+            self.log_listener.join(timeout=1)
+            self.log_queue.close()
+            self.log_queue = None
+            self.log_listener = None
+            for worker in (self.hailo, self.litert, self.piper):
+                worker.log_queue = None
+            return
+        if sink is not None and self.log_queue is None:
+            self.log_queue = mp.get_context("spawn").Queue(maxsize=512)
+            for worker in (self.hailo, self.litert, self.piper):
+                worker.log_queue = self.log_queue
+            self.log_listener = threading.Thread(
+                target=self._forward_logs, name="worker-monitor-logs", daemon=True
+            )
+            self.log_listener.start()
+
+    def _forward_logs(self):
+        """Consume worker records without blocking inference response queues."""
+        while True:
+            try:
+                record = self.log_queue.get()
+                if record is None:
+                    return
+                if self.log_sink is not None:
+                    self.log_sink.handle(record)
+            except (OSError, EOFError, ValueError):
+                return
 
     def status(self) -> dict[str, Any]:
         return {

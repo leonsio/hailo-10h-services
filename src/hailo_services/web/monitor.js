@@ -42,13 +42,26 @@ function render(data) {
     item("RAM Hauptprozess", bytes(r.process_rss_bytes)), item("RAM Service-cgroup", bytes(r.cgroup_memory_bytes)),
     item("cgroup Limit", bytes(r.cgroup_memory_limit_bytes)), item("RAM Host verfügbar", bytes(memory.available_bytes)),
     item("RAM Host gesamt", bytes(memory.total_bytes)));
+  $("processes").replaceChildren(...(r.processes || []).map(process => {
+    const row = document.createElement("tr");
+    for (const value of [process.name, process.pid ?? "—", process.cpu_percent == null ? "—" : `${fmt(process.cpu_percent)} %`,
+      process.rss_bytes == null ? process.status : bytes(process.rss_bytes)]) {
+      const cell = document.createElement("td"); cell.textContent = String(value); row.append(cell);
+    }
+    return row;
+  }));
   $("health").replaceChildren(item("Hailo Runtime", h.ready ? "Bereit" : "Nicht bereit"),
     item("Gruppe", h.group_id), item("Modelle", (h.models || []).join(", ") || "—"),
     item("Aufträge in Warteschlange", h.pending), item("Vision", h.vision?.ready ? "Bereit" : h.vision?.enabled ? "Nicht bereit" : "Deaktiviert"),
     item("Piper", h.piper?.ready ? "Bereit" : h.piper?.enabled ? "Nicht bereit" : "Deaktiviert"),
     item("MQTT", h.mqtt_connected ? "Verbunden" : "Nicht verbunden"));
   $("health-raw").textContent = JSON.stringify(h, null, 2);
-  $("logs").textContent = (data.logs || []).join("\n") || "Noch keine Anwendungslogs im Hauptprozess.";
+  $("logs").replaceChildren(...(data.logs || []).map(group => {
+    const article = document.createElement("article"), title = document.createElement("h3"), lines = document.createElement("pre");
+    title.textContent = `${group.name} · PID ${group.pid ?? "—"} · ${group.lines.length}/50`;
+    lines.textContent = group.lines.join("\n") || "Noch keine Logeinträge für diesen Prozess.";
+    article.append(title, lines); return article;
+  }));
 }
 async function refresh() {
   try {
@@ -61,7 +74,14 @@ async function refresh() {
     $("updated").textContent = error.message;
   }
 }
+async function init() {
+  try {
+    const response = await fetch("/ui/config", {cache: "no-store"});
+    if (response.ok) $("access").hidden = !(await response.json()).auth_required;
+  } catch { /* Show the key field if the public configuration is unavailable. */ }
+  await refresh();
+}
 $("apply").addEventListener("click", refresh);
 $("refresh").addEventListener("click", refresh);
 $("key").addEventListener("keydown", event => { if (event.key === "Enter") refresh(); });
-refresh(); setInterval(refresh, 5000);
+void init(); setInterval(refresh, 5000);

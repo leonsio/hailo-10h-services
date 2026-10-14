@@ -401,6 +401,9 @@ def create_app(
     mqtt = MQTTBridge(runtime, settings)
     monitor = Monitor(settings)
     instrument(runtime, vision, speech, monitor)
+    supervisor = getattr(runtime, "worker_supervisor", None)
+    if supervisor is not None:
+        supervisor.set_log_sink(monitor.logs)
     mcp = MCPServer("Hailo-10H", version="0.1.0")
 
     @mcp.tool()
@@ -531,6 +534,8 @@ def create_app(
                     await mqtt_task
             await speech.close()
             await runtime.close()
+            if supervisor is not None:
+                supervisor.set_log_sink(None)
             monitor.close()
 
     app = FastAPI(title="Hailo-10H Services", version="0.1.0", lifespan=lifespan)
@@ -775,18 +780,19 @@ def create_app(
         Returns:
             dict: Snapshot of gateway activity and readiness.
         """
+        status = {
+            **runtime.status(),
+            "vision": vision.status(),
+            "piper": speech.status(),
+            "mqtt_connected": mqtt.connected,
+        }
         return {
             "started_at": monitor.started,
             "generated_at": timestamp(),
             "services": monitor.snapshot(),
-            "health": {
-                **runtime.status(),
-                "vision": vision.status(),
-                "piper": speech.status(),
-                "mqtt_connected": mqtt.connected,
-            },
-            "resources": monitor.resources(),
-            "logs": monitor.logs.snapshot(),
+            "health": status,
+            "resources": monitor.resources(status.get("workers")),
+            "logs": monitor.logs.snapshot(status.get("workers")),
         }
 
     @app.get("/v1/models")
