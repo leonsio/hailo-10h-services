@@ -172,6 +172,16 @@ class Monitor:
         Returns:
             dict: Per-service aggregates.
         """
+        enabled = {
+            "VLM": self.settings.vlm_enabled,
+            "LLM": self.settings.litert_enabled or bool(self.settings.litert_model_path),
+            "Hailo LLM": self.settings.hailo_llm_enabled,
+            "HA-Assist": self.settings.ha_assist_enabled,
+            "Frigate-Assist": self.settings.frigate_assist_enabled,
+            "Whisper": self.settings.whisper_enabled,
+            "Piper": self.settings.piper_enabled,
+            "YOLO": self.settings.vision_enabled,
+        }
         now = int(time.time())
         result = {}
         with self.lock:
@@ -181,6 +191,7 @@ class Monitor:
                 errors = sum(b[1] for b in buckets.values())
                 ttft_count = sum(b[4] for b in buckets.values())
                 result[name] = {
+                    "enabled": bool(enabled[name]),
                     "requests_1h": count,
                     "errors_1h": errors,
                     "active": self.active[name],

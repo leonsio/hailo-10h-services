@@ -14,7 +14,7 @@ from test_services import FakeBackend, settings
 
 from hailo_services.api.app import create_app
 from hailo_services.config import VLM_MODEL
-from hailo_services.diagnostics.hailo_device import hailo_device_status
+from hailo_services.diagnostics.hailo_device import HailoTelemetry, read_device, resident_models
 from hailo_services.diagnostics.monitoring import Monitor, RecentLogs, instrument
 from hailo_services.runtime.workers.worker import WorkerSupervisor, _finish, _worker_logging
 from hailo_services.schemas import ChatRequest
@@ -36,7 +36,9 @@ def test_monitoring_counts_chat_stream_and_whisper_once(caplog):
         assert data["health"]["ready"]
         assert data["resources"]["process_rss_bytes"] > 0
         assert "hailo_device" in data
-        assert "pci_address" in data["hailo_device"]
+        assert data["hailo_device"]["nnc_percent"] is None
+        assert data["system_services"]["wyoming"]["status"] == "disabled"
+        assert data["system_services"]["http"]["port"] == 8090
         assert any("event=monitor_request service=VLM" in line for line in data["logs"][0]["lines"])
 
 
@@ -246,35 +248,124 @@ def test_settings_write_rejects_invalid_model_combination(tmp_path, monkeypatch)
         assert "enabled: false" in path.read_text()
 
 
-def test_hailo_device_status_reads_only_matching_pci_function(tmp_path):
-    pci = tmp_path / "pci"
-    unrelated = pci / "0000:01:00.0"
-    device = pci / "0000:02:00.0"
-    for node, product in ((unrelated, "0x2804"), (device, "0x45c4")):
-        node.mkdir(parents=True)
-        (node / "vendor").write_text("0x1e60\n")
-        (node / "device").write_text(product + "\n")
-    (device / "current_link_speed").write_text("8.0 GT/s\n")
-    (device / "current_link_width").write_text("1\n")
-    sensor = device / "hwmon" / "hwmon0"
-    sensor.mkdir(parents=True)
-    (sensor / "temp1_input").write_text("41250\n")
-    drivers = tmp_path / "drivers" / "hailo1x_pci"
-    drivers.mkdir(parents=True)
-    (device / "driver").symlink_to(drivers, target_is_directory=True)
-    dev = tmp_path / "dev"
-    dev.mkdir()
-    (dev / "h1x-0").touch()
-    result = hailo_device_status(pci, dev)
-    assert result["pci_address"] == "0000:02:00.0"
-    assert result["driver"] == "hailo1x_pci"
-    assert result["temperature_c"] == 41.2  # Python round-to-even on 41.25.
-    assert result["link_speed"] == "8.0 GT/s"
-    assert result["device_node"] == str(dev / "h1x-0")
+
+def test_hailort_control_stats_are_normalized_to_bytes_and_zero_is_preserved():
+    from types import SimpleNamespace
+    control = SimpleNamespace(
+        query_performance_stats=lambda sampling_period_ms: SimpleNamespace(
+            cpu_utilization=12, nnc_utilization=37, dsp_utilization=0,
+            ram_size_used=5 * 1024 * 1024, ram_size_total=8 * 1024 * 1024),
+        get_chip_temperature=lambda: SimpleNamespace(ts0_temperature=51, ts1_temperature=54),
+        get_throttling_state=lambda: False,
+    )
+    result = read_device(control)
+    assert result["state"] == "ready"
+    assert result["nnc_percent"] == 37
+    assert result["cpu_percent"] == 12
+    assert result["dsp_percent"] == 0
+    assert result["ram_used_bytes"] == 5 * 1024 ** 3
+    assert result["ram_total_bytes"] == 8 * 1024 ** 3
+    assert result["temperature_c"] == 54
+    assert result["throttling"] is False
 
 
-def test_hailo_device_status_handles_hidden_pci_and_missing_sensors(tmp_path):
-    result = hailo_device_status(tmp_path / "missing", tmp_path)
-    assert result["pci_address"] is None
-    assert result["temperature_c"] is None
-    assert result["device_node"] is None
+def test_unsupported_control_read_does_not_erase_supported_stats_or_retry():
+    from types import SimpleNamespace
+    calls = []
+    def unsupported():
+        calls.append(True)
+        raise RuntimeError("HAILO_INVALID_OPERATION")
+    control = SimpleNamespace(
+        query_performance_stats=lambda sampling_period_ms: SimpleNamespace(
+            cpu_utilization=-1, nnc_utilization=0, dsp_utilization=float("nan"),
+            ram_size_used=-1, ram_size_total=8 * 1024 * 1024),
+        get_chip_temperature=unsupported,
+        get_throttling_state=unsupported,
+    )
+    unavailable = {}
+    for _ in range(2):
+        result = read_device(control, unavailable)
+        assert result["state"] == "partial"
+        assert result["nnc_percent"] == 0
+        assert result["cpu_percent"] is None
+        assert result["dsp_percent"] is None
+        assert result["temperature_c"] is None
+        assert result["throttling"] is None
+        assert "temperature" in result["errors"]
+    assert len(calls) == 2  # Once per unsupported API family, not on every refresh.
+
+
+def test_enabled_thermal_protection_does_not_mean_actual_throttling():
+    from types import SimpleNamespace
+    control = SimpleNamespace(get_throttling_state=lambda: True)
+    control._get_health_information = lambda: SimpleNamespace(current_temperature_throttling_level=-1, current_overcurrent_zone=0)
+    assert read_device(control)["throttling"] is False
+    control._get_health_information = lambda: SimpleNamespace(current_temperature_throttling_level=0, current_overcurrent_zone=0)
+    assert read_device(control)["throttling"] is True
+
+
+def test_collector_owns_read_handle_and_returns_cached_snapshot():
+    import threading
+    from types import SimpleNamespace
+    published = threading.Event()
+    released = []
+    queries = []
+    def query(sampling_period_ms):
+        queries.append(threading.current_thread().name)
+        return SimpleNamespace(nnc_utilization=37)
+    control = SimpleNamespace(query_performance_stats=query, get_chip_temperature=lambda: None, get_throttling_state=lambda: False)
+    physical = SimpleNamespace(control=control, release=lambda: released.append(True))
+    collector = HailoTelemetry(lambda snapshot: published.set(), interval=60)
+    collector.start(SimpleNamespace(get_physical_devices=lambda: [physical]))
+    try:
+        assert published.wait(timeout=2)
+        for _ in range(10):
+            assert collector.snapshot()["nnc_percent"] == 37
+        assert queries == ["hailo-device-telemetry"]
+    finally:
+        collector.close()
+    assert released == [True]
+
+
+def test_resident_models_depend_on_successful_native_loads():
+    from types import SimpleNamespace
+    chat = SimpleNamespace(vlm=object(), whisper=object(), llm=None, minilm=None)
+    vision = SimpleNamespace(configured_model=object())
+    models = resident_models(chat, vision, settings())
+    assert {model["role"] for model in models} == {"VLM", "Whisper", "YOLO"}
+    assert all(model["state"] == "loaded" for model in models)
+    chat.vlm = None
+    assert "VLM" not in {model["role"] for model in resident_models(chat, vision, settings())}
+
+
+def test_disabled_services_are_marked_and_metrics_remain_available():
+    monitor = Monitor(settings(vlm_enabled=False, whisper_enabled=False))
+    try:
+        services = monitor.snapshot()
+        assert not services["VLM"]["enabled"]
+        assert not services["Whisper"]["enabled"]
+        assert not services["LLM"]["enabled"]
+        assert not services["Piper"]["enabled"]
+        assert services["HA-Assist"]["enabled"]
+    finally:
+        monitor.close()
+
+
+def test_worker_listener_receives_telemetry_without_an_inference_request():
+    from types import SimpleNamespace
+
+    from hailo_services.runtime.workers.worker import _WorkerClient
+
+    client = _WorkerClient("hailo", settings())
+    alive = [False]
+    client.process = SimpleNamespace(is_alive=lambda: alive[0])
+    client.response_queue = queue.Queue()
+    client.metadata = {"resident_models": [{"name": "YOLOv11m", "state": "loaded"}]}
+    client.response_queue.put({"kind": "telemetry", "value": {"nnc_percent": 37, "state": "partial"}})
+    client._listen()
+    alive[0] = True
+    assert client.telemetry_status()["nnc_percent"] == 37
+    assert client.telemetry_status()["resident_models"][0]["name"] == "YOLOv11m"
+    alive[0] = False
+    assert client.telemetry_status()["nnc_percent"] is None
+    assert client.telemetry_status()["resident_models"] == []

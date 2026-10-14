@@ -66,11 +66,11 @@ function render(data) {
   $("state").textContent = ready ? "Bereit" : "Eingeschränkt";
   $("state").className = `pill ${ready ? "good" : "bad"}`;
   $("updated").textContent = `Stand: ${when(data.generated_at)} · Start: ${when(data.started_at)}`;
-  const cards = Object.entries(data.services || {}).map(([name, s]) => {
+  const cards = Object.entries(data.services || {}).filter(([, service]) => service.enabled).map(([name, s]) => {
     const card = document.createElement("article"), title = document.createElement("h3");
     title.textContent = name; card.append(title);
     card.append(item("Anfragen", fmt(s.requests_1h)), item("Fehler", fmt(s.errors_1h)),
-      item("Aktiv", fmt(s.active)), item("Ø Antwort", s.average_ms == null ? "—" : `${fmt(s.average_ms)} ms`),
+      item("Laufende Anfragen", fmt(s.active)), item("Ø Antwort", s.average_ms == null ? "—" : `${fmt(s.average_ms)} ms`),
       item("Längste Antwort", s.maximum_ms == null ? "—" : `${fmt(s.maximum_ms)} ms`));
     if (["LLM", "VLM", "Hailo LLM", "HA-Assist", "Frigate-Assist"].includes(name))
       card.append(item("Ø TTFT", s.average_ttft_ms == null ? "—" : `${fmt(s.average_ttft_ms)} ms (${fmt(s.ttft_samples_1h)} Messungen)`));
@@ -78,6 +78,7 @@ function render(data) {
     return card;
   });
   $("services").replaceChildren(...cards);
+  if (!cards.length) { const empty = document.createElement("p"); empty.textContent = "Keine aktiven Dienste."; $("services").append(empty); }
   const memory = r.host_memory || {};
   $("resources").replaceChildren(item("CPU-Kerne", fmt(r.cpu_cores)), item("Systemlast (1 Min.)", fmt(r.load_average)),
     item("CPU Service-cgroup", r.cgroup_cpu_percent == null ? "Messung läuft …" : `${fmt(r.cgroup_cpu_percent)} %`),
@@ -93,23 +94,33 @@ function render(data) {
     }
     return row;
   }));
-  $("health").replaceChildren(item("Hailo Runtime", h.ready ? "Bereit" : "Nicht bereit"),
-    item("Gruppe", h.group_id), item("Modelle", (h.models || []).join(", ") || "—"),
-    item("Aufträge in Warteschlange", h.pending), item("Vision", h.vision?.ready ? "Bereit" : h.vision?.enabled ? "Nicht bereit" : "Deaktiviert"),
-    item("Piper", h.piper?.ready ? "Bereit" : h.piper?.enabled ? "Nicht bereit" : "Deaktiviert"),
-    item("MQTT", h.mqtt_connected ? "Verbunden" : "Nicht verbunden"));
-  const device = data.hailo_device || {}, worker = h.workers?.hailo;
-  const resident = Object.entries(h.model_paths || {}).map(([role, path]) => `${role.toUpperCase()}: ${path.split("/").pop()}`);
-  if (h.artifact_paths?.minilm_hef && h.minilm_ready) resident.push(`MiniLM: ${h.artifact_paths.minilm_hef.split("/").pop()}`);
-  if (h.vision?.ready && h.vision?.model_path) resident.push(`YOLO: ${h.vision.model_path.split("/").pop()}`);
-  $("hailo-device").replaceChildren(
-    item("Hailo-Worker", worker ? `${worker.status === "ready" ? "Bereit" : "Nicht bereit"} · PID ${worker.pid ?? "—"}` : h.ready ? "Bereit" : "Nicht bereit"),
-    item("Gerät", device.device_node || (device.pci_address ? "PCIe erkannt" : "Nicht erkannt")),
-    item("PCIe-Adresse", device.pci_address), item("PCIe-Verbindung", device.link_speed && device.link_width ? `${device.link_speed} × ${device.link_width}` : "—"),
-    item("Treiber", device.driver), item("HailoRT", device.hailort_version),
-    item("Temperatur", device.temperature_c == null ? "—" : `${fmt(device.temperature_c)} °C`),
-    item("Geladene Hailo-Modelle", resident.join(", ") || "—"));
-  $("health-raw").textContent = JSON.stringify(h, null, 2);
+  const system = data.system_services || {}, host = system.host || {};
+  const statuses = {running: "Läuft", listening: "Bereit", connected: "Verbunden", disconnected: "Nicht verbunden", disabled: "Deaktiviert", stopped: "Gestoppt"};
+  const address = (name, port) => name ? `${name.includes(":") ? `[${name}]` : name}:${port ?? "—"}` : "—";
+  const transport = (name, service, endpoint) => item(name, `${endpoint} · ${statuses[service?.status] || "Unbekannt"}`);
+  const http = system.http || {}, local = http.local_address;
+  $("health").replaceChildren(item("Host", `${host.name || "—"} · ${statuses[host.status] || "Unbekannt"}`),
+    item("Lokale IP / Port", local ? address(String(local[0]), local[1]) : address(http.host, http.port)),
+    transport("HTTP / MCP", http, address(http.host, http.port)),
+    transport("Wyoming", system.wyoming, address(system.wyoming?.host, system.wyoming?.port)),
+    transport("MQTT", system.mqtt, address(system.mqtt?.host, system.mqtt?.port)),
+    transport("ZMQ", system.zmq, system.zmq?.endpoint || "—"));
+  const device = data.hailo_device || {};
+  const percent = value => value == null ? "Nicht verfügbar" : `${fmt(value)} %`;
+  const gib = value => new Intl.NumberFormat(locale, {minimumFractionDigits: 1, maximumFractionDigits: 1}).format(value / 1073741824);
+  const ram = device.ram_used_bytes == null || device.ram_total_bytes == null ? "Nicht verfügbar"
+    : `${gib(device.ram_used_bytes)} / ${gib(device.ram_total_bytes)} GiB`;
+  $("hailo-device").replaceChildren(item("NNC", percent(device.nnc_percent)), item("CPU", percent(device.cpu_percent)),
+    item("DSP", percent(device.dsp_percent)), item("RAM", ram),
+    item("Temperature", device.temperature_c == null ? "Nicht verfügbar" : `${fmt(device.temperature_c)} °C`),
+    item("Throttling", device.throttling == null ? "Nicht verfügbar" : device.throttling ? "Ja" : "Nein"));
+  $("hailo-errors").hidden = !Object.keys(device.errors || {}).length;
+  $("hailo-errors-text").textContent = Object.entries(device.errors || {}).map(([name, error]) => `${name}: ${error}`).join("\n");
+  const age = device.sampled_at ? Date.now() - new Date(device.sampled_at).getTime() : null;
+  $("hailo-note").textContent = device.sampled_at ? `HailoRT · Stand: ${when(device.sampled_at)}${age > 15000 ? " · Messstand veraltet" : device.state === "partial" ? " · Einzelne Werte nicht verfügbar" : device.state === "unavailable" ? " · Keine Messwerte verfügbar" : ""}`
+    : device.state === "pending" ? "HailoRT-Messung läuft …" : "Keine Hardwaremessung verfügbar.";
+  $("resident-models").replaceChildren(...(device.resident_models || []).map(model => item(model.name, model.state === "loaded" ? "loaded" : model.state)));
+  if (!device.resident_models?.length) $("resident-models").append(item("Modelle", "Keine geladen"));
   renderLogs(data.logs || []);
   if (window.scrollX !== pageX || window.scrollY !== pageY) window.scrollTo(pageX, pageY);
 }

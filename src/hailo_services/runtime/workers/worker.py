@@ -24,6 +24,7 @@ from typing import Any, Callable
 
 from hailo_services.chat.backend_hailo import HailoBackend
 from hailo_services.chat.backend_litert import LiteRTLMBackend
+from hailo_services.diagnostics.hailo_device import HailoTelemetry, empty_telemetry, resident_models
 from hailo_services.diagnostics.logging_utils import InlineDataRedactionFilter
 from hailo_services.runtime.models import ModelManager
 from hailo_services.runtime.runtime import Runtime
@@ -162,6 +163,14 @@ def _hailo_worker(settings, request_queue, response_queue, log_queue=None) -> No
         if vision is not None
         else None
     )
+
+    def publish_telemetry(value):
+        try:
+            response_queue.put_nowait({"kind": "telemetry", "value": value})
+        except (queue.Full, OSError, ValueError):
+            pass  # Inference responses always take precedence over monitoring.
+
+    telemetry = HailoTelemetry(publish_telemetry)
     cancellations: dict[str, threading.Event] = {}
     ready = False
     try:
@@ -179,9 +188,11 @@ def _hailo_worker(settings, request_queue, response_queue, log_queue=None) -> No
                     "minilm_ready": bool(getattr(chat, "minilm", None)),
                     "vision_path": getattr(vision, "path", None),
                     "vision_input_shape": getattr(vision, "input_shape", None),
+                    "resident_models": resident_models(chat, vision, settings),
                 },
             }
         )
+        telemetry.start(getattr(chat, "device", None) or getattr(vision, "device", None))
         while True:
             message = request_queue.get()
             command = message.get("cmd")
@@ -244,6 +255,7 @@ def _hailo_worker(settings, request_queue, response_queue, log_queue=None) -> No
         else:
             _LOG.exception("Hailo worker control loop failed")
     finally:
+        telemetry.close()
         try:
             chat_owner.submit(chat.close).result()
         except BaseException:
@@ -409,6 +421,7 @@ class _WorkerClient:
         self._users = 0
         self.restarts = 0
         self.last_error = None
+        self._telemetry = empty_telemetry("pending")
 
     def acquire(self) -> dict[str, Any]:
         with self._lifecycle_lock:
@@ -421,6 +434,8 @@ class _WorkerClient:
         if self.process is not None:
             self._shutdown_locked(force=True)
             self.restarts += 1
+        self._telemetry = empty_telemetry("pending")
+        self.metadata = {}
         self.request_queue = self.context.Queue(maxsize=max(4, self.settings.queue_size + 2))
         self.response_queue = self.context.Queue(maxsize=max(32, self.settings.queue_size * 8))
         self.process = self.context.Process(
@@ -464,6 +479,10 @@ class _WorkerClient:
                 if not process.is_alive():
                     self._fail_pending("worker process exited")
                     return
+                continue
+            if message.get("kind") == "telemetry":
+                if process is self.process:
+                    self._telemetry = dict(message.get("value", {}))
                 continue
             request_id = message.get("id")
             with self._lock:
@@ -573,6 +592,11 @@ class _WorkerClient:
         self.listener = None
         self.request_queue = None
         self.response_queue = None
+
+    def telemetry_status(self) -> dict[str, Any]:
+        if self.process is None or not self.process.is_alive():
+            return {**empty_telemetry("stopped"), "resident_models": []}
+        return {**self._telemetry, "resident_models": list(self.metadata.get("resident_models", []))}
 
     def status(self) -> dict[str, Any]:
         process = self.process

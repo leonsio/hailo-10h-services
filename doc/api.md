@@ -508,6 +508,22 @@ YOLO includes detection time across HTTP and Frigate ZMQ. The JSON endpoint also
 returns the full `/health` data, Linux host and service cgroup resource use, and
 up to 50 recent application log entries per process, displayed separately for
 the gateway and each running resident worker.
+Each service entry has an `enabled` flag; the web overview hides disabled services.
+`system_services` reports the host and HTTP/MCP, Wyoming, MQTT and ZMQ
+addresses/ports and their live transport states. `hailo_device` contains
+`nnc_percent`, `cpu_percent`, `dsp_percent`, `ram_used_bytes`, `ram_total_bytes`,
+`temperature_c`, `throttling`, `sampled_at`, `state`, `errors`, and
+`resident_models`. Hardware values are sampled through HailoRT in the Hailo
+worker every five seconds and sent through IPC; monitoring never invokes native
+inference or a hardware query from the gateway. HailoRT performance RAM is in
+KiB and is converted to bytes before transfer. `-1` and unsupported fields are
+returned as `null`. The temperature is the highest available internal sensor
+reading. The throttling row reports actual throttling when available, rather
+than mistaking an enabled protection mechanism for active throttling. Model
+residency is tracked from successful native model initialization by this service,
+not inferred from enabled settings; the list is emptied when the worker stops.
+API contracts are based on [HailoRT 5.4 Python Control](https://github.com/hailo-ai/hailort/blob/v5.4.0/hailort/libhailort/bindings/python/platform/hailo_platform/pyhailort/pyhailort.py).
+
 The resource view lists the gateway and each live worker separately by PID, CPU
 and RSS, alongside cgroup totals. Shared memory can appear in several RSS figures,
 so adding process RSS values is not equivalent to total service memory. CPU

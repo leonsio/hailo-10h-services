@@ -87,7 +87,7 @@ test('API key survives navigation between Playground and monitoring in one brows
   assert.equal(values.has('hailo-api-key'), false);
 });
 
-test('monitoring switches full-width process and service log tabs', async () => {
+test('monitoring shows enabled services, native telemetry and preserves log scroll', async () => {
   class Element {
     constructor() { this.children = []; this.value = ''; this.hidden = false; this.events = {}; this.scrollTop = 0; this.scrollLeft = 0; this.scrollHeight = 200; this.clientHeight = 100; }
     get firstElementChild() { return this.children[0] || null; }
@@ -104,7 +104,7 @@ test('monitoring switches full-width process and service log tabs', async () => 
     window: {scrollX: 0, scrollY: 500, scrollTo(x, y) {this.scrollX = x; this.scrollY = y;}},
     fetch: async url => url === '/ui/config'
       ? { ok: true, json: async () => ({auth_required: false}) }
-      : { ok: true, json: async () => ({ health: {ready: true, workers: {hailo: {status: 'ready', pid: 102}}, model_paths: {vlm: '/models/qwen.hef'}}, hailo_device: {pci_address: '0000:02:00.0', link_speed: '8.0 GT/s', link_width: '1', driver: 'hailo1x_pci', temperature_c: 41.2}, resources: {
+      : { ok: true, json: async () => ({ health: {ready: true, workers: {hailo: {status: 'ready', pid: 102}}, model_paths: {vlm: '/models/qwen.hef'}}, hailo_device: {nnc_percent: 37, cpu_percent: 12, dsp_percent: 0, ram_used_bytes: 5 * 1073741824, ram_total_bytes: 8 * 1073741824, temperature_c: 54, throttling: false, resident_models: [{name: 'Qwen3-VL-2B', state: 'loaded'}]}, services: {VLM: {enabled: true, active: 0}, Piper: {enabled: false, active: 0}}, system_services: {host: {name: 'cm5', status: 'running'}, http: {host: '0.0.0.0', port: 8090, status: 'listening', local_address: ['192.168.2.5', 8090]}, wyoming: {host: '0.0.0.0', port: 10300, status: 'listening'}, mqtt: {host: 'broker.local', port: 1883, status: 'connected'}, zmq: {endpoint: 'tcp://127.0.0.1:5555', status: 'listening'}}, resources: {
         processes: [{name: 'gateway', pid: 101, rss_bytes: 1048576, cpu_percent: 2},
           {name: 'hailo', pid: 102, rss_bytes: 2097152, cpu_percent: 10}]},
         logs: [{name: 'gateway', pid: 101, lines: ['gateway line', 'event=monitor_request service=VLM duration_ms=1']},
@@ -114,8 +114,17 @@ test('monitoring switches full-width process and service log tabs', async () => 
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(elements.access.hidden, true);
   assert.equal(elements.processes.children.length, 2);
-  assert.match(elements['hailo-device'].children.map(row => row.children.map(child => child.textContent).join(' ')).join(' '), /41.2 °C/);
-  assert.match(elements['hailo-device'].children.map(row => row.children.map(child => child.textContent).join(' ')).join(' '), /qwen.hef/);
+  assert.equal(elements.services.children.length, 1);
+  assert.equal(elements.services.children[0].children[0].textContent, 'VLM');
+  assert.match(contents(elements['hailo-device']), /NNC 37 %/);
+  assert.match(contents(elements['hailo-device']), /DSP 0 %/);
+  assert.match(contents(elements['hailo-device']), /54 °C/);
+  assert.match(contents(elements['hailo-device']), /Throttling Nein/);
+  assert.match(contents(elements['resident-models']), /Qwen3-VL-2B loaded/);
+  assert.match(contents(elements.health), /192.168.2.5:8090/);
+  assert.match(contents(elements.health), /10300/);
+  assert.match(contents(elements.health), /broker.local:1883/);
+  assert.doesNotMatch(contents(elements.health), /qwen|Modelle/);
   assert.equal(elements['log-tabs'].children.length, 2);
   assert.equal(elements.logs.children.length, 1);
   assert.match(elements.logs.children[0].children[1].textContent, /gateway line/);

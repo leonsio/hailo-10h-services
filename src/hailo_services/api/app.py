@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import signal
+import socket
 import threading
 import time
 import uuid
@@ -43,7 +44,7 @@ from hailo_services.config import (
     STT_MODEL,
     Settings,
 )
-from hailo_services.diagnostics.hailo_device import hailo_device_status
+from hailo_services.diagnostics.hailo_device import HailoTelemetry, resident_models
 from hailo_services.diagnostics.metrics import response_metrics, timestamp
 from hailo_services.diagnostics.monitoring import Monitor, instrument
 from hailo_services.runtime.models import ModelManager
@@ -410,6 +411,7 @@ def create_app(
     mqtt = MQTTBridge(runtime, settings)
     monitor = Monitor(settings)
     settings_store = SettingsStore()
+    device_telemetry = HailoTelemetry()
     instrument(runtime, vision, speech, monitor)
     supervisor = getattr(runtime, "worker_supervisor", None)
     if supervisor is not None:
@@ -520,6 +522,8 @@ def create_app(
             _LOG.info("Startup phase 1/2: loading resident Hailo-10H models")
             await runtime.start_hailo()  # Failure prevents all listeners from becoming ready.
             await vision.start()
+            if supervisor is None:
+                device_telemetry.start(getattr(runtime.backend, "device", None) or getattr(vision.backend, "device", None))
             _LOG.info("Startup phase 1/2 complete: resident Hailo-10H models initialized")
 
             _LOG.info("Startup phase 2/2: loading CPU models")
@@ -535,6 +539,7 @@ def create_app(
             async with mcp.session_manager.run():
                 yield
         finally:
+            device_telemetry.close()
             await frigate_zmq.close()
             await vision.close()
             await wyoming.close()
@@ -825,7 +830,7 @@ def create_app(
         return {"message": "Neustart eingeleitet"}
 
     @app.get("/v1/monitor", include_in_schema=False)
-    async def monitoring():
+    async def monitoring(request: Request):
         """Return bounded per-service monitoring, health, resources and recent logs.
 
         Returns:
@@ -837,13 +842,34 @@ def create_app(
             "piper": speech.status(),
             "mqtt_connected": mqtt.connected,
         }
+        wyoming_listening = bool(wyoming.server and wyoming.server.is_serving())
+        zmq_enabled = bool(settings.vision_enabled and settings.vision_zmq_enabled)
+        zmq_listening = bool(frigate_zmq.socket is not None and not frigate_zmq.socket.closed
+                             and frigate_zmq.task is not None and not frigate_zmq.task.done())
         return {
             "started_at": monitor.started,
             "generated_at": timestamp(),
             "services": monitor.snapshot(),
             "health": status,
             "resources": monitor.resources(status.get("workers")),
-            "hailo_device": hailo_device_status(),
+            "hailo_device": supervisor.hailo.telemetry_status() if supervisor is not None else {
+                **device_telemetry.snapshot(),
+                "resident_models": resident_models(runtime.backend, vision.backend, settings),
+            },
+            "system_services": {
+                "host": {"name": socket.gethostname(), "status": "running"},
+                "http": {"enabled": True, "status": "listening", "host": settings.host, "port": settings.port,
+                         "local_address": request.scope.get("server")},
+                "wyoming": {"enabled": bool(settings.wyoming_port),
+                            "status": "listening" if wyoming_listening else "disabled" if not settings.wyoming_port else "stopped",
+                            "host": settings.wyoming_host, "port": settings.wyoming_port},
+                "mqtt": {"enabled": bool(settings.mqtt_host),
+                         "status": "connected" if mqtt.connected else "disconnected" if settings.mqtt_host else "disabled",
+                         "host": settings.mqtt_host, "port": settings.mqtt_port, "tls": settings.mqtt_tls},
+                "zmq": {"enabled": zmq_enabled,
+                        "status": "listening" if zmq_listening else "disabled" if not zmq_enabled else "stopped",
+                        "endpoint": settings.vision_zmq_endpoint},
+            },
             "logs": monitor.logs.snapshot(status.get("workers")),
         }
 
