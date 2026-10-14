@@ -601,7 +601,7 @@ class _WorkerClient:
     def status(self) -> dict[str, Any]:
         process = self.process
         return {
-            "status": "ready" if process is not None and process.is_alive() else "stopped",
+            "status": ("ready" if self.metadata else "starting") if process is not None and process.is_alive() else "stopped",
             "pid": process.pid if process is not None else self.metadata.get("pid"),
             "restarts": self.restarts,
             "users": self._users,

@@ -47,6 +47,7 @@ from hailo_services.config import (
 from hailo_services.diagnostics.hailo_device import HailoTelemetry, resident_models
 from hailo_services.diagnostics.metrics import response_metrics, timestamp
 from hailo_services.diagnostics.monitoring import Monitor, instrument
+from hailo_services.runtime.live_settings import LIVE_FIELDS, LIVE_PATHS, LiveSettings
 from hailo_services.runtime.models import ModelManager
 from hailo_services.runtime.runtime import Runtime
 from hailo_services.schemas import (
@@ -404,7 +405,7 @@ def create_app(
     Raises:
         ValueError: Service settings or protocol configuration are invalid.
     """
-    settings = settings or Settings.from_env()
+    settings = LiveSettings(settings or Settings.from_env())
     runtime = (runtime_factory or Runtime)(settings, backend, litert_backend)
     speech = (speech_factory or SpeechRuntime)(settings, speech_backend)
     vision = (vision_factory or VisionRuntime)(settings, vision_backend)
@@ -520,27 +521,45 @@ def create_app(
             No application-specific exceptions are raised for valid inputs.
         """
         mqtt_task = None
-        try:
-            _LOG.info("Startup phase 1/2: loading resident Hailo-10H models")
-            await runtime.start_hailo()  # Failure prevents all listeners from becoming ready.
-            await vision.start()
+        app.state.startup = {"state": "loading", "errors": {}, "phase": "Hailo"}
+
+        async def initialize():
+            """Initialize services after HTTP has started.
+
+            Returns:
+                None: Publishes progress and errors.
+            """
+            nonlocal mqtt_task
+            phases = [("Hailo", runtime.start_hailo), ("Vision", vision.start),
+                      ("LLM", runtime.start_cpu), ("Piper", speech.start),
+                      ("ZMQ", frigate_zmq.start)]
+            if settings.wyoming_port:
+                phases.append(("Wyoming", wyoming.start))
+            for name, start in phases:
+                app.state.startup["phase"] = name
+                try:
+                    await start()
+                    error = getattr(runtime, "litert_error", None) if name == "LLM" else getattr(speech, "error", None) if name == "Piper" else None
+                    if error:
+                        app.state.startup["errors"][name] = error
+                except Exception as exc:
+                    app.state.startup["errors"][name] = f"{type(exc).__name__}: {exc}"
+                    _LOG.exception("event=startup_failed service=%s", name)
             if supervisor is None:
                 device_telemetry.start(getattr(runtime.backend, "device", None) or getattr(vision.backend, "device", None))
-            _LOG.info("Startup phase 1/2 complete: resident Hailo-10H models initialized")
-
-            _LOG.info("Startup phase 2/2: loading CPU models")
-            await runtime.start_cpu()
-            await speech.start()
-            _LOG.info("Startup phase 2/2 complete: CPU model initialization finished")
-
-            await frigate_zmq.start()
-            if settings.wyoming_port:
-                await wyoming.start()
             if settings.mqtt_host:
                 mqtt_task = asyncio.create_task(mqtt.run(), name="mqtt-bridge")
+            app.state.startup["phase"] = None
+            app.state.startup["state"] = "error" if app.state.startup["errors"] else "complete"
+
+        app.state.init_task = asyncio.create_task(initialize(), name="resident-model-startup")
+        try:
             async with mcp.session_manager.run():
                 yield
         finally:
+            app.state.init_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await app.state.init_task
             device_telemetry.close()
             await frigate_zmq.close()
             await vision.close()
@@ -790,6 +809,20 @@ def create_app(
             else 503,
         )
 
+    def describe_settings(result):
+        """Mark gateway-only live fields and report pending restart changes.
+
+        Returns:
+            dict: Annotated saved configuration.
+        """
+        effective = Settings.from_env(path=settings_store.path)
+        pending = any(getattr(settings, name) != getattr(effective, name)
+                      for name in effective.__dataclass_fields__ if name not in LIVE_FIELDS)
+        result["restart_required"] = pending
+        for field in result["fields"]:
+            field["runtime"] = field["path"] in LIVE_PATHS
+        return result
+
     @app.get("/v1/settings", include_in_schema=False)
     async def settings_read():
         """Read redacted settings.
@@ -798,7 +831,7 @@ def create_app(
             dict: Editable configuration metadata.
         """
         try:
-            return settings_store.read()
+            return describe_settings(settings_store.read())
         except SettingsStoreError as exc:
             raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
@@ -812,6 +845,9 @@ def create_app(
         try:
             payload = await request.json()
             result = settings_store.write(payload)
+            settings.apply(Settings.from_env(path=settings_store.path))
+            result = describe_settings(result)
+            result["changed_paths"] = list(payload.get("changes", {}))
             _LOG.info("event=settings_saved path=%s", settings_store.path)
             return result
         except SettingsStoreError as exc:
@@ -826,6 +862,9 @@ def create_app(
         """
         if not os.getenv("INVOCATION_ID"):
             raise HTTPException(status_code=409, detail="Neustart ist nur unter systemd verfügbar.")
+        if getattr(app.state, "restart_requested", False):
+            return {"message": "Neustart bereits eingeleitet"}
+        app.state.restart_requested = True
         _LOG.warning("event=restart_requested source=web")
         # systemd Restart=always starts a fresh gateway after graceful SIGTERM.
         threading.Timer(1.0, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
@@ -867,7 +906,10 @@ def create_app(
         services = monitor.snapshot()
         for name, values in services.items():
             values["models"] = service_models.get(name, [])
+            values["available"] = bool(values["models"])
         return {
+            "restart_available": bool(os.getenv("INVOCATION_ID")),
+            "startup": getattr(app.state, "startup", {}),
             "started_at": monitor.started,
             "generated_at": timestamp(),
             "services": services,

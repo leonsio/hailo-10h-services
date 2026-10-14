@@ -129,7 +129,7 @@ class Runtime:
         Raises:
             BusyError: Runtime is not ready.
         """
-        if not self.ready:
+        if not (self.litert_ready if litert else self.ready):
             raise BusyError("Runtime is not ready")
         pending = self.litert_pending if litert else self.pending
         if pending >= self.settings.queue_size:

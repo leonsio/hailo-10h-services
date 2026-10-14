@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timezone
 
 _LOG = logging.getLogger(__name__)
-_FIELDS = ("nnc_percent", "cpu_percent", "dsp_percent", "ram_used_bytes", "ram_total_bytes", "temperature_c", "throttling")
+_FIELDS = ("nnc_percent", "cpu_percent", "ram_used_bytes", "ram_total_bytes", "temperature_c", "throttling")
 
 
 def empty_telemetry(state="unavailable"):
@@ -73,7 +73,7 @@ def read_device(control, unavailable=None):
     unavailable = unavailable if unavailable is not None else {}
     stats = _query("performance", lambda: control.query_performance_stats(sampling_period_ms=100), result["errors"], unavailable)
     if stats is not None:
-        for target, name in (("nnc_percent", "nnc_utilization"), ("cpu_percent", "cpu_utilization"), ("dsp_percent", "dsp_utilization")):
+        for target, name in (("nnc_percent", "nnc_utilization"), ("cpu_percent", "cpu_utilization")):
             value = _number(getattr(stats, name, None))
             result[target] = value if value is not None and value <= 100 else None
         for target, name in (("ram_used_bytes", "ram_size_used"), ("ram_total_bytes", "ram_size_total")):

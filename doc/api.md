@@ -506,12 +506,17 @@ and longest response times and the time of the last request for each inference
 service. Chat services include average TTFT when the backend supplies that metric;
 YOLO includes detection time across HTTP and Frigate ZMQ. The JSON endpoint also
 returns the full `/health` data, Linux host and service cgroup resource use, and
-up to 50 recent application log entries per process, displayed separately for
-the gateway and each running resident worker.
+up to 100 recent application log entries per process, displayed separately for
+the gateway and each running resident worker. Event (`event=` or `events=`),
+operation, protocol and model filters can be combined, and both scroll positions
+are preserved across refreshes. The GUI starts without awaiting native model loading;
+`startup` exposes the loading phase and errors, and unavailable models return 503.
+Assist requests count both the public assistant and the backend actually invoked;
+deterministic answers count only the assistant.
 Each service entry has an `enabled` flag; the web overview hides disabled services.
 `system_services` reports the host and HTTP/MCP, Wyoming, MQTT and ZMQ
 addresses/ports and their live transport states. `hailo_device` contains
-`nnc_percent`, `cpu_percent`, `dsp_percent`, `ram_used_bytes`, `ram_total_bytes`,
+`nnc_percent`, `cpu_percent`, `ram_used_bytes`, `ram_total_bytes`,
 `temperature_c`, `throttling`, `sampled_at`, `state`, `errors`, and
 `resident_models`. Hardware values are sampled through HailoRT in the Hailo
 worker every five seconds and sent through IPC; monitoring never invokes native
@@ -528,10 +533,11 @@ The resource view lists the gateway and each live worker separately by PID, CPU
 and RSS, alongside cgroup totals. Shared memory can appear in several RSS figures,
 so adding process RSS values is not equivalent to total service memory. CPU
 percentages are measured between refreshes; unavailable fields are `null`.
+`host_temperature_c` reports the host CPU thermal sensor when exposed by Linux.
 
 Statistics use bounded per-second buckets in gateway memory and cover the last
 hour since process start. They reset on restart. Logs are kept in a bounded memory
-buffer per PID, so a process may contain fewer than 50 lines before enough log activity
+buffer per PID, so a process may contain fewer than 100 lines before enough log activity
 occurs. Detailed request and inference logs appear when `settings.debug_log` is
 enabled; request bodies are excluded from the web log view. The regular systemd
 journal remains the source for complete logs. The browser refreshes every five seconds.
@@ -992,6 +998,12 @@ See [HA recognition and caching](ha-recognition.md) for policy and SDK findings.
 
 ## Settings UI and API
 
-`GET /settings` serves the configuration editor, grouped by transport, model role and integration. Interface language is a browser preference stored in `localStorage`, applies across Playground/Settings/Monitoring without a restart, and is separate from service-language YAML settings. `GET /v1/settings` returns existing scalar YAML fields and a file version; secrets are redacted. `PUT /v1/settings` accepts `{ "version": "…", "changes": { "settings.debug_log": true } }`, validates the complete YAML and atomically replaces it. Version conflicts return 409; invalid settings return 400. Empty secret fields leave existing values intact; `null` explicitly clears `settings.api_key` or `settings.mqtt_password`. YAML comments are reformatted on save. `POST /v1/settings/restart` requests a graceful systemd restart when available, otherwise returns 409. All three API routes use the same bearer key and `settings.api_no_auth_networks` exemption as `/v1/monitor`. YAML settings are read at startup by gateway and workers; every change needs a restart and `HAILO_*` environment overrides take precedence.
+`GET /settings` serves the configuration editor, grouped by transport, model role and integration. Interface language is a browser preference stored in `localStorage`, applies across Playground/Settings/Monitoring without a restart, and is separate from service-language YAML settings. `GET /v1/settings` returns existing scalar YAML fields and a file version; secrets are redacted. `PUT /v1/settings` accepts `{ "version": "…", "changes": { "settings.debug_log": true } }`, validates the complete YAML and atomically replaces it. Version conflicts return 409; invalid settings return 400. Empty secret fields leave existing values intact; `null` explicitly clears `settings.api_key` or `settings.mqtt_password`. YAML comments are reformatted on save. `POST /v1/settings/restart` requests a graceful systemd restart when available, otherwise returns 409. All three API routes use the same bearer key and `settings.api_no_auth_networks` exemption as `/v1/monitor`. Fields carry a `runtime` flag. Gateway request timeouts, Piper input character limits,
+HA waiting messages, YOLO confidence and maximum detections are applied immediately
+after saving. Other settings require a restart. `restart_required` compares the saved
+effective configuration with the running configuration. `HAILO_*` environment
+overrides take precedence. Changed fields are highlighted before saving, and saved
+changes are marked as applied or awaiting restart. The monitoring page also offers
+the systemd restart action.
 
 Settings field descriptors for named model selections include an `options` list filtered by model role from the configured model catalogue, plus `allow_empty` for Frigate routes that default to the active VLM. Changed named selections are validated against that catalogue and role; explicit local HEF paths remain supported. A catalogue read failure is exposed as `catalog_error` so the configuration can still be edited. Monitoring service entries include a `models` list of actually loaded targets for smaller model captions in the overview.

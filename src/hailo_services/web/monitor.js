@@ -50,6 +50,12 @@ function serviceOf(line) {
   const match = line.match(/\bservice=(.+?)(?:\s+\w+=|$)/) || line.match(/\boperation=([^ ]+)/);
   return match ? match[1] : null;
 }
+const logFilters = {event: "", operation: "", protocol: "", model: ""};
+function logTag(line, name) {
+  const names = name === "event" ? "events?" : name;
+  const match = line.match(new RegExp(`\\b(?:${names})=(.+?)(?=\\s+[\\w.-]+=|$)`));
+  return match ? match[1].trim() : null;
+}
 function renderLogs(groups) {
   const ordered = ["gateway", "llm", "hailo", "piper"].map(name => groups.find(group => group.name === name)).filter(Boolean);
   if (!ordered.some(group => group.name === selectedProcess)) selectedProcess = ordered[0]?.name || "gateway";
@@ -58,8 +64,17 @@ function renderLogs(groups) {
   const services = ["Alle", ...new Set((group?.lines || []).map(serviceOf).filter(Boolean))];
   if (!services.includes(selectedService)) selectedService = "Alle";
   replaceTabs("service-tabs", services.map(service => tab(service === "Alle" ? tr("monitor.all") : service, selectedService === service, () => {selectedService = service; renderLogs(groups);} )));
-  const selected = (group?.lines || []).filter(line => selectedService === "Alle" || serviceOf(line) === selectedService);
-  const key = `${group?.name}:${group?.pid}:${selectedService}`;
+  for (const name of Object.keys(logFilters)) {
+    const select = $(`log-${name}`);
+    if (!select) continue;
+    const values = [...new Set((group?.lines || []).map(line => logTag(line, name)).filter(Boolean))].sort();
+    if (logFilters[name] && !values.includes(logFilters[name])) values.push(logFilters[name]);
+    select.replaceChildren(...["", ...values].map(value => { const option = document.createElement("option"); option.value = value; option.textContent = value || tr("monitor.all"); return option; }));
+    select.value = logFilters[name];
+  }
+  const selected = (group?.lines || []).filter(line => (selectedService === "Alle" || serviceOf(line) === selectedService)
+    && Object.entries(logFilters).every(([name, value]) => !value || logTag(line, name) === value));
+  const key = `${group?.name}:${group?.pid}:${selectedService}:${JSON.stringify(logFilters)}`;
   const panel = $("logs");
   let article = panel.firstElementChild;
   if (!article) {
@@ -84,6 +99,10 @@ function renderLogs(groups) {
 }
 function render(data) {
   lastData = data;
+  $("restart").hidden = !data.restart_available;
+  const startup = data.startup || {};
+  $("startup").textContent = startup.state === "loading" ? tr("monitor.loading", {phase: startup.phase || ""}) : Object.entries(startup.errors || {}).map(([name, error]) => `${name}: ${error}`).join(" · ");
+  $("startup").className = startup.state === "error" ? "bad" : "hint";
   const pageX = window.scrollX, pageY = window.scrollY;
   const h = data.health || {}, r = data.resources || {};
   const ready = h.ready && (!h.vision?.enabled || h.vision?.ready);
@@ -93,8 +112,9 @@ function render(data) {
   const cards = Object.entries(data.services || {}).filter(([, service]) => service.enabled).map(([name, s]) => {
     const card = document.createElement("article"), title = document.createElement("h3");
     title.textContent = name;
-    if (s.models?.length) { const model = document.createElement("small"); model.textContent = ` (${s.models.join(" / ")})`; title.append(model); }
+    if (s.models?.length && !["HA-Assist", "Frigate-Assist"].includes(name)) { const model = document.createElement("small"); model.textContent = ` (${s.models.join(" / ")})`; title.append(model); }
     card.append(title);
+    if (s.available === false) card.append(item(tr("monitor.readiness"), tr("metrics.unavailable")));
     card.append(item(tr("monitor.requests"), fmt(s.requests_1h)), item(tr("monitor.errors"), fmt(s.errors_1h)),
       item(tr("monitor.active"), fmt(s.active)), item(tr("monitor.average"), s.average_ms == null ? "—" : `${fmt(s.average_ms)} ms`),
       item(tr("monitor.maximum"), s.maximum_ms == null ? "—" : `${fmt(s.maximum_ms)} ms`));
@@ -106,7 +126,7 @@ function render(data) {
   $("services").replaceChildren(...cards);
   if (!cards.length) { const empty = document.createElement("p"); empty.textContent = tr("monitor.no_services"); $("services").append(empty); }
   const memory = r.host_memory || {};
-  $("resources").replaceChildren(item(tr("monitor.cpu_cores"), fmt(r.cpu_cores)), item(tr("monitor.load"), fmt(r.load_average)),
+  $("resources").replaceChildren(item(tr("monitor.host_temperature"), r.host_temperature_c == null ? tr("metrics.unavailable") : `${fmt(r.host_temperature_c)} °C`),item(tr("monitor.cpu_cores"), fmt(r.cpu_cores)), item(tr("monitor.load"), fmt(r.load_average)),
     item(tr("monitor.cpu_cgroup"), r.cgroup_cpu_percent == null ? tr("metrics.pending") : `${fmt(r.cgroup_cpu_percent)} %`),
     item(tr("monitor.cpu_gateway"), r.process_cpu_percent == null ? tr("metrics.pending") : `${fmt(r.process_cpu_percent)} %`),
     item(tr("monitor.ram_gateway"), bytes(r.process_rss_bytes)), item(tr("monitor.ram_cgroup"), bytes(r.cgroup_memory_bytes)),
@@ -137,7 +157,7 @@ function render(data) {
   const ram = device.ram_used_bytes == null || device.ram_total_bytes == null ? tr("metrics.unavailable")
     : `${gib(device.ram_used_bytes)} / ${gib(device.ram_total_bytes)} GiB`;
   $("hailo-device").replaceChildren(item("NNC", percent(device.nnc_percent)), item("CPU", percent(device.cpu_percent)),
-    item("DSP", percent(device.dsp_percent)), item("RAM", ram),
+    item("RAM", ram),
     item(tr("monitor.temperature"), device.temperature_c == null ? tr("metrics.unavailable") : `${fmt(device.temperature_c)} °C`),
     item("Throttling", device.throttling == null ? tr("metrics.unavailable") : device.throttling ? tr("common.yes") : tr("common.no")));
   $("hailo-errors").hidden = !Object.keys(device.errors || {}).length;
@@ -175,3 +195,16 @@ $("apply").addEventListener("click", refresh);
 $("refresh").addEventListener("click", refresh);
 $("key").addEventListener("keydown", event => { if (event.key === "Enter") refresh(); });
 void init(); setInterval(refresh, 5000);
+
+for (const name of Object.keys(logFilters)) $(`log-${name}`)?.addEventListener("change", event => {
+  logFilters[name] = event.target.value; if (lastData) renderLogs(lastData.logs || []);
+});
+$("restart").addEventListener("click", async () => {
+  $("restart").disabled = true;
+  try {
+    const key = $("key").value.trim();
+    const response = await fetch("/v1/settings/restart", {method: "POST", headers: key ? {Authorization: `Bearer ${key}`} : {}});
+    if (!response.ok) { const body = await response.json(); throw new Error(body.detail || `HTTP ${response.status}`); }
+    $("updated").textContent = tr("settings.restarting");
+  } catch (error) { $("updated").textContent = error.message; $("restart").disabled = false; }
+});

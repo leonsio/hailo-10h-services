@@ -70,15 +70,20 @@ function fieldRow(field, index) {
     input.value = field.value ?? "";
     if (secret) { input.autocomplete = "new-password"; input.dataset.i18nPlaceholder = field.secret_set ? "settings.secret_keep" : "settings.secret_empty"; input.placeholder = tr(input.dataset.i18nPlaceholder); }
   }
+  const baseline = input.value;
+  const edited = () => { row.classList.toggle("is-dirty", input.value !== baseline || Boolean(controls.querySelector("[data-clear]")?.checked)); };
+  input.addEventListener("input", edited); input.addEventListener("change", edited);
+  label.append(translated("small", field.runtime ? "settings.live" : "settings.needs_restart"));
+  if (field.changed) row.classList.add(field.runtime ? "is-applied" : "is-pending");
   controls.append(input);
   if (["settings.api_key", "settings.mqtt_password"].includes(field.path) && field.secret_set) {
-    const clear = document.createElement("label"), checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.dataset.clear = field.path;
+    const clear = document.createElement("label"), checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.dataset.clear = field.path; checkbox.addEventListener("change", edited);
     clear.className = "secret-clear"; clear.append(checkbox, translated("span", "settings.secret_clear")); controls.append(clear);
   }
   row.append(label, controls); return row;
 }
 function render(data) {
-  version = data.version; current = data.fields; restartAvailable = data.restart_available; configPath = data.path;
+  version = data.version; current = data.fields.map(field => ({...field, changed: (data.changed_paths || []).includes(field.path)})); restartAvailable = data.restart_available; $("restart").hidden = !restartAvailable || !data.restart_required; configPath = data.path;
   $("config-path").textContent = tr("settings.file", {path: configPath});
   const grouped = new Map();
   for (const field of current) {
@@ -91,7 +96,7 @@ function render(data) {
     const fields = grouped.get(group.id); if (!fields) continue;
     const section = document.createElement("section"), details = document.createElement("details"), summary = document.createElement("summary"), list = document.createElement("div");
     section.className = "setting-group"; section.id = `settings-${group.id}`; details.open = true; list.className = "setting-list";
-    summary.append(translated("span", `settings.group.${group.id}`), translated("small", "settings.needs_restart"));
+    summary.append(translated("span", `settings.group.${group.id}`), translated("small", fields.every(field => field.runtime) ? "settings.live" : fields.some(field => field.runtime) ? "settings.mixed" : "settings.needs_restart"));
     fields.forEach(field => list.append(fieldRow(field, current.indexOf(field))));
     details.append(summary, list); section.append(details); sections.push(section);
     const link = translated("a", `settings.group.${group.id}`); link.href = `#${section.id}`; links.push(link);
@@ -120,7 +125,7 @@ $("form").addEventListener("submit", async event => {
   $("save").disabled = true;
   try {
     render(await request("/v1/settings", {method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify({version, changes})}));
-    say("settings.saved"); $("restart").hidden = !restartAvailable;
+    say("settings.saved");
   } catch (error) { say(error.message, true); $("save").disabled = false; }
 });
 $("restart").addEventListener("click", async () => {

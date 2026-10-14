@@ -161,16 +161,16 @@ def test_resources_list_gateway_and_live_worker_separately(monkeypatch):
         monitor.close()
 
 
-def test_logs_keep_fifty_lines_per_process():
+def test_logs_keep_hundred_lines_per_process():
     logs = RecentLogs()
-    for number in range(52):
+    for number in range(102):
         record = logging.LogRecord("hailo_services.worker", logging.INFO, __file__, 1, f"line {number}", (), None)
         record.process = 424242
         logs.handle(record)
     result = logs.snapshot({"hailo": {"pid": 424242, "status": "ready"}})
     assert result[0]["name"] == "gateway"
     assert result[0]["lines"] == []
-    assert len(result[1]["lines"]) == 50
+    assert len(result[1]["lines"]) == 100
     assert "line 2" in result[1]["lines"][0]
 
 
@@ -262,7 +262,7 @@ def test_hailort_control_stats_are_normalized_to_bytes_and_zero_is_preserved():
     assert result["state"] == "ready"
     assert result["nnc_percent"] == 37
     assert result["cpu_percent"] == 12
-    assert result["dsp_percent"] == 0
+    assert "dsp_percent" not in result
     assert result["ram_used_bytes"] == 5 * 1024 ** 3
     assert result["ram_total_bytes"] == 8 * 1024 ** 3
     assert result["temperature_c"] == 54
@@ -288,7 +288,7 @@ def test_unsupported_control_read_does_not_erase_supported_stats_or_retry():
         assert result["state"] == "partial"
         assert result["nnc_percent"] == 0
         assert result["cpu_percent"] is None
-        assert result["dsp_percent"] is None
+        assert "dsp_percent" not in result
         assert result["temperature_c"] is None
         assert result["throttling"] is None
         assert "temperature" in result["errors"]
@@ -411,3 +411,101 @@ def test_monitor_service_caption_lists_only_successfully_loaded_models():
         assert data["services"]["Whisper"]["models"] == []
         backend.vlm = None
         assert client.get("/v1/monitor").json()["services"]["VLM"]["models"] == []
+
+
+def test_gui_available_while_native_models_are_loading():
+    import threading
+    entered, release = threading.Event(), threading.Event()
+    backend = FakeBackend()
+    def slow_start():
+        entered.set()
+        assert release.wait(5)
+    backend.start = slow_start
+    app = create_app(settings(), backend)
+    with TestClient(app) as client:
+        try:
+            assert entered.wait(2)
+            assert client.get('/monitor').status_code == 200
+            assert client.get('/health').status_code == 503
+            data = client.get('/v1/monitor').json()
+            assert data['startup']['state'] == 'loading'
+            assert not data['health']['ready']
+            payload = {'model': VLM_MODEL, 'messages': [{'role': 'user', 'content': 'Hi'}]}
+            assert client.post('/v1/chat/completions', json=payload).status_code == 503
+        finally:
+            release.set()
+            async def wait():
+                await app.state.init_task
+            client.portal.call(wait)
+        assert client.get('/health').status_code == 200
+
+
+def test_model_startup_error_keeps_monitoring_and_cpu_backend_available():
+    from test_services import FakeLiteRTBackend
+    backend = FakeBackend()
+    def failed_start():
+        raise RuntimeError('bad native model')
+    backend.start = failed_start
+    app = create_app(settings(litert_enabled=True), backend, FakeLiteRTBackend())
+    with TestClient(app) as client:
+        async def wait():
+            await app.state.init_task
+        client.portal.call(wait)
+        assert client.get('/monitor').status_code == 200
+        data = client.get('/v1/monitor').json()
+        assert data['startup']['state'] == 'error'
+        assert 'bad native model' in data['startup']['errors']['Hailo']
+        payload = {'model': 'gemma-4-E2B-it', 'messages': [{'role': 'user', 'content': 'Hi'}]}
+        assert client.post('/v1/chat/completions', json=payload).status_code == 200
+
+
+@pytest.mark.parametrize('assistant', ['HA-Assist', 'Frigate-Assist'])
+@pytest.mark.parametrize('direct', [True, False])
+def test_assistant_counts_actual_backend_in_addition_to_public_service(monkeypatch, assistant, direct):
+    import asyncio
+
+    from hailo_services.runtime.runtime import Runtime
+    from hailo_services.speech.speech_runtime import SpeechRuntime
+    from hailo_services.vision.vision import VisionRuntime
+    cfg = settings(ha_assist_enabled=True, frigate_assist_enabled=True)
+    runtime = Runtime(cfg, FakeBackend())
+    monitor = Monitor(cfg)
+    instrument(runtime, VisionRuntime(cfg), SpeechRuntime(cfg), monitor)
+    if assistant == 'HA-Assist':
+        monkeypatch.setattr('hailo_services.assistants.ha.ha_assist.target_model', lambda *_: VLM_MODEL)
+        monkeypatch.setattr('hailo_services.assistants.ha.ha_assist.prepare', lambda _, request: (request, 'direct' if direct else None))
+    else:
+        monkeypatch.setattr('hailo_services.assistants.frigate.frigate_assist.prepare', lambda _, request: (request.model_copy(update={'model': VLM_MODEL}), 'direct' if direct else None))
+        monkeypatch.setattr('hailo_services.assistants.frigate.frigate_routing.validate_result', lambda result, *_: result)
+    async def run():
+        await runtime.start_hailo()
+        try:
+            await runtime.chat(ChatRequest(model=assistant, messages=[{'role': 'user', 'content': 'Hi'}]))
+            await asyncio.sleep(0)
+            data = monitor.snapshot()
+            assert data[assistant]['requests_1h'] == 1
+            assert data['VLM']['requests_1h'] == (0 if direct else 1)
+        finally:
+            await runtime.close()
+            monitor.close()
+    asyncio.run(run())
+
+
+def test_gateway_only_settings_are_saved_and_applied_without_restart(tmp_path, monkeypatch):
+    import pickle
+
+    from hailo_services.config import Settings
+    path = tmp_path / 'config.yaml'
+    path.write_text('settings: {request_timeout: 120, piper_max_input_chars: 4000, ha_wait_messages: true}\n')
+    monkeypatch.setenv('HAILO_CONFIG', str(path))
+    app = create_app(Settings.from_env(), FakeBackend())
+    with TestClient(app) as client:
+        data = client.get('/v1/settings').json()
+        assert next(field for field in data['fields'] if field['path'] == 'settings.request_timeout')['runtime']
+        saved = client.put('/v1/settings', json={'version': data['version'], 'changes': {'settings.request_timeout': 45, 'settings.ha_wait_messages': False}})
+        assert saved.status_code == 200
+        assert not saved.json()['restart_required']
+        assert app.state.runtime.settings.request_timeout == 45
+        assert not app.state.runtime.settings.ha_wait_messages
+        assert Settings.from_env().request_timeout == 45
+        assert pickle.loads(pickle.dumps(app.state.runtime.settings)).request_timeout == 45

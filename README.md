@@ -122,7 +122,9 @@ git pull --ff-only
 sudo bash scripts/install.sh
 ```
 
-The primary configuration is available at `/etc/hailo-10h-services.yaml` (a link to the service-owned state file in systemd installations). The authenticated `/settings` page saves validated YAML changes and can restart the systemd service to apply them. Existing
+The primary configuration is available at `/etc/hailo-10h-services.yaml` (a link to the service-owned state file in systemd installations). The authenticated `/settings` page saves validated YAML changes and can restart the systemd service to apply them. Request timeouts, Piper input limits, HA waiting messages,
+YOLO confidence and maximum detections apply without restarting. Edited fields are
+highlighted; settings requiring a restart are labeled individually. Existing
 `HAILO_<SETTING>` environment variables remain optional overrides.
 
 ### Docker Compose
@@ -411,7 +413,11 @@ WAV playback/download and retained request timings. Piper must be enabled and re
 
 The [monitoring page](doc/api.md#get-monitor-and-get-v1monitor) at `/monitor` shows
 per-service activity, response times, TTFT where available, readiness, resource use
-and recent gateway logs. Its JSON API at `/v1/monitor` uses the configured API key.
+and the last 100 log lines per process, filterable by event, operation, protocol and model.
+The GUI starts while models are loading and remains available to show startup errors.
+Assist requests also count towards the LLM/VLM backend they actually invoke.
+The Raspberry Pi CPU temperature is shown when its thermal sensor is exposed to the host.
+Its JSON API at `/v1/monitor` uses the configured API key.
 
 ## License and third-party components
 

@@ -121,12 +121,14 @@ test('monitoring shows enabled services, native telemetry and preserves log scro
   vm.runInContext(fs.readFileSync(path.join(web, 'monitor.js'), 'utf8'), context);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(elements.access.hidden, true);
+  assert.equal(vm.runInContext('logTag("events=frame_received operation=vision_detect protocol=zmq model=YOLOv11m", "event")', context), 'frame_received');
+  assert.equal(vm.runInContext('logTag("events=frame_received operation=vision_detect protocol=zmq model=YOLOv11m", "protocol")', context), 'zmq');
   assert.equal(elements.processes.children.length, 2);
   assert.equal(elements.services.children.length, 1);
   assert.equal(elements.services.children[0].children[0].textContent, 'VLM');
   assert.equal(elements.services.children[0].children[0].children[0].textContent, ' (Qwen3-VL-2B)');
   assert.match(contents(elements['hailo-device']), /NNC 37 %/);
-  assert.match(contents(elements['hailo-device']), /DSP 0 %/);
+  assert.doesNotMatch(contents(elements['hailo-device']), /DSP/);
   assert.match(contents(elements['hailo-device']), /54 °C/);
   assert.match(contents(elements['hailo-device']), /Throttling No/);
   assert.match(contents(elements['resident-models']), /Qwen3-VL-2B loaded/);
@@ -439,7 +441,7 @@ test('HA-Assist shows selected target limits and retains images for virtual rout
 
 test('settings group fields, preserve unsaved edits on language change and save catalogue selections', async () => {
   class Element {
-    constructor(tag = 'div') { this.tag = tag; this.children = []; this.dataset = {}; this.events = {}; this.attributes = {}; this.value = ''; this._text = ''; }
+    constructor(tag = 'div') { this.tag = tag; this.children = []; this.dataset = {}; this.events = {}; this.attributes = {}; this.value = ''; this._text = ''; this.classList = {add: name => {this.className = `${this.className || ''} ${name}`;}, toggle: (name, on) => {this.className = (this.className || '').split(' ').filter(item => item !== name).concat(on ? [name] : []).join(' ');}}; }
     addEventListener(type, callback) { this.events[type] = callback; }
     append(...nodes) { this.children.push(...nodes); }
     replaceChildren(...nodes) { this.children = nodes; }
@@ -491,6 +493,9 @@ test('settings group fields, preserve unsaved edits on language change and save 
   assert.equal(input('models.vlm.model').options.length, 2);
   assert.equal(input('settings.whisper_hef').value, '/opt/models/local-whisper.hef');
   input('settings.wyoming_port').value = '10400';
+  input('settings.wyoming_port').events.input();
+  const portRow = wyoming.children[0].children[1].children[1];
+  assert.match(portRow.className, /is-dirty/);
   input('models.vlm.model').value = 'Qwen3-VL-2B-Instruct';
   elements['ui-language'].value = 'ru'; await elements['ui-language'].events.change();
   assert.equal(storageValues.get('hailo-ui-language'), 'ru');

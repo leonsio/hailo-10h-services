@@ -26,6 +26,23 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def host_temperature():
+    """Read the host CPU thermal sensor, excluding accelerator thermal zones.
+
+    Returns:
+        float | None: CPU temperature in Celsius.
+    """
+    for zone in sorted(Path("/sys/class/thermal").glob("thermal_zone*")):
+        try:
+            if (zone / "type").read_text().strip() in {"cpu-thermal", "bcm2835_thermal", "soc-thermal"}:
+                value = int((zone / "temp").read_text()) / 1000
+                if -40 <= value <= 150:
+                    return value
+        except (OSError, ValueError):
+            continue
+    return None
+
+
 class RecentLogs(logging.Handler):
     """Keep a small, redacted copy of application logs in the gateway process."""
 
@@ -53,7 +70,7 @@ class RecentLogs(logging.Handler):
                 line = redact_inline_data(self.format(record))
                 with self.lock:
                     pid = record.process
-                    self.entries.setdefault(pid, deque(maxlen=50)).append(line[:1000])
+                    self.entries.setdefault(pid, deque(maxlen=100)).append(line[:1000])
                     self.entries.move_to_end(pid)
                     while len(self.entries) > 12:
                         self.entries.popitem(last=False)
@@ -61,7 +78,7 @@ class RecentLogs(logging.Handler):
             pass
 
     def snapshot(self, workers=None):
-        """Return the last 50 lines for each current service process.
+        """Return the last 100 lines for each current service process.
 
         Returns:
             list[dict]: Process names, PIDs and recent redacted log entries.
@@ -70,7 +87,7 @@ class RecentLogs(logging.Handler):
         if workers:
             processes.extend(
                 (name, detail.get("pid")) for name, detail in workers.items()
-                if name != "gateway" and detail.get("status") == "ready"
+                if name != "gateway" and detail.get("pid") is not None
             )
         with self.lock:
             return [
@@ -211,7 +228,7 @@ class Monitor:
         """
         data = {"cpu_cores": os.cpu_count(), "load_average": None, "host_memory": None,
                 "process_rss_bytes": None, "process_cpu_percent": None, "cgroup_memory_bytes": None,
-                "cgroup_memory_limit_bytes": None, "cgroup_cpu_percent": None, "processes": []}
+                "cgroup_memory_limit_bytes": None, "cgroup_cpu_percent": None, "processes": [], "host_temperature_c": host_temperature()}
         try:
             data["load_average"] = round(os.getloadavg()[0], 2)
             data["process_rss_bytes"] = int(Path("/proc/self/statm").read_text().split()[1]) * os.sysconf("SC_PAGE_SIZE")
@@ -310,6 +327,31 @@ def instrument(runtime, vision, speech, monitor):
             return "Hailo LLM"
         return "VLM" if model == runtime.settings.vlm_model else "LLM"
 
+    submit = getattr(runtime, "submit", None)
+    if submit is not None:
+        def measured_submit(function, *args, **kwargs):
+            """Count actual backend invocations, including assistant delegation.
+
+            Returns:
+                asyncio.Future: The scheduled inference result.
+            """
+            native = function == runtime.backend.chat or function == getattr(runtime.litert_backend, "chat", None)
+            if not native:
+                return submit(function, *args, **kwargs)
+            request = args[0]
+            name = "LLM" if kwargs.get("litert") else chat_name(request)
+            started = monitor.begin(name)
+            try:
+                future = submit(function, *args, **kwargs)
+            except BaseException:
+                monitor.end(name, started, failed=True)
+                raise
+            future.add_done_callback(lambda result: monitor.end(
+                name, started, failed=result.cancelled() or result.exception() is not None,
+                metrics=getattr(request, "_metrics", None)))
+            return future
+        runtime.submit = measured_submit
+
     async def measured_chat(request, *args, **kwargs):
         """Observe a complete chat call.
 
@@ -317,6 +359,8 @@ def instrument(runtime, vision, speech, monitor):
             Any: Original chat result.
         """
         name = chat_name(request)
+        if submit is not None and name not in {"HA-Assist", "Frigate-Assist"}:
+            return await chat(request, *args, **kwargs)
         started = monitor.begin(name)
         failed = True
         try:
@@ -333,7 +377,7 @@ def instrument(runtime, vision, speech, monitor):
             Any: Original chunks.
         """
         # Runtime.stream delegates these requests to chat; count exactly once.
-        if request.model in {HA_ASSIST_MODEL, FRIGATE_ASSIST_MODEL} or has_tool_context(request):
+        if submit is not None or request.model in {HA_ASSIST_MODEL, FRIGATE_ASSIST_MODEL} or has_tool_context(request):
             async for item in stream(request, *args, **kwargs):
                 yield item
             return
