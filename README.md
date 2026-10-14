@@ -408,6 +408,10 @@ See [Piper installation](doc/installation.md#piper-cpu-text-to-speech) and the
 The Playground includes a Piper TTS test with installed voice selection, speed,
 WAV playback/download and retained request timings. Piper must be enabled and ready.
 
+The [monitoring page](doc/api.md#get-monitor-and-get-v1monitor) at `/monitor` shows
+per-service activity, response times, TTFT where available, readiness, resource use
+and recent gateway logs. Its JSON API at `/v1/monitor` uses the configured API key.
+
 ## License and third-party components
 
 The **hailo-10h-services source code** is licensed under the

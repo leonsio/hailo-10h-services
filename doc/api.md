@@ -15,6 +15,7 @@ MQTT and Frigate interfaces.
 | HTTP | `POST :8090/v1/vision/detect` | — | — | Object detection |
 | HTTP | `GET :8090/v1/models` | Ready model IDs | Ready model ID | Ready detector ID |
 | HTTP | `GET :8090/health` | Backend/readiness status | Status | Status/ZMQ |
+| HTTP | `GET :8090/monitor`, `GET :8090/v1/monitor` | Monitoring page and JSON statistics | Status/latency | Detection latency |
 | Frigate ZMQ | `vision.zmq.endpoint` | — | — | `(20,6)` detector protocol |
 | WebSocket | `ws://HOST:8090/ws` | `chat` | `transcribe` | — |
 | MCP | `http://HOST:8090/mcp/` | `analyze_image`, `chat_text` | `transcribe_audio` | — |
@@ -57,6 +58,8 @@ Authorization: Bearer API_KEY
 ```
 
 `/health` and the browser UI remain public according to the service middleware rules.
+`/v1/monitor` requires the bearer key when configured; the public monitoring page
+requests the key in its own browser session and never stores it.
 MCP may omit the API key for configured peer networks in
 `settings.mcp_no_auth_networks`; `settings.mcp_hosts` separately protects allowed Host
 headers.
@@ -479,6 +482,21 @@ the same filtered limits via `/ui/config`; no limits are advertised before start
 or after runtime shutdown.
 
 HTTP status is 503 when a required enabled runtime failed to become ready.
+
+## `GET /monitor` and `GET /v1/monitor`
+
+The monitoring page shows one-hour request counts, failures, active calls, average
+and longest response times and the time of the last request for each inference
+service. Chat services include average TTFT when the backend supplies that metric;
+YOLO includes detection time across HTTP and Frigate ZMQ. The JSON endpoint also
+returns the full `/health` data, Linux host and service cgroup resource use, and
+up to 50 recent application log entries captured in the gateway process. CPU
+percentages are measured between refreshes; unavailable fields are `null`.
+
+Statistics use bounded per-second buckets in gateway memory and cover the last
+hour since process start. They reset on restart. Worker process log output is
+not copied into the web view; the regular systemd journal remains the source for
+complete logs. The browser refreshes automatically every five seconds.
 
 ## Home Assistant virtual model
 

@@ -40,6 +40,7 @@ from hailo_services.config import (
     Settings,
 )
 from hailo_services.diagnostics.metrics import response_metrics, timestamp
+from hailo_services.diagnostics.monitoring import Monitor, instrument
 from hailo_services.runtime.models import ModelManager
 from hailo_services.runtime.runtime import Runtime
 from hailo_services.schemas import (
@@ -65,6 +66,9 @@ _WEB_FILES = {
     "/ui/app.js": "app.js",
     "/ui/style.css": "style.css",
     "/ui/recorder-worklet.js": "recorder-worklet.js",
+    "/ui/monitor.js": "monitor.js",
+    "/ui/monitor.css": "monitor.css",
+    "/monitor": "monitor.html",
 }
 
 
@@ -383,6 +387,8 @@ def create_app(
     frigate_zmq = FrigateZmqServer(vision, settings)
     wyoming = WyomingServer(runtime, settings, speech)
     mqtt = MQTTBridge(runtime, settings)
+    monitor = Monitor(settings)
+    instrument(runtime, vision, speech, monitor)
     mcp = MCPServer("Hailo-10H", version="0.1.0")
 
     @mcp.tool()
@@ -513,6 +519,7 @@ def create_app(
                     await mqtt_task
             await speech.close()
             await runtime.close()
+            monitor.close()
 
     app = FastAPI(title="Hailo-10H Services", version="0.1.0", lifespan=lifespan)
     app.state.speech = speech
@@ -520,6 +527,7 @@ def create_app(
     app.state.vision = vision
     app.state.frigate_zmq = frigate_zmq
     app.state.mqtt = mqtt
+    app.state.monitor = monitor
     app.add_middleware(AccessAndSizeLimit, settings=settings)
 
     async def web_file(request):
@@ -747,6 +755,27 @@ def create_app(
             if runtime.ready and (not settings.vision_enabled or vision.ready)
             else 503,
         )
+
+    @app.get("/v1/monitor", include_in_schema=False)
+    async def monitoring():
+        """Return bounded per-service monitoring, health, resources and recent logs.
+
+        Returns:
+            dict: Snapshot of gateway activity and readiness.
+        """
+        return {
+            "started_at": monitor.started,
+            "generated_at": timestamp(),
+            "services": monitor.snapshot(),
+            "health": {
+                **runtime.status(),
+                "vision": vision.status(),
+                "piper": speech.status(),
+                "mqtt_connected": mqtt.connected,
+            },
+            "resources": monitor.resources(),
+            "logs": monitor.logs.snapshot(),
+        }
 
     @app.get("/v1/models")
     async def models():
