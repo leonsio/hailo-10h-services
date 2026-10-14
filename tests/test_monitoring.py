@@ -509,3 +509,45 @@ def test_gateway_only_settings_are_saved_and_applied_without_restart(tmp_path, m
         assert not app.state.runtime.settings.ha_wait_messages
         assert Settings.from_env().request_timeout == 45
         assert pickle.loads(pickle.dumps(app.state.runtime.settings)).request_timeout == 45
+
+
+def test_unsupported_firmware_disables_only_failed_telemetry_family():
+    from types import SimpleNamespace
+    calls = []
+    def unsupported(sampling_period_ms):
+        calls.append(sampling_period_ms)
+        raise RuntimeError('CHECK_SUCCESS failed with status=HAILO_UNSUPPORTED_FW_VERSION(16)')
+    control = SimpleNamespace(
+        query_performance_stats=unsupported,
+        get_chip_temperature=lambda: SimpleNamespace(ts0_temperature=52, ts1_temperature=54),
+        get_throttling_state=lambda: False,
+    )
+    unavailable = {}
+    for _ in range(3):
+        result = read_device(control, unavailable)
+        assert result['nnc_percent'] is None
+        assert result['temperature_c'] == 54
+        assert result['throttling'] is False
+        assert 'HAILO_UNSUPPORTED_FW_VERSION' in result['errors']['performance']
+    assert calls == [100]
+
+
+def test_throttling_firmware_error_is_not_retried_and_other_stats_remain_available():
+    from types import SimpleNamespace
+    calls = []
+    def throttling():
+        calls.append(True)
+        raise RuntimeError('libhailort failed with error: 16 (HAILO_UNSUPPORTED_FW_VERSION)')
+    control = SimpleNamespace(
+        query_performance_stats=lambda **_: SimpleNamespace(nnc_utilization=37),
+        get_chip_temperature=lambda: SimpleNamespace(ts0_temperature=54),
+        get_throttling_state=throttling,
+    )
+    unavailable = {}
+    for _ in range(3):
+        result = read_device(control, unavailable)
+        assert result['nnc_percent'] == 37
+        assert result['temperature_c'] == 54
+        assert result['throttling'] is None
+        assert 'HAILO_UNSUPPORTED_FW_VERSION' in result['errors']['throttling']
+    assert calls == [True]

@@ -42,7 +42,7 @@ def _query(name, call, errors, unavailable):
         return call()
     except Exception as exc:
         errors[name] = str(exc)
-        if isinstance(exc, AttributeError) or any(code in str(exc) for code in ("HAILO_INVALID_OPERATION", "HAILO_NOT_IMPLEMENTED", "HAILO_UNSUPPORTED_OPCODE")):
+        if isinstance(exc, AttributeError) or any(code in str(exc) for code in ("HAILO_INVALID_OPERATION", "HAILO_NOT_IMPLEMENTED", "HAILO_UNSUPPORTED_OPCODE", "HAILO_UNSUPPORTED_FW_VERSION")):
             unavailable[name] = str(exc)
         return None
 
