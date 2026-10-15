@@ -367,11 +367,91 @@ See [How HA-Assist works](doc/ha-assist.md), [request pipelines](doc/pipelines.m
 
 ## Browser playground and metrics
 
-The browser UI keeps visible history when switching chat models. It shows request and
-response timestamps with milliseconds, browser/server processing duration and model
-metrics where available. These include inference time, TTFT, tokenizer-derived input
-and output counts and input-budget measurements. Missing native metrics remain
-unavailable rather than being estimated.
+The web interface has three pages with matching navigation at the top and bottom:
+
+| Page | Path | Purpose |
+| --- | --- | --- |
+| Playground | `/` | Try chat, images, transcription and speech output; inspect individual request metrics. |
+| Monitoring | `/monitor` | Inspect service readiness, recent activity, resources, hardware telemetry and logs. |
+| Settings | `/settings` | Edit and validate YAML configuration; apply runtime settings or restart the service. |
+
+All pages use the same API key and network exemptions. The key remains in
+`sessionStorage` when navigating within the same browser tab and is removed when
+the tab closes. Clients allowed by `settings.api_no_auth_networks` do not need a
+key; their key field is hidden. Set the interface language on the Settings page;
+the browser remembers it in `localStorage` and applies it to all three pages.
+
+### Playground
+
+The Playground keeps visible chat history when switching models. It supports text
+and image requests, Whisper transcription from uploaded or recorded audio, and
+Piper TTS with installed voice selection, speed, WAV playback/download and retained
+timings. Each backend must be enabled and ready; available model capabilities and
+input limits determine which controls are offered.
+
+Request details include request/response timestamps with milliseconds,
+browser/server duration, inference time, TTFT, tokenizer-derived input/output
+counts and input-budget measurements where available. Missing native metrics stay
+unavailable rather than being estimated. Audio recordings are sent only when
+transcription is requested.
+
+### Monitoring
+
+The [monitoring page](doc/api.md#get-monitor-and-get-v1monitor) refreshes every five
+seconds and provides:
+
+- Cards for enabled services, with loaded model names where relevant, readiness,
+  requests/errors in the last hour, active requests, average/maximum duration,
+  average TTFT where available and the time of the last request. HA-Assist and
+  Frigate-Assist also count towards the LLM/VLM backend they actually invoke;
+  deterministic answers count only towards the assistant.
+- Host and HTTP/MCP, Wyoming, MQTT and ZMQ states with addresses and ports.
+- Host, service cgroup and per-process CPU/RAM measurements. Raspberry Pi CPU
+  temperature is shown when its Linux thermal sensor is exposed. Process RSS may
+  include shared memory and should not be summed as total service memory.
+- A separate Hailo-10H block with installed HailoRT Python-package version,
+  NNC/CPU utilization, device RAM, temperature, throttling and successfully loaded
+  resident models, subject to API/firmware support. Missing readings remain
+  unavailable. Unsupported firmware queries are disabled after the first failure
+  until the next service start; the diagnostic remains visible.
+- Process tabs for Gateway, LLM, Hailo and Piper, with up to 100 recent application
+  log lines per process, service tabs and combinable event (`event=`/`events=`),
+  operation, protocol and model filters. Vertical/horizontal scroll positions
+  survive refreshes. Monitoring requests are excluded from the application log
+  buffer; request bodies are also excluded. Use the systemd journal for complete
+  logs.
+- A restart button when running under systemd.
+
+The GUI starts while resident models load and remains reachable after model-loading
+errors. The page shows startup progress/errors and marks unavailable services;
+inference requiring an unavailable model returns an error. Rolling statistics and
+log buffers are bounded in-memory data and reset on restart. The authenticated
+`GET /v1/monitor` endpoint exposes the monitoring data, including `/health` details.
+
+### Settings
+
+The [Settings page](doc/api.md#settings-ui-and-api) groups configuration by
+function, including HTTP/authentication, MCP, Wyoming, MQTT, ZMQ, models, Piper,
+HA-Assist and Frigate-Assist. Related fields are displayed together in a vertical
+layout. Model fields offer role-appropriate choices from the configured model
+catalogue and retain existing custom paths.
+
+Saving validates the complete configuration and atomically updates the YAML file.
+Secrets are redacted; an empty secret field keeps the existing value, and its
+explicit clear checkbox removes it. Concurrent file changes are detected to avoid
+overwriting a newer version. YAML comments/formatting are not preserved on save.
+`HAILO_*` environment overrides continue to take precedence over YAML values.
+
+Each field indicates whether it takes effect at runtime or needs a restart:
+
+| Applied after saving, without restarting | Requires a restart |
+| --- | --- |
+| Request timeout, Piper input character limit, HA waiting messages, YOLO confidence and maximum detections | Model selection/enablement, native model resources, listener addresses/ports, authentication/network exemptions, debug logging and other settings |
+
+Unsaved edits are highlighted yellow. After saving, changed runtime fields are
+marked green and fields requiring a restart remain yellow. A systemd restart can
+be requested from Settings when saved changes require it, or from Monitoring.
+Configuration APIs use the same key/network access rules as Monitoring.
 
 ## Documentation
 
@@ -410,14 +490,6 @@ See [Piper installation](doc/installation.md#piper-cpu-text-to-speech) and the
 
 The Playground includes a Piper TTS test with installed voice selection, speed,
 WAV playback/download and retained request timings. Piper must be enabled and ready.
-
-The [monitoring page](doc/api.md#get-monitor-and-get-v1monitor) at `/monitor` shows
-per-service activity, response times, TTFT where available, readiness, resource use
-and the last 100 log lines per process, filterable by event, operation, protocol and model.
-The GUI starts while models are loading and remains available to show startup errors.
-Assist requests also count towards the LLM/VLM backend they actually invoke.
-The Raspberry Pi CPU temperature is shown when its thermal sensor is exposed to the host.
-Its JSON API at `/v1/monitor` uses the configured API key.
 
 ## License and third-party components
 

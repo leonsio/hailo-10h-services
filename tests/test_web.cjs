@@ -512,3 +512,19 @@ test('settings group fields, preserve unsaved edits on language change and save 
   assert.equal(playground.context.document.documentElement.lang, 'ru');
   assert.doesNotMatch(fs.readFileSync(path.join(web, 'index.html'), 'utf8'), /id="ui-language"/);
 });
+
+
+test('all service pages have the same footer links, labels and current page', () => {
+  let expectedLabels;
+  for (const [file, current] of [['index.html', '/'], ['monitor.html', '/monitor'], ['settings.html', '/settings']]) {
+    const html = fs.readFileSync(path.join(web, file), 'utf8');
+    const footer = html.match(/<footer class="page-footer">([\s\S]*?)<\/footer>/)[1];
+    const links = [...footer.matchAll(/<a href="([^"]+)"([^>]*)>(.*?)<\/a>/g)];
+    assert.deepEqual(links.map(link => link[1]), ['/', '/monitor', '/settings', '/health']);
+    const labels = links.map(link => [link[2].match(/data-i18n="([^"]+)"/)[1], link[3]]);
+    if (!expectedLabels) expectedLabels = labels;
+    assert.deepEqual(labels, expectedLabels);
+    assert.deepEqual(links.filter(link => link[2].includes('aria-current="page"')).map(link => link[1]), [current]);
+    assert.match(footer, /<nav class="footer-nav"[^>]*data-i18n-aria="nav.pages"/);
+  }
+});
