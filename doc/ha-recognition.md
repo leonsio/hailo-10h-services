@@ -14,8 +14,8 @@ image backend. All HA behaviour stays at the virtual-model boundary.
    rank remaining catalogue spans. Similarity is not a calibrated probability.
    Exact spans are never consumed by overlapping fuzzy replacements.
 3. HassIL validates the complete sentence and actual client tool schema. On a
-   miss, recovery can rank official sentence skeletons with existing explicit
-   targets/values bound into slots. No entity-name permutations are generated.
+   miss, recovery can rank official sentence skeletons with explicit targets/values
+   bound into slots. No entity-name permutations are generated.
 4. Sentence recovery requires explicit action evidence. Negation, conditions,
    relative changes, multiple values and combined actions do not enter recovery.
    Opposite on/off actions are never interchangeable. Known article forms come
@@ -49,9 +49,9 @@ structured metadata is documented in [the API](api.md).
 `POST /v1/ha-assist/diagnose` accepts a normal HA-Assist request. It returns
 candidate/action evidence, proposed responses, preparation timings and the entire
 prepared message/tool payload. No generative inference or tool execution occurs;
-MiniLM may still be used for retrieval on its existing serialized owner thread.
+MiniLM may still be used for retrieval on its serialized owner thread.
 The response explicitly labels its prompt stage before native rendering/budgeting.
-It uses existing API authentication and request limits.
+It uses the standard API authentication and request limits.
 
 Tests cover synthetic changing catalogues, typo deletions/transpositions/spaces,
 ambiguous candidates, configured aliases, named-target preservation, capability
@@ -80,7 +80,7 @@ When comparing revisions, keep tool schemas, exposed entities and settings ident
 5. Finally compare typed HA input with voice input for the same sentence.
    Preserve the Whisper transcript to distinguish STT errors from recognition errors.
 
-For example, reuse the original catalogue and tools while replacing only the last
+For example, reuse the captured catalogue and tools while replacing only the last
 user turn (requires `jq`; set `SERVICE_URL` and `API_KEY` for your installation):
 
 ```bash
@@ -122,8 +122,8 @@ model is shown by `metrics.ha_route.would_inference_calls`.
 ### Small Python diagnosis client
 
 The standalone [scripts/diagnose_ha.py](../scripts/diagnose_ha.py) needs only
-Python 3.10+ and its standard library. Update the current checkout and run it
-from the repository directory. Supply a complete captured HA OpenAI request as
+Python 3.10+ and its standard library. Update the checkout and run it from the
+repository directory. Supply a complete captured HA OpenAI request as
 `ha-request.json`, including system catalogue, messages and tool schemas.
 
 ```bash
@@ -159,7 +159,7 @@ The script always sets `model=HA-Assist` and `stream=false` and only posts
 to `/v1/ha-assist/diagnose`. With `--prompt`, it replaces the most recent user
 message and removes later assistant/tool messages. Without `--prompt`, it
 retains the complete history so tool-result follow-ups can be diagnosed too.
-Each invocation rereads the original file, so independent test replacements
+Each invocation rereads the request file, so independent test replacements
 do not accumulate. No Home Assistant access token is needed.
 
 Output includes proposed calls, candidate evidence, intended inference count,
@@ -239,7 +239,7 @@ The static tool index caches immutable lexical schema fields and corpus-frequenc
 features. The key includes complete canonical schema JSON and language; changed
 schemas/enums invalidate naturally. It holds at most 64 entries and bypasses
 caching for keys larger than 64 KiB. Selected tools and pruned enums remain fresh
-copies. Existing MiniLM embedding caches are bounded at 512 entries.
+copies. MiniLM embedding caches are bounded at 512 entries.
 
 This avoids repeated parsing/tokenization/embedding work. It does **not** cache
 LLM answers, executable actions or current states, and does not remove schema
@@ -279,23 +279,23 @@ A deterministic read-only state mirror could supply exposed states via HA
 WebSocket events. It would be a data adapter, not another generative agent. Its
 largest benefit would be avoiding the LLM's initial decision to fetch live data
 and subsequent result-formatting inference for queries it can answer directly.
-Our existing direct GetLiveContext path already avoids those model calls for
-supported questions; there a mirror mainly saves one fast HA round trip.
+The direct GetLiveContext path already avoids those model calls for supported
+questions; there a mirror mainly saves one fast HA round trip.
 
 A mirror also needs exposure/permission filtering, timestamps, unknown/unavailable
 handling, reconnection resynchronization and invalidation after actions. It must
 never guess freshness. Therefore no automatic HA connection or state-answer cache
-is introduced here. Optional structured catalogue metadata enables a future
-adapter without requiring HA credentials or changing legacy clients. If real
-measurements show remaining state questions spending time in a generative round
-trip, add the event-fed read-only adapter then. Home Assistant continues executing
-all returned actions.
+is introduced here. Optional structured catalogue metadata enables a future adapter
+without requiring HA credentials or changing the client request contract. If real
+measurements show remaining state questions spending time in a generative round trip,
+add the event-fed read-only adapter then. Home Assistant continues executing all
+returned actions.
 
 ## Related design references
 
 - [HassIL](https://github.com/OHF-Voice/hassil) and
   [official HA intents](https://github.com/OHF-Voice/intents): grammar, slots and
-  final intent validation; these are existing dependencies.
+  final intent validation; these are dependencies.
 - [hass-closest-intent](https://github.com/charludo/hass-closest-intent): canonical
   sentence reconstruction and diagnostics as design references.
 - [Assist Canonicalizer](https://github.com/luuquangvu/assist-canonicalizer):
