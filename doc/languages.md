@@ -19,11 +19,11 @@ with an optional region suffix such as `fr-FR`.
 | `frigate.tool_hints` | Compact model-facing tool descriptions, selected in the request language catalogue. |
 | `language_name`, `language_names` | Human-readable language names. |
 
-`de.json.routing` holds older shared canonical matching rules and bilingual/history
-patterns. HA matching first normalizes localized aliases into that canonical
-representation; this section is not a German reply catalogue. User replies exist
-in every language's `text` section. Protocol markers, logs, schema identifiers and
-developer errors are stable code contracts.
+`de.json.routing` holds shared canonical multilingual matching rules. HA matching
+normalizes localized aliases into that canonical representation; this section is not
+a German reply catalogue. User replies exist in every language's `text` section.
+Protocol markers, logs, schema identifiers and developer errors are stable code
+contracts.
 
 Explicit request language takes precedence over detection. A `ContextVar` scopes
 HA localization to the current request and restores it afterwards. Frigate replies
@@ -32,13 +32,13 @@ preparation preserves the detected human-question language even when Frigate add
 an English live-frame caption. Technical model instructions may stay in English
 while requiring the selected response language.
 
-To extend an existing phrase, edit its JSON resource and restart the service.
-To add a language, create a complete catalogue following the existing schema,
-translate the replies/UI/labels, and supply its vocabulary and sentence forms.
-The service discovers codes from JSON filenames; schema validation, settings and
-UI choices follow that list without a Python allowlist change. Existing grammar
-forms and text can change without editing source code. New behavior still needs
-an implementation. Run the locale/assistant regression tests after edits.
+To extend a phrase, edit its JSON resource and restart the service. To add a language,
+create a complete catalogue following the catalogue schema, translate the
+replies/UI/labels, and supply its vocabulary and sentence forms. The service discovers
+codes from JSON filenames; schema validation, settings and UI choices follow that list
+without a Python allowlist change. Phrase and grammar changes do not require source-code
+changes; new behavior still needs an implementation. Run the locale/assistant
+regression tests after edits.
 
 Speech capabilities remain model-specific. Wyoming advertises Whisper languages
 and installed Piper voice languages independently of the UI catalogue. Adding a
