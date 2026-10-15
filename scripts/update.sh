@@ -16,16 +16,59 @@ if [[ ! -x ${VENV}/bin/python || ! -x ${VENV}/bin/pip ]]; then
   exit 1
 fi
 
-if command -v git >/dev/null 2>&1 && git -C "${SOURCE_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  COMMIT=$(git -C "${SOURCE_DIR}" rev-parse HEAD)
-  DIRTY=$(git -C "${SOURCE_DIR}" status --porcelain)
-  echo "Updating from repository commit: ${COMMIT}"
+git_repo() {
+  # When the updater was started through sudo, perform Git operations as the
+  # invoking user. This avoids changing checkout ownership and keeps that
+  # user's Git credentials/configuration available. A root shell falls back to
+  # root and explicitly trusts only this checkout for the current command.
+  if [[ -n ${SUDO_USER:-} && ${SUDO_USER} != root ]] && command -v sudo >/dev/null 2>&1; then
+    sudo -u "${SUDO_USER}" -H -- git -C "${SOURCE_DIR}" "$@"
+  else
+    git -c "safe.directory=${SOURCE_DIR}" -C "${SOURCE_DIR}" "$@"
+  fi
+}
+
+if command -v git >/dev/null 2>&1 && git_repo rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  BEFORE_COMMIT=$(git_repo rev-parse HEAD)
+  DIRTY=$(git_repo status --porcelain)
+  BRANCH=$(git_repo symbolic-ref --quiet --short HEAD || true)
+  UPSTREAM=$(git_repo rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)
+
+  if [[ -z ${BRANCH} || -z ${UPSTREAM} ]]; then
+    echo 'The source checkout has no active branch with an upstream; automatic git pull is not possible.' >&2
+    echo 'Switch to a tracking branch or update this checkout manually, then run the updater again.' >&2
+    exit 1
+  fi
+
+  echo "Updating source repository: ${BRANCH} <- ${UPSTREAM}"
   if [[ -n ${DIRTY} ]]; then
-    echo 'Warning: the working tree contains local changes; those changes will be installed too.' >&2
+    echo 'Warning: the working tree contains local changes. Git will not overwrite conflicting changes;' >&2
+    echo 'non-conflicting local changes remain in place and will be installed too.' >&2
+  fi
+
+  # Fast-forward only prevents the updater from creating an implicit merge or
+  # rewriting local commits. Pull failures abort before the installed service is
+  # changed, so repository problems can be resolved safely first.
+  git_repo pull --ff-only
+
+  COMMIT=$(git_repo rev-parse HEAD)
+  if [[ ${BEFORE_COMMIT} == "${COMMIT}" ]]; then
+    echo "Repository already up to date at ${COMMIT}."
+  else
+    echo "Repository updated: ${BEFORE_COMMIT} -> ${COMMIT}"
+
+    # If the pull changed the updater itself, restart it once so the remainder
+    # of this update uses the freshly pulled implementation as well.
+    if [[ ${HAILO_UPDATE_REEXEC:-0} != 1 ]] && \
+       ! git_repo diff --quiet "${BEFORE_COMMIT}" "${COMMIT}" -- scripts/update.sh; then
+      echo 'The updater changed; restarting with the updated script.'
+      export HAILO_UPDATE_REEXEC=1
+      exec bash "${SOURCE_DIR}/scripts/update.sh"
+    fi
   fi
 else
   COMMIT=unknown
-  echo 'Updating from a source tree without Git metadata.'
+  echo 'Updating from a source tree without Git metadata; repository synchronization is skipped.'
 fi
 
 if systemctl cat "${SERVICE}" >/dev/null 2>&1; then
