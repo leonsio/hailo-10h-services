@@ -25,15 +25,15 @@ hailo-10h-services (gateway)
 
 The split prevents a long CPU inference or native-library failure from blocking the gateway interpreter or unrelated inference backends. It also lets Linux schedule CPU-backed work on separate Raspberry Pi 5 cores while keeping all Hailo-backed models in one process.
 
-The public API and ports do not change. Existing bounded queues, request deadlines, streaming, cancellation and model routing remain in the gateway runtimes; their owner threads perform IPC instead of native inference.
+The gateway exposes the public API and ports. Bounded queues, request deadlines, streaming, cancellation and model routing remain in the gateway runtimes; their owner threads perform IPC instead of native inference.
 
 The Hailo process has separate owner threads for generative/STT/MiniLM work and object detection. This keeps one Hailo process while allowing the HailoRT scheduler to arbitrate concurrent configured models and retain the configured detector scheduler priority.
 
 ## Startup order
 
-The gateway no longer waits for all resident models before making the HTTP/Web UI available. At application lifespan startup it schedules resident initialization in the background and immediately allows the ASGI server to begin serving the browser UI, `/monitor`, `/settings`, `/health` and API routes. Requests that require a backend which is not ready yet return the normal unavailable/readiness response instead of blocking startup.
+The gateway schedules resident initialization in the background and immediately allows the ASGI server to serve the browser UI, `/monitor`, `/settings`, `/health` and API routes. Requests that require a backend which is not ready yet return the normal unavailable/readiness response.
 
-Resident initialization itself remains ordered so accelerator allocation happens before CPU model allocation:
+Resident initialization is ordered so accelerator allocation happens before CPU model allocation:
 
 1. Start the Hailo chat/STT/MiniLM worker and load enabled Hailo models.
 2. Start the resident YOLO vision runtime.
@@ -65,7 +65,7 @@ Example:
 
 If a worker exits unexpectedly, pending requests fail instead of hanging. A subsequent request to an acquired worker recreates the process and reloads its resident backend.
 
-## Compatibility fallback
+## Threaded fallback mode
 
 Set:
 
@@ -73,7 +73,7 @@ Set:
 HAILO_PROCESS_MODE=0
 ```
 
-to use the previous single-process / owner-thread architecture. This is intended as a rollback switch for native driver/runtime troubleshooting, not as the preferred normal mode.
+to use resident backends on owner threads instead of child-process IPC. This mode is intended for native driver/runtime troubleshooting rather than normal production operation.
 
 ## CPU usage
 
