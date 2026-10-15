@@ -477,8 +477,10 @@ def _needs_full_live_context(question, calls):
     if not re.fullmatch(lexicon("ha_state_routing.generic_state_list"), _normalized(question)):
         return False
     return any(
-        any((_json_object(call.get("function", {}).get("arguments")) or {}).get(key)
-            for key in ("name", "domain", "area"))
+        any(
+            (_json_object(call.get("function", {}).get("arguments")) or {}).get(key)
+            for key in ("name", "domain", "area")
+        )
         for call in calls
     )
 

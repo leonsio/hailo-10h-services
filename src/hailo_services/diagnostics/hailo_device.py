@@ -8,7 +8,14 @@ from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 
 _LOG = logging.getLogger(__name__)
-_FIELDS = ("nnc_percent", "cpu_percent", "ram_used_bytes", "ram_total_bytes", "temperature_c", "throttling")
+_FIELDS = (
+    "nnc_percent",
+    "cpu_percent",
+    "ram_used_bytes",
+    "ram_total_bytes",
+    "temperature_c",
+    "throttling",
+)
 
 
 @lru_cache(maxsize=1)
@@ -30,7 +37,13 @@ def empty_telemetry(state="unavailable"):
     Returns:
         dict: Nullable hardware metrics and collection metadata.
     """
-    return {**dict.fromkeys(_FIELDS), "state": state, "hailort_version": hailort_version(), "sampled_at": None, "errors": {}}
+    return {
+        **dict.fromkeys(_FIELDS),
+        "state": state,
+        "hailort_version": hailort_version(),
+        "sampled_at": None,
+        "errors": {},
+    }
 
 
 def _number(value):
@@ -57,7 +70,15 @@ def _query(name, call, errors, unavailable):
         return call()
     except Exception as exc:
         errors[name] = str(exc)
-        if isinstance(exc, AttributeError) or any(code in str(exc) for code in ("HAILO_INVALID_OPERATION", "HAILO_NOT_IMPLEMENTED", "HAILO_UNSUPPORTED_OPCODE", "HAILO_UNSUPPORTED_FW_VERSION")):
+        if isinstance(exc, AttributeError) or any(
+            code in str(exc)
+            for code in (
+                "HAILO_INVALID_OPERATION",
+                "HAILO_NOT_IMPLEMENTED",
+                "HAILO_UNSUPPORTED_OPCODE",
+                "HAILO_UNSUPPORTED_FW_VERSION",
+            )
+        ):
             unavailable[name] = str(exc)
         return None
 
@@ -86,23 +107,45 @@ def read_device(control, unavailable=None):
     """
     result = empty_telemetry()
     unavailable = unavailable if unavailable is not None else {}
-    stats = _query("performance", lambda: control.query_performance_stats(sampling_period_ms=100), result["errors"], unavailable)
+    stats = _query(
+        "performance",
+        lambda: control.query_performance_stats(sampling_period_ms=100),
+        result["errors"],
+        unavailable,
+    )
     if stats is not None:
-        for target, name in (("nnc_percent", "nnc_utilization"), ("cpu_percent", "cpu_utilization")):
+        for target, name in (
+            ("nnc_percent", "nnc_utilization"),
+            ("cpu_percent", "cpu_utilization"),
+        ):
             value = _number(getattr(stats, name, None))
             result[target] = value if value is not None and value <= 100 else None
-        for target, name in (("ram_used_bytes", "ram_size_used"), ("ram_total_bytes", "ram_size_total")):
+        for target, name in (
+            ("ram_used_bytes", "ram_size_used"),
+            ("ram_total_bytes", "ram_size_total"),
+        ):
             value = _number(getattr(stats, name, None))
-            result[target] = int(value * 1024) if value is not None else None  # HailoRT returns KiB.
-    temperatures = _query("temperature", lambda: control.get_chip_temperature(), result["errors"], unavailable)
+            result[target] = (
+                int(value * 1024) if value is not None else None
+            )  # HailoRT returns KiB.
+    temperatures = _query(
+        "temperature", lambda: control.get_chip_temperature(), result["errors"], unavailable
+    )
     if temperatures is not None:
-        values = [_number(getattr(temperatures, name, None)) for name in ("ts0_temperature", "ts1_temperature")]
+        values = [
+            _number(getattr(temperatures, name, None))
+            for name in ("ts0_temperature", "ts1_temperature")
+        ]
         values = [value for value in values if value is not None]
         result["temperature_c"] = max(values) if values else None
-    result["throttling"] = _query("throttling", lambda: _throttling(control), result["errors"], unavailable)
+    result["throttling"] = _query(
+        "throttling", lambda: _throttling(control), result["errors"], unavailable
+    )
     result["sampled_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     measured = sum(result[name] is not None for name in _FIELDS)
-    result["state"] = "ready" if measured == len(_FIELDS) else "partial" if measured else "unavailable"
+    result["state"] = (
+        "ready" if measured == len(_FIELDS) else "partial" if measured else "unavailable"
+    )
     return result
 
 
@@ -155,7 +198,9 @@ class HailoTelemetry:
                 self.publish(self.latest)
             return
         self.latest = empty_telemetry("pending")
-        self.thread = threading.Thread(target=self._run, args=(vdevice,), name="hailo-device-telemetry", daemon=True)
+        self.thread = threading.Thread(
+            target=self._run, args=(vdevice,), name="hailo-device-telemetry", daemon=True
+        )
         self.thread.start()
 
     def _run(self, vdevice):

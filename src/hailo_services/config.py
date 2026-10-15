@@ -243,7 +243,9 @@ class Settings:
                 try:
                     ip_network(network.strip())
                 except ValueError as exc:
-                    raise ValueError(f"Invalid api_no_auth_networks entry: {network.strip()}") from exc
+                    raise ValueError(
+                        f"Invalid api_no_auth_networks entry: {network.strip()}"
+                    ) from exc
 
     @property
     def frigate_text_model(self):
