@@ -33,17 +33,32 @@ the service intentionally does not hide that by unloading the other model.
 
 ### Protocol debug logging
 
-Set `HAILO_DEBUG_LOG=true` in `/etc/hailo-10h-services.env`, then restart the
-service to log request start/end, transport (`http`, `websocket`, `wyoming`,
-`mqtt`, or `mcp`), operation, request ID, status and duration. Whisper diagnostics
-include model/language and audio container, codec, sample rate, channels, duration
-and byte count. Wyoming additionally logs PCM encoding and input sample rate.
-Chat logs include model, message/image counts and token limit. Prompts, transcripts,
-API keys and raw audio/image payloads are never logged. Debug logging is off by
-default; disable it with `HAILO_DEBUG_LOG=false`.
+Set `settings.debug_log: true` in `/etc/hailo-10h-services.yaml` or use the
+`HAILO_DEBUG_LOG=true` environment override, then restart the service when the
+change is not applied through the live Settings UI. Debug mode logs request
+start/end, transport (`http`, `websocket`, `wyoming`, `mqtt`, or `mcp`),
+operation, request ID, status and duration. Whisper diagnostics include
+model/language and audio container, codec, sample rate, channels, duration and
+byte count. Wyoming additionally logs PCM encoding and input sample rate. Chat
+logs include model, message/image counts and token limits.
+
+Debug mode is intentionally verbose and can contain private application data.
+For HTTP requests with JSON or text bodies, the systemd journal records the
+request payload after credential-bearing headers such as `Authorization`, cookies
+and API-key headers are redacted. That means chat text, Home Assistant entity
+names/states, TTS input and inline JSON image data URLs can appear in the journal.
+Multipart or other binary request bodies are represented by their byte size rather
+than copied verbatim. Additional prompt/routing diagnostics can also contain
+conversation and device context.
+
+The browser monitoring log buffer deliberately excludes `request_payload` and
+`validated_request` events and applies inline-data redaction, so `/monitor` is not
+a complete substitute for the journal. Treat `journalctl` output collected with
+debug logging enabled as sensitive diagnostic data and disable debug logging again
+after troubleshooting.
 
 ```bash
-sudoedit /etc/hailo-10h-services.env
+sudoedit /etc/hailo-10h-services.yaml
 sudo systemctl restart hailo-10h-services
 sudo journalctl -u hailo-10h-services -f
 ```
