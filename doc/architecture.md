@@ -27,14 +27,10 @@ Paths are relative to `src/hailo_services/`. Each package has a short
 
 Module basenames retain their role-specific names, for example
 `assistants/ha/ha_assist.py`, `chat/backend_litert.py` and
-`speech/speech_hailo_whisper.py`. Imports and deployment scripts use the new
-package paths directly. The old flat modules and `_process` forwarding files
-are removed rather than retained as compatibility layers.
-
-Package initializers have no startup effects. Native SDK imports remain deferred
-until their backend starts. Moving modules does not load additional model copies
-or introduce additional devices. Model and web assets remain at the package root;
-their readers resolve that location independently of their new package depth.
+`speech/speech_hailo_whisper.py`. Imports and deployment scripts use these package
+paths directly. Package initializers have no startup effects. Native SDK imports
+remain deferred until their backend starts. Model and web assets remain at the
+package root, and their readers resolve that location independently of package depth.
 
 ## Process and concurrency model
 
@@ -137,7 +133,7 @@ second control action.
 ## Frigate preparation
 
 `assistants/frigate/frigate_assist.py` combines high-confidence HassIL recognition,
-multilingual deterministic planning and conservative legacy/history handling.
+multilingual deterministic planning and conservative history handling.
 `frigate_prompt.py` preserves image/task contracts while removing irrelevant generic
 instructions. `frigate_routing.py` validates generated calls and damaged VLM output.
 `frigate_context.py` is the single implementation for local timestamp parsing,
@@ -171,12 +167,12 @@ resources, separate from localized user replies. JSON output examples escape bra
 for formatting. Protocol markers, schema names, logs and developer errors remain
 code contracts rather than translatable UI messages.
 
-Legacy `routing` resources in `de.json` describe the canonical multilingual matching
-representation, including older bilingual/history patterns. They are shared matching
-rules, not German response translations; empty `routing` sections elsewhere do not
-imply missing replies. New language recognition vocabulary belongs in that language's
-aliases, Frigate vocabulary and sentence forms. Adding completely new behavior still
-requires code; editing existing phrases and grammar forms only requires JSON.
+`de.json.routing` describes the canonical multilingual matching representation and
+is shared matching data rather than German response text. Empty `routing` sections
+in other locale files do not imply missing replies. Language-specific recognition
+vocabulary belongs in that language's aliases, Frigate vocabulary and sentence forms.
+Adding completely new behavior still requires code; editing existing phrases and
+grammar forms only requires JSON.
 
 ## Chat contracts and budgets
 
