@@ -198,7 +198,8 @@ vision:
   confidence: 0.4
   max_detections: 20
   queue_size: 16
-  scheduler_priority: 1
+  # Higher values have higher scheduler priority; 31 is the service default.
+  scheduler_priority: 31
   zmq:
     enabled: true
     endpoint: tcp://127.0.0.1:5555
@@ -262,8 +263,11 @@ Frigate configuration, tool calling, metrics and Home Assistant details.
 
 For optional GenAI chat and descriptions, select the virtual **`Frigate-Assist`**
 model. It removes Frigate's generic prompt overhead, selects read tools, handles
-recognized requests deterministically, and routes text to a selected LLM (default: Gemma/CPU) and images to
-the resident VLM. Both LLM/VLM targets are configurable, as with HA-Assist.
+recognized requests deterministically, and routes text to the configured text target
+and images to the resident VLM. An omitted/empty Frigate text target follows the
+selected resident VLM; selecting Gemma requires
+`frigate_assist_text_model: gemma-4-E2B-it` explicitly. Both targets remain
+configurable independently.
 **Chat is experimental and only conditionally usable.** Frigate
 can use separate providers for descriptions and chat, or both roles can be tried
 through this proxy. See [Frigate-Assist configuration and limitations](doc/frigate-assist.md).
