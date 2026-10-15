@@ -115,25 +115,25 @@ cd hailo-10h-services
 sudo bash scripts/install.sh
 ```
 
-For an existing native/systemd installation:
+For native/systemd updates:
 
 ```bash
 sudo bash scripts/update.sh
 ```
 
-A separate `git pull` is no longer required. When the source directory is a Git
-checkout, the updater first runs a fast-forward-only pull from the configured
-upstream of the current branch. It then reinstalls the application from that checkout,
-updates the systemd unit, verifies the installation and restarts the service. Local
-working-tree changes are never silently overwritten: non-conflicting changes remain
-and are installed too, while conflicts or non-fast-forward history abort the update
-before the installed service is modified. Source trees without Git metadata are still
-supported, but repository synchronization is skipped.
+When the source directory is a Git checkout, `scripts/update.sh` first runs a
+fast-forward-only pull from the configured upstream of the current branch. It then
+reinstalls the application from that checkout, updates the systemd unit, verifies the
+installation and restarts the service. Local working-tree changes are never silently
+overwritten: non-conflicting changes remain and are installed too, while conflicts or
+non-fast-forward history abort the update before the installed service is modified.
+Source trees without Git metadata are supported, but repository synchronization is
+skipped.
 
 The primary configuration is available at `/etc/hailo-10h-services.yaml` (a link to the service-owned state file in systemd installations). The authenticated `/settings` page saves validated YAML changes and can restart the systemd service to apply them. Request timeouts, Piper input limits, HA waiting messages,
 YOLO confidence and maximum detections apply without restarting. Edited fields are
-highlighted; settings requiring a restart are labeled individually. Existing
-`HAILO_<SETTING>` environment variables remain optional overrides.
+highlighted; settings requiring a restart are labeled individually.
+`HAILO_<SETTING>` environment variables can override YAML values.
 
 ### Docker Compose
 
@@ -226,9 +226,8 @@ If `model` is omitted, text routing prefers:
 2. an enabled native Hailo LLM,
 3. a resident VLM as the final text-capable backend.
 
-The second and third entries cannot both be Hailo-resident under HailoRT 5.4.0. The
-ordering is retained because the service is already structured for future parallel
-Hailo VLM/LLM support.
+With HailoRT 5.4.0, the native Hailo LLM and VLM entries cannot both be resident at
+once.
 
 Image requests require the configured VLM. `HA-Assist` is different: it is a virtual
 model that first attempts deterministic Home Assistant handling and only then routes
@@ -446,13 +445,13 @@ The [Settings page](doc/api.md#settings-ui-and-api) groups configuration by
 function, including HTTP/authentication, MCP, Wyoming, MQTT, ZMQ, models, Piper,
 HA-Assist and Frigate-Assist. Related fields are displayed together in a vertical
 layout. Model fields offer role-appropriate choices from the configured model
-catalogue and retain existing custom paths.
+catalogue and keep configured custom paths available.
 
 Saving validates the complete configuration and atomically updates the YAML file.
-Secrets are redacted; an empty secret field keeps the existing value, and its
+Secrets are redacted; an empty secret field keeps the current value, and its
 explicit clear checkbox removes it. Concurrent file changes are detected to avoid
 overwriting a newer version. YAML comments/formatting are not preserved on save.
-`HAILO_*` environment overrides continue to take precedence over YAML values.
+`HAILO_*` environment overrides take precedence over YAML values.
 
 Each field indicates whether it takes effect at runtime or needs a restart:
 
