@@ -1,3 +1,3 @@
 # Instrumentation
 
-Structured debug events, request/token/timing metrics, inline-data redaction and native LiteRT instrumentation. Home Assistant preparation diagnostics belong in `assistants/ha/`, alongside the pipeline they explain.
+Structured debug events, request/token/timing metrics, bounded rolling monitoring, per-process log buffering, HailoRT device telemetry, inline-data redaction and native LiteRT instrumentation. Browser monitoring deliberately excludes request-payload events; the system journal remains the complete debug source. Home Assistant preparation diagnostics belong in `assistants/ha/`, alongside the pipeline they explain.
