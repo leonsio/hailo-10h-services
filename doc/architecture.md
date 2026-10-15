@@ -12,18 +12,18 @@ Paths are relative to `src/hailo_services/`. Each package has a short
 | Package | Responsibility |
 | --- | --- |
 | Package root | `__main__.py`, immutable settings, request schemas and backend interfaces; bundled model catalogue. |
-| `api/` | ASGI composition, authentication, HTTP/SSE/WebSocket routes, MCP, Wyoming, MQTT and TLS tooling. |
+| `api/` | ASGI composition, authentication, HTTP/SSE/WebSocket routes, MCP, Wyoming, MQTT, monitoring/settings endpoints and TLS tooling. |
 | `assistants/ha/` | HA-Assist routing, exposed entity catalogue, HassIL/fuzzy recognition, request plans, state/weather answers, verification and compact prompts. |
 | `assistants/frigate/` | Frigate-Assist recognition, time/camera resolution, tool planning, compact prompts and image-result validation. |
 | `chat/` | Native Hailo and CPU LiteRT backends, common Hailo chat contracts and role-specific LLM/VLM adapters. |
 | `speech/` | Whisper and Piper adapters, shared language selection and bounded TTS scheduling. |
 | `vision/` | YOLO/NMS preprocessing, detector lifecycle and Frigate ZMQ transport. |
-| `runtime/` | Async chat scheduling, backend/model lifecycle, model download/catalogue handling, MiniLM and preflight. |
+| `runtime/` | Async chat scheduling, backend/model lifecycle, model download/catalogue handling, live settings, MiniLM and preflight. |
 | `runtime/workers/` | Resident child processes, IPC proxies, lifecycle supervision and cancellation forwarding. |
 | `shared/` | Domain-independent tool/schema validation, budgets, JSON/media handling, HassIL primitives, retrieval and localization. |
-| `diagnostics/` | Structured events, timing/token metrics, inline-data redaction and LiteRT instrumentation. |
+| `diagnostics/` | Structured events, timing/token metrics, rolling monitoring, HailoRT telemetry, inline-data redaction and LiteRT instrumentation. |
 | `locales/` | One JSON catalogue per language: replies, UI, labels, aliases, prompts and recognition resources. |
-| `web/` | Browser playground, recording worklet, page markup and styles. |
+| `web/` | Browser Playground, Monitoring and Settings pages, recording worklet, shared navigation/localization and styles. |
 
 Module basenames retain their role-specific names, for example
 `assistants/ha/ha_assist.py`, `chat/backend_litert.py` and
@@ -63,10 +63,17 @@ chat owner queue; detection uses the detector owner queue. VDevices retain
 `group_id=SHARED`. The resident native GenAI choice remains VLM **or** native
 Hailo LLM; CPU LiteRT can run alongside either.
 
-LiteRT and Piper each own a separate resident process and queue. Startup loads
-Hailo models before CPU models. In the fallback, the same runtime contracts use
-resident backends on their owner threads instead of IPC proxies. HTTP and Wyoming
-share the same speech runtime, voice and capacity.
+LiteRT and Piper each own a separate resident process and queue. The gateway does
+not wait for those resident workers before exposing HTTP and the browser UI:
+application lifespan schedules resident initialization in the background, so
+`/monitor`, `/settings` and `/health` are reachable while models are loading.
+Within that initialization sequence Hailo models and vision are started before
+LiteRT/Piper, followed by ZMQ and optional Wyoming; MQTT is started after those
+initialization phases when configured. `/v1/monitor.startup` reports the current
+phase and startup errors, while `/health` returns HTTP 503 until required inference
+runtimes are ready. In the fallback, the same runtime contracts use resident
+backends on their owner threads instead of IPC proxies. HTTP and Wyoming share the
+same speech runtime, voice and capacity.
 
 Queues and pending counters are bounded. Work remains charged to capacity until
 native execution finishes, even after a timeout or client disconnect. Streaming
@@ -75,7 +82,9 @@ returned. Child-process replies preserve request metrics and structured budget
 errors. These boundaries reduce CPU/GIL interference; they do not remove shared
 Hailo compute, RAM or queue contention. A long Hailo generation can still delay
 Whisper or HA semantic preparation on the same chat owner queue. Frigate YOLO
-has its own queue, but still shares physical accelerator resources.
+has its own queue, but still shares physical accelerator resources. Its configured
+Hailo scheduler priority affects the next eligible detector work; it does not
+provide hard preemption of already-running GenAI work.
 
 ## HA and Frigate isolation
 
