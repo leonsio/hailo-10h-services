@@ -7,7 +7,7 @@ For the complete rationale and worked examples, see
 
 `ha_assist.py` is the virtual-model entry point. Only `model="HA-Assist"`
 activates HA processing. The resolved physical target carries an internal marker,
-which scopes the existing `ha_pipeline.py` and output normalization hooks.
+which scopes `ha_pipeline.py` and output normalization hooks.
 Known HA declarations/history select HA handlers within that boundary; HA-like
 words or HA tools alone never activate it for a physical model request.
 `tool_choice="none"` bypasses HA tools; a forced tool remains authoritative.
@@ -23,8 +23,8 @@ The HA-Assist routing layer has separate text and vision targets, but HailoRT/Ge
 5.4.0 does **not** support a native Hailo LLM and Hailo VLM resident on the same
 device at the same time. Configure either `models.vlm` or `models.hailo_llm`.
 
-For simultaneous HA text and image handling today, use a Hailo VLM plus Gemma on
-CPU, for example:
+For simultaneous HA text and image handling, use a Hailo VLM plus Gemma on CPU,
+for example:
 
 ```yaml
 settings:
@@ -39,9 +39,9 @@ models:
 ```
 
 A native Hailo LLM may instead be the text target with the VLM disabled. The
-software keeps both adapters and routing paths so the two Hailo backends can run
-in parallel when a future Hailo runtime supports that combination. Models are not
-unloaded/reloaded per request.
+software exposes separate adapters and routing paths for both Hailo backends, while
+HailoRT 5.4.0 limits residency to one of them. Models are not unloaded/reloaded per
+request.
 
 ## HA sequence
 
@@ -58,8 +58,8 @@ unloaded/reloaded per request.
 7. Use lexical name/keyword scoring and corpus-frequency weighting, then MiniLM
    ranking to reduce relevant HA context/tools; preserve schemas needed by history.
 8. Compile a minimal prompt when inference remains necessary, then apply the
-   selected backend's existing native token budget (Gemma remains capped at 4096
-   input tokens by default).
+   selected backend's native token budget (Gemma is capped at 4096 input tokens by
+   default).
 9. Invoke exactly one generative target. Image requests bypass all text shortcuts.
 10. Validate model tool output and return `model="HA-Assist"`. HA executes tools.
 
@@ -118,7 +118,7 @@ measurement attributes; catalogue order never chooses between them.
 
 `HAILO_HA_WAIT_MESSAGES=true` enables varying wait sentences. The callback is
 invoked at native inference, after queueing/preparation/input-budget validation;
-fast paths never trigger it. It is one text delta in the existing SSE response,
+fast paths never trigger it. It is one text delta in the SSE response,
 not another HTTP response. HA may include it in the same assistant turn, and
 clients that buffer speech will only speak after completion. Disable it for
 clients where this is undesirable. Native tool calls remain fully buffered.
@@ -137,4 +137,4 @@ route, zero/one inference calls, preparation duration and language) and
 Fuzzy repair never changes action vocabulary and requires a unique candidate
 above the configured threshold/margin. Original outgoing names remain unchanged.
 The official grammar package is pinned for reproducible matching; local HassIL
-supplements retain a few existing service phrases for absolute brightness.
+supplements contain the service's absolute-brightness phrases.
