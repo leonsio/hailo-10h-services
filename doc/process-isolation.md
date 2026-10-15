@@ -31,13 +31,19 @@ The Hailo process has separate owner threads for generative/STT/MiniLM work and 
 
 ## Startup order
 
-Startup keeps the existing two phases:
+The gateway no longer waits for all resident models before making the HTTP/Web UI available. At application lifespan startup it schedules resident initialization in the background and immediately allows the ASGI server to begin serving the browser UI, `/monitor`, `/settings`, `/health` and API routes. Requests that require a backend which is not ready yet return the normal unavailable/readiness response instead of blocking startup.
 
-1. Start the Hailo worker and load all enabled Hailo models, including the detector.
-2. Start the independent LiteRT-LM and Piper CPU workers.
-3. Start protocol listeners.
+Resident initialization itself remains ordered so accelerator allocation happens before CPU model allocation:
 
-This prevents CPU model allocation from changing Hailo initialization order.
+1. Start the Hailo chat/STT/MiniLM worker and load enabled Hailo models.
+2. Start the resident YOLO vision runtime.
+3. Start the independent LiteRT-LM worker.
+4. Start the independent Piper worker.
+5. Start the Frigate ZMQ listener.
+6. Start Wyoming when enabled.
+7. Start MQTT after the initialization phases when a broker is configured.
+
+`/v1/monitor` exposes the current `startup.state`, `startup.phase` and collected startup errors while this sequence runs. `/health` can therefore be reached during initialization and returns HTTP 503 until the required inference runtimes are ready. This keeps startup failures visible without delaying access to diagnostics.
 
 ## Health
 
