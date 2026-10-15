@@ -391,7 +391,6 @@ those image tensors to the detector. Tracking and stationary-object checks can a
 produce requests without new visible motion. The service does not receive motion
 events or perform Frigate's camera-side motion detection.
 
-
 Frigate 0.17+ includes a built-in `type: zmq` detector. The service implements its
 REQ/REP model handshake and inference protocol:
 
@@ -449,7 +448,6 @@ socket path and cannot connect to the TCP listener.
 
 These timeout and linger options belong to the **Frigate detector configuration**,
 not the service-side `vision.zmq` settings.
-
 
 The **basename** of Frigate's `model.path` must match the configured service model
 (e.g. `yolov11m.hef`). Frigate uses that path for model identification and as its
@@ -675,10 +673,11 @@ preparation. Recognized requests return deterministic client-executed tools;
 other text requests use `frigate_assist_text_model` (an enabled Gemma, native Hailo LLM,
 or the enabled VLM), and image requests use `frigate_assist_vision_model` with a short
 observation task. Pure observation omits tools; explicit image search/actions retain
-relevant tool schemas. Unknown tools and multi-step text workflows remain available. Both omitted or empty selections resolve to the selected
-native VLM; Gemma must be explicitly selected. An explicit image target conflicting
-with the enabled VLM is rejected when loading configuration. Explicit unavailable
-text targets do not fall back. VLM text requests obey the native VLM token/context limits. Direct native models
+relevant tool schemas. Unknown tools and multi-step text workflows remain available.
+Both omitted or empty selections resolve to the selected native VLM; Gemma must be
+explicitly selected. An explicit image target conflicting with the enabled VLM is
+rejected when loading configuration. Explicit unavailable text targets do not fall
+back. VLM text requests obey the native VLM token/context limits. Direct native models
 and `HA-Assist` retain their own preparation behavior.
 
 Only `Frigate-Assist` accepts Frigate's optional `stream_options` object:
@@ -699,10 +698,10 @@ for provider YAML, absence recap examples, supported commands, image/JSON limits
 and diagnostic fields.
 
 Frigate's optional `provider_options.context_size` is a local planning hint, not
-the prepared backend input limit. The proxy examples omit the former `2048`
-override: inbound prompts can be larger than the native model context and are
-compiled before native token budgeting. The hint also affects Frigate's review
-frame selection and some UI gates; see the dedicated documentation for details.
+the prepared backend input limit. The proxy examples omit a `context_size` override:
+inbound prompts can be larger than the native model context and are compiled before
+native token budgeting. The hint also affects Frigate's review frame selection and
+some UI gates; see the dedicated documentation for details.
 
 ## Home Assistant Wyoming STT and TTS
 
@@ -715,10 +714,10 @@ When Piper is enabled and ready, the same listener also advertises an installed
 installed voices/languages. No second Wyoming port is needed. Disabled or failed
 Piper backends are not advertised as available TTS services.
 
-After updating and restarting the service, reload the existing **Wyoming Protocol**
-integration in Home Assistant so it discovers the new TTS capability. In your
-Assist voice assistant settings, select **hailo-piper** for text-to-speech and the
-desired installed voice. Whisper remains the speech-to-text provider.
+After a service restart, reload the **Wyoming Protocol** integration in Home Assistant
+to refresh discovery. In the Assist voice assistant settings, select **hailo-piper**
+for text-to-speech and the desired installed voice. Whisper remains the speech-to-text
+provider.
 
 | Wyoming request | Result |
 |---|---|
@@ -870,31 +869,28 @@ models:
 In the second profile, HA-Assist image requests are unavailable unless the deployment
 is reconfigured. The service intentionally does not swap VLM/LLM HEFs per request.
 
-Object detection keeps its dedicated top-level `vision:` block. The legacy
-`models.vision` form is parsed for backwards compatibility, but new configurations
-should use `vision:` and should not configure both forms at the same time.
+Object detection is configured in the dedicated top-level `vision:` block.
 
 ## Updating
 
-For an existing native/systemd checkout, one command performs repository
-synchronization and installation:
+For native/systemd installations, the updater performs repository synchronization and
+installation:
 
 ```bash
 cd /path/to/hailo-10h-services
 sudo bash scripts/update.sh
 ```
 
-A separate `git pull` is not required. When the source directory is a Git checkout,
-the updater first runs a fast-forward-only pull from the current branch's configured
-upstream (as the invoking user when called through `sudo`). It aborts before stopping
-the installed service if the branch has no upstream, is detached, or cannot be
-fast-forwarded. Non-conflicting local working-tree changes remain in place. If the
-pull updates `scripts/update.sh` itself, the script re-executes once using the freshly
-pulled version, then reinstalls the package, synchronizes the systemd unit, verifies
-selected modules and restarts the service. Source trees without Git metadata skip
-repository synchronization and still run the install/update steps.
+When the source directory is a Git checkout, the updater runs a fast-forward-only pull
+from the current branch's configured upstream, using the invoking user when called
+through `sudo`. It aborts before stopping the installed service if the branch has no
+upstream, is detached, or cannot be fast-forwarded. Non-conflicting local working-tree
+changes remain in place. If the pull updates `scripts/update.sh` itself, the script
+re-executes once using the pulled version, then reinstalls the package, synchronizes the
+systemd unit, verifies selected modules and restarts the service. Source trees without
+Git metadata skip repository synchronization and still run the install/update steps.
 
-Docker Compose deployments keep their separate image rebuild workflow documented in
+Docker Compose deployments use the image rebuild workflow documented in
 [installation](installation.md#docker-compose).
 
 ## Related documentation
@@ -964,11 +960,10 @@ request/response timestamps, total duration, server processing time, sample rate
 and file size. Generated files can be played or downloaded; clear the TTS history
 to release them. The API key entered in the Playground also authenticates TTS.
 
-
 ## `POST /v1/ha-assist/diagnose`
 
 Accepts the same request as chat, with `model: "HA-Assist"` and `stream: false`.
-Uses the existing authentication and owner-thread queue. It may perform MiniLM
+Uses the standard authentication and owner-thread queue. It may perform MiniLM
 embedding retrieval, but never invokes LLM/VLM generation or executes a tool.
 `proposed_response` contains the deterministic text or proposed tool calls, or
 `null` for a request that would need inference. `metrics.ha_route` reports actual
@@ -985,9 +980,9 @@ curl -sS http://HOST:8090/v1/ha-assist/diagnose \
 
 `prepared_request` contains the complete messages and tool schemas **after HA
 preparation, before the native chat template and input-token budget**. It is not a
-claim about the final native prompt or token count. Existing debug events
-`final_gemma_request` / native Hailo prompt events remain authoritative for the
-prompt actually used by production inference.
+claim about the final native prompt or token count. Debug events
+`final_gemma_request` / native Hailo prompt events are authoritative for the prompt
+actually used by production inference.
 
 ## Optional structured exposed catalogue
 
@@ -1010,25 +1005,24 @@ HA-Assist clients may add `ha_context` to chat or diagnosis requests:
 }
 ```
 
-Only include entities exposed to this conversation. The structured catalogue
-replaces the legacy static catalogue for this request, even if its version string
-is unchanged; legacy clients continue to work without it. Aliases resolve to
-canonical client target names. IDs, floor and device class remain rich catalogue
-metadata; this does not add floor-target tools absent from the client schema.
-`capabilities` describes supported writable properties: omitted/null means
-unknown; `[]` means no property-setting capability. Known unsupported adjustments
-are rejected before inference. An explicitly empty catalogue permits no device
-control. Live state fields are deliberately not accepted in this metadata cache.
-Physical-model requests do not apply this metadata to routing or prompts.
+Only include entities exposed to this conversation. When `ha_context` is present, its
+structured catalogue is used for that request. Aliases resolve to canonical client
+target names. IDs, floor and device class remain rich catalogue metadata; this does
+not add floor-target tools absent from the client schema. `capabilities` describes
+supported writable properties: omitted/null means unknown; `[]` means no
+property-setting capability. Known unsupported adjustments are rejected before
+inference. An explicitly empty catalogue permits no device control. Live state fields
+are deliberately not accepted in this metadata cache. Physical-model requests do not
+apply this metadata to routing or prompts.
 
-`GET /health` now includes `cache`: bounded static tool/template cache counts,
-MiniLM embedding counts, observed Hailo context snapshot methods and the current
-backend isolation policy. No state snapshot methods are called by this inspection.
-See [HA recognition and caching](ha-recognition.md) for policy and SDK findings.
+`GET /health` includes `cache`: bounded static tool/template cache counts, MiniLM
+embedding counts, observed Hailo context snapshot methods and the current backend
+isolation policy. No state snapshot methods are called by this inspection. See
+[HA recognition and caching](ha-recognition.md) for policy and SDK findings.
 
 ## Settings UI and API
 
-`GET /settings` serves the configuration editor, grouped by transport, model role and integration. Interface language is a browser preference stored in `localStorage`, applies across Playground/Settings/Monitoring without a restart, and is separate from service-language YAML settings. `GET /v1/settings` returns existing scalar YAML fields and a file version; secrets are redacted. `PUT /v1/settings` accepts `{ "version": "…", "changes": { "settings.debug_log": true } }`, validates the complete YAML and atomically replaces it. Version conflicts return 409; invalid settings return 400. Empty secret fields leave existing values intact; `null` explicitly clears `settings.api_key` or `settings.mqtt_password`. YAML comments are reformatted on save. `POST /v1/settings/restart` requests a graceful systemd restart when available, otherwise returns 409. All three API routes use the same bearer key and `settings.api_no_auth_networks` exemption as `/v1/monitor`. Fields carry a `runtime` flag. Gateway request timeouts, Piper input character limits,
+`GET /settings` serves the configuration editor, grouped by transport, model role and integration. Interface language is a browser preference stored in `localStorage`, applies across Playground/Settings/Monitoring without a restart, and is separate from service-language YAML settings. `GET /v1/settings` returns configured scalar YAML fields and a file version; secrets are redacted. `PUT /v1/settings` accepts `{ "version": "…", "changes": { "settings.debug_log": true } }`, validates the complete YAML and atomically replaces it. Version conflicts return 409; invalid settings return 400. Empty secret fields leave current values intact; `null` explicitly clears `settings.api_key` or `settings.mqtt_password`. YAML comments are reformatted on save. `POST /v1/settings/restart` requests a graceful systemd restart when available, otherwise returns 409. All three API routes use the same bearer key and `settings.api_no_auth_networks` exemption as `/v1/monitor`. Fields carry a `runtime` flag. Gateway request timeouts, Piper input character limits,
 HA waiting messages, YOLO confidence and maximum detections are applied immediately
 after saving. Other settings require a restart. `restart_required` compares the saved
 effective configuration with the running configuration. `HAILO_*` environment
