@@ -1,3 +1,3 @@
 # Runtime and model lifecycle
 
-Async chat queues, readiness and model routing; model catalogue/download management, MiniLM and preflight. `workers/` provides process isolation behind the same backend interfaces. `process_runtime.py` exposes the process runtime classes to application composition.
+Async chat queues, readiness and model routing; model catalogue/download management, MiniLM, startup preflight and the small set of settings that can be applied to the running service without rebuilding resident models. `workers/` provides process isolation behind the same backend interfaces, including the shared Hailo worker with separate generative/STT/MiniLM and detector executors. `process_runtime.py` exposes the process runtime classes to application composition.
