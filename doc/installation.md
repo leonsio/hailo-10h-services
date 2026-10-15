@@ -45,9 +45,12 @@ sudo systemctl restart hailo-10h-services
 sudo systemctl status hailo-10h-services
 ```
 
-`/health` is the readiness check, not merely `systemctl is-active`: while HEFs are
-being downloaded/loaded there is no listening HTTP socket. It includes loaded
-model names, paths, mandatory SHARED group, pending work and MQTT connection state.
+`/health` is the readiness check, not merely `systemctl is-active`. The HTTP/API and
+browser UI become reachable while resident models are still being downloaded or
+loaded; `/health` returns HTTP 503 until the required inference runtimes are ready.
+`/monitor` can therefore be used during startup and exposes the current startup
+phase and collected initialization errors. `/health` includes loaded model names,
+paths, mandatory SHARED group, pending work and MQTT connection state.
 
 ### Update an existing native/systemd installation
 
@@ -218,9 +221,13 @@ Set `models.hailo_llm.enabled: true` and select any `kind: llm` catalogue entry
 (e.g. `Qwen2.5-1.5B-Instruct` or `Qwen3-1.7B-Instruct`). The service instantiates
 `hailo_platform.genai.LLM` directly on its SHARED VDevice. Ollama is not needed.
 Enable either VLM or Hailo LLM according to your hardware; the service intentionally
-does not enforce mutual exclusion or swap models on requests. All Hailo inference
-shares the serialized owner thread. Gemma runs independently on CPU with a separate
-engine and queue and can stay enabled with either Hailo model type.
+does not enforce mutual exclusion or swap models on requests. Hailo-backed chat,
+Whisper/MiniLM and YOLO remain in one Hailo worker process in process mode, but
+chat/STT/MiniLM and object detection use separate bounded owner executors. They
+therefore still contend for the same physical accelerator, with HailoRT scheduling
+eligible work; the configured YOLO scheduler priority is not hard preemption.
+Gemma runs independently on CPU with a separate engine and queue and can stay
+enabled with either Hailo model type.
 Legacy ENV equivalents are `HAILO_VLM_ENABLED=false`,
 `HAILO_HAILO_LLM_ENABLED=true`, `HAILO_HAILO_LLM_MODEL=Qwen2.5-1.5B-Instruct`,
 and `HAILO_HAILO_LLM_MAX_INPUT_TOKENS=2048`. ENV overrides YAML.
@@ -407,9 +414,11 @@ the client must trust that certificate. LiteRT-LM and
 Gemma share system RAM with the service; verify memory headroom on the Pi before
 raising the request queue size.
 
-For Home Assistant, use the **llama.cpp** conversation integration with the service
-URL, API key and model `HA-Assist`. Configure its text/image targets as below. Enable Home Assistant control in the
-conversation agent options and expose the devices you want Assist to control.
+For Home Assistant, use an OpenAI-compatible conversation integration that lets
+you configure this service's `/v1` base URL and select model `HA-Assist`. Enable
+Home Assistant control in the conversation agent options and expose the devices
+you want Assist to control. Avoid client modes that inject provider-specific
+request fields not supported by the OpenAI-compatible API surface.
 
 
 ## Configure HA-Assist
