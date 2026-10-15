@@ -49,6 +49,29 @@ sudo systemctl status hailo-10h-services
 being downloaded/loaded there is no listening HTTP socket. It includes loaded
 model names, paths, mandatory SHARED group, pending work and MQTT connection state.
 
+### Update an existing native/systemd installation
+
+Run the updater from the repository checkout:
+
+```bash
+sudo bash scripts/update.sh
+```
+
+A separate `git pull` is not required. If the source directory is a Git checkout,
+the updater pulls the configured upstream of the current branch with
+`git pull --ff-only` before changing the installed service. When started through
+`sudo`, Git runs as the invoking user so checkout ownership and that user's Git
+configuration are preserved. Non-conflicting working-tree changes remain in place
+and are installed too; conflicting changes, a detached/untracked branch or
+non-fast-forward history abort the update before the service is stopped. A source
+tree without Git metadata is still supported and simply skips repository
+synchronization. If the pull changes `scripts/update.sh` itself, the script restarts
+once and continues with the freshly pulled updater.
+
+After synchronization, the updater reinstalls the application package from the
+checkout, keeps the systemd unit in sync, verifies selected installed modules,
+restarts the service and checks that it is active.
+
 ## Docker Compose
 
 Requires Docker Engine with Compose v2 on a Linux host and a working Hailo-10H
@@ -172,9 +195,12 @@ pct exec 110 -- hostname -I
 # Update inside the container:
 pct enter 110
 cd /opt/hailo-10h-services-source
-git pull --ff-only
-HAILO_PYTHON=/opt/hailort-venv/bin/python bash scripts/install.sh
+bash scripts/update.sh
 ```
+
+The LXC update command uses the same updater as a native systemd installation, so
+it pulls the checkout first and no separate `git pull` or `install.sh` command is
+needed for normal application updates.
 
 Use the container IP for HTTP/Wyoming clients. HTTPS can be enabled inside LXC
 with the native HTTPS script. Existing CT/VM IDs are rejected; failed installs
@@ -242,14 +268,12 @@ manually as needed. Missing settings retain their defaults.
 
 ## HTTPS with a local self-signed CA
 
-On an existing installation, enable the additional HTTPS listener with:
+On an existing installation, update the service and enable the additional HTTPS
+listener with:
 
 ```bash
 cd ~/hailo-10h-services
-git switch main
-git pull --ff-only
-sudo /opt/hailo-10h-services/venv/bin/pip install --no-deps --force-reinstall .
-sudo systemctl restart hailo-10h-services
+sudo bash scripts/update.sh
 sudo bash scripts/enable-https.sh
 ```
 
