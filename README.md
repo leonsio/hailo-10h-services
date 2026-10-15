@@ -115,12 +115,20 @@ cd hailo-10h-services
 sudo bash scripts/install.sh
 ```
 
-For an existing installation:
+For an existing native/systemd installation:
 
 ```bash
-git pull --ff-only
-sudo bash scripts/install.sh
+sudo bash scripts/update.sh
 ```
+
+A separate `git pull` is no longer required. When the source directory is a Git
+checkout, the updater first runs a fast-forward-only pull from the configured
+upstream of the current branch. It then reinstalls the application from that checkout,
+updates the systemd unit, verifies the installation and restarts the service. Local
+working-tree changes are never silently overwritten: non-conflicting changes remain
+and are installed too, while conflicts or non-fast-forward history abort the update
+before the installed service is modified. Source trees without Git metadata are still
+supported, but repository synchronization is skipped.
 
 The primary configuration is available at `/etc/hailo-10h-services.yaml` (a link to the service-owned state file in systemd installations). The authenticated `/settings` page saves validated YAML changes and can restart the systemd service to apply them. Request timeouts, Piper input limits, HA waiting messages,
 YOLO confidence and maximum detections apply without restarting. Edited fields are
