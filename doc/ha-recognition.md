@@ -63,9 +63,9 @@ proof of improvement. Real backend timings still require a Hailo/LiteRT host.
 
 ## Practical test procedure
 
-Use the `feature/ha-recognition-diagnostics` branch and select **HA-Assist**
-in Home Assistant. Direct Gemma/Qwen requests bypass recognition. Compare both
-versions with identical tool schemas, exposed entities and settings.
+Use the current `main` checkout (or the exact revision under test) and select
+**HA-Assist** in Home Assistant. Direct Gemma/Qwen requests bypass recognition.
+When comparing revisions, keep tool schemas, exposed entities and settings identical.
 
 1. Capture a complete real OpenAI request from your HA integration as
    `ha-request.json`: messages (including static catalogue), tools and current
@@ -122,7 +122,7 @@ model is shown by `metrics.ha_route.would_inference_calls`.
 ### Small Python diagnosis client
 
 The standalone [scripts/diagnose_ha.py](../scripts/diagnose_ha.py) needs only
-Python 3.10+ and its standard library. Update/switch to this branch and run it
+Python 3.10+ and its standard library. Update the current checkout and run it
 from the repository directory. Supply a complete captured HA OpenAI request as
 `ha-request.json`, including system catalogue, messages and tool schemas.
 
@@ -166,7 +166,7 @@ Output includes proposed calls, candidate evidence, intended inference count,
 stage timings and the complete prepared model input. `--json` prints the full
 JSON instead of the readable report; `--output` saves the full JSON in either
 mode. A failed HTTP request exits with status 1 and prints the server error
-(401: API key, 404: deployed branch/URL, 422: request schema). The script does
+(401: API key, 404: deployed revision/URL, 422: request schema). The script does
 not redirect authenticated requests; supply the final service address.
 
 ### Calling endpoints directly
@@ -301,4 +301,3 @@ all returned actions.
 - [Assist Canonicalizer](https://github.com/luuquangvu/assist-canonicalizer):
   independent ranking signals, bounded candidate indexes and explicit confidence
   gates as design references. This implementation does not vendor those projects.
-
