@@ -16,6 +16,7 @@ MQTT and Frigate interfaces.
 | HTTP | `GET :8090/v1/models` | Ready model IDs | Ready model ID | Ready detector ID |
 | HTTP | `GET :8090/health` | Backend/readiness status | Status | Status/ZMQ |
 | HTTP | `GET :8090/monitor`, `GET :8090/v1/monitor` | Monitoring page and JSON statistics | Status/latency | Detection latency |
+| HTTP | `GET :8090/settings`, `GET/PUT :8090/v1/settings`, `POST :8090/v1/settings/restart` | Browser configuration editor and validated settings API | Configuration | Configuration |
 | Frigate ZMQ | `vision.zmq.endpoint` | — | — | `(20,6)` detector protocol |
 | WebSocket | `ws://HOST:8090/ws` | `chat` | `transcribe` | — |
 | MCP | `http://HOST:8090/mcp/` | `analyze_image`, `chat_text` | `transcribe_audio` | — |
@@ -58,10 +59,10 @@ Authorization: Bearer API_KEY
 ```
 
 `/health` and the browser UI remain public according to the service middleware rules.
-`/v1/monitor` requires the bearer key when configured unless the connecting socket
-peer matches `settings.api_no_auth_networks`. The Playground and monitoring page
-share the key in the current browser tab using `sessionStorage`; closing the tab
-clears it.
+The protected JSON APIs such as `/v1/monitor` and `/v1/settings` require the bearer
+key when configured unless the connecting socket peer matches
+`settings.api_no_auth_networks`. Playground, Monitoring and Settings share the key
+in the current browser tab using `sessionStorage`; closing the tab clears it.
 MCP may omit the API key for configured peer networks in
 `settings.mcp_no_auth_networks`; `settings.mcp_hosts` separately protects allowed Host
 headers.
@@ -291,7 +292,8 @@ vision:
   iou_threshold: 0.45
   max_detections: 20
   queue_size: 16
-  scheduler_priority: 1
+  # Higher values have higher scheduler priority; 31 is the default.
+  scheduler_priority: 31
   zmq:
     enabled: true
     endpoint: tcp://127.0.0.1:5555
@@ -358,8 +360,12 @@ Boxes are returned in source-image coordinates after reversing the detector lett
 transformation. Normalized coordinates are 0..1; `box_pixels` uses the original image
 size.
 
-HTTP detection and Frigate ZMQ requests share the same `VisionRuntime`, serialized
-accelerator owner thread and queue. The HEF is not configured again per request.
+HTTP detection and Frigate ZMQ requests share the same resident `VisionRuntime` and
+bounded detector queue. In process mode the detector has a separate owner executor
+inside the Hailo worker from chat/STT/MiniLM work, but both still share the physical
+accelerator and HailoRT scheduler. The configured scheduler priority influences the
+next eligible YOLO work; it does not hard-preempt already-running GenAI inference.
+The HEF is not configured again per request.
 
 ## Frigate ZMQ detector
 
@@ -497,7 +503,10 @@ models and failed/unavailable LiteRT models are omitted. The Playground receives
 the same filtered limits via `/ui/config`; no limits are advertised before startup
 or after runtime shutdown.
 
-HTTP status is 503 when a required enabled runtime failed to become ready.
+The HTTP server and browser UI may already be reachable while resident initialization
+is still running. `/health` returns HTTP 503 while a required enabled runtime is not
+ready or failed to initialize; use `/v1/monitor.startup` for the current phase and
+captured startup errors.
 
 ## `GET /monitor` and `GET /v1/monitor`
 
@@ -516,9 +525,9 @@ deterministic answers count only the assistant.
 Each service entry has an `enabled` flag; the web overview hides disabled services.
 `system_services` reports the host and HTTP/MCP, Wyoming, MQTT and ZMQ
 addresses/ports and their live transport states. `hailo_device` contains
-`nnc_percent`, `cpu_percent`, `ram_used_bytes`, `ram_total_bytes`,
-`temperature_c`, `throttling`, `sampled_at`, `state`, `errors`, and
-`resident_models`. Hardware values are sampled through HailoRT in the Hailo
+`hailort_version`, `nnc_percent`, `cpu_percent`, `ram_used_bytes`,
+`ram_total_bytes`, `temperature_c`, `throttling`, `sampled_at`, `state`, `errors`,
+and `resident_models`. Hardware values are sampled through HailoRT in the Hailo
 worker every five seconds and sent through IPC; monitoring never invokes native
 inference or a hardware query from the gateway. HailoRT performance RAM is in
 KiB and is converted to bytes before transfer. `-1` and unsupported fields are
@@ -527,6 +536,9 @@ reading. The throttling row reports actual throttling when available, rather
 than mistaking an enabled protection mechanism for active throttling. Model
 residency is tracked from successful native model initialization by this service,
 not inferred from enabled settings; the list is emptied when the worker stops.
+Unsupported HailoRT/firmware telemetry families are remembered after the first
+rejection and are not retried until the service restarts; their diagnostic error
+remains available in the snapshot.
 API contracts are based on [HailoRT 5.4 Python Control](https://github.com/hailo-ai/hailort/blob/v5.4.0/hailort/libhailort/bindings/python/platform/hailo_platform/pyhailort/pyhailort.py).
 
 The resource view lists the gateway and each live worker separately by PID, CPU
@@ -540,7 +552,10 @@ hour since process start. They reset on restart. Logs are kept in a bounded memo
 buffer per PID, so a process may contain fewer than 100 lines before enough log activity
 occurs. Detailed request and inference logs appear when `settings.debug_log` is
 enabled; request bodies are excluded from the web log view. The regular systemd
-journal remains the source for complete logs. The browser refreshes every five seconds.
+journal remains the source for complete logs. In debug mode, journal entries for
+HTTP JSON/text requests can contain prompts, entity/state data, TTS text and inline
+media data after credential-bearing headers are redacted; treat exported debug
+journals as sensitive. The browser refreshes every five seconds.
 
 ## Home Assistant virtual model
 
@@ -861,19 +876,34 @@ should use `vision:` and should not configure both forms at the same time.
 
 ## Updating
 
-Use the normal main-branch update path:
+For an existing native/systemd checkout, one command performs repository
+synchronization and installation:
 
 ```bash
 cd /path/to/hailo-10h-services
-git pull --ff-only
-sudo bash scripts/install.sh
-sudo systemctl restart hailo-10h-services.service
+sudo bash scripts/update.sh
 ```
+
+A separate `git pull` is not required. When the source directory is a Git checkout,
+the updater first runs a fast-forward-only pull from the current branch's configured
+upstream (as the invoking user when called through `sudo`). It aborts before stopping
+the installed service if the branch has no upstream, is detached, or cannot be
+fast-forwarded. Non-conflicting local working-tree changes remain in place. If the
+pull updates `scripts/update.sh` itself, the script re-executes once using the freshly
+pulled version, then reinstalls the package, synchronizes the systemd unit, verifies
+selected modules and restarts the service. Source trees without Git metadata skip
+repository synchronization and still run the install/update steps.
+
+Docker Compose deployments keep their separate image rebuild workflow documented in
+[installation](installation.md#docker-compose).
 
 ## Related documentation
 
 - [README / feature overview](../README.md)
+- [Technical architecture and process model](architecture.md)
+- [Process isolation](process-isolation.md)
 - [How HA-Assist works](ha-assist.md)
+- [HA recognition and diagnostics](ha-recognition.md)
 - [Installation and deployment](installation.md)
 - [Request pipelines and HA routing](pipelines.md)
 - [Language behavior](languages.md)
