@@ -16,8 +16,7 @@ matters, and inspect actual images and tool results when evaluating an answer.
 Frigate versions supporting named GenAI providers can assign `descriptions` and
 `chat` to different providers/models. This implementation attempts to combine both
 roles behind `Frigate-Assist`. It is **not an embeddings model**. The examples below
-target the named-provider/roles configuration; check your installed Frigate version's
-schema if it still uses an older configuration layout.
+target Frigate's named-provider/roles configuration.
 
 ## Configuration
 
@@ -47,8 +46,8 @@ models:
     enabled: false
 ```
 
-Use the path of your existing Gemma artifact. Restart the service after changing
-settings. The equivalent environment names are `HAILO_FRIGATE_ASSIST_ENABLED`,
+Use the configured Gemma artifact path. Restart the service after changing settings.
+The equivalent environment names are `HAILO_FRIGATE_ASSIST_ENABLED`,
 `HAILO_FRIGATE_ASSIST_TEXT_MODEL`,
 `HAILO_FRIGATE_ASSIST_VISION_MODEL`, `HAILO_FRIGATE_ASSIST_MAX_EVENTS`,
 `HAILO_FRIGATE_ASSIST_TEXT_CHARS`, `HAILO_FRIGATE_ASSIST_VISION_CHARS` and
@@ -68,18 +67,19 @@ genai:
       - chat
 ```
 
-The base URL includes `/v1`; do not append `/chat/completions`. Keep an existing
-embeddings provider or Frigate's local semantic-search model. No `context_size`
-override is required for this proxy example; see the distinction below. The service
-applies the real selected backend's token limit after compilation. Enable
-object/review description generation separately in Frigate;
-assigning a provider role does not enable every description feature automatically.
+The base URL includes `/v1`; do not append `/chat/completions`. Configure embeddings
+separately using a Frigate-supported embeddings provider or local semantic-search
+model; `Frigate-Assist` does not provide embeddings. No `context_size` override is
+required for this proxy example; see the distinction below. The service applies the
+real selected backend's token limit after compilation. Enable object/review description
+generation separately in Frigate; assigning a provider role does not enable every
+description feature automatically.
 
-To try chat separately while keeping a working description provider:
+To try chat separately while keeping a description provider:
 
 ```yaml
 genai:
-  existing_descriptions:
+  descriptions:
     provider: openai
     base_url: http://HAILO_HOST:8090/v1
     api_key: "{FRIGATE_HAILO_API_KEY}"
@@ -96,7 +96,7 @@ genai:
 ```
 
 Each role must belong to only one provider. Chat may be omitted altogether.
-Direct Qwen requests retain their existing API behavior; the Frigate-specific
+Direct Qwen requests use the normal API behavior; the Frigate-specific
 `stream_options` extension described below is accepted only by `Frigate-Assist`.
 
 ### Choosing the text and vision backends
@@ -138,7 +138,7 @@ Required context exceeding the budget is rejected. Tool-aware summaries use the
 native JSON response contract. VLM text reasoning and tool selection remain
 experimental and can be less reliable than the explicitly selected Gemma backend.
 
-For a current text-only Hailo profile, for example:
+For a text-only Hailo profile, for example:
 
 ```yaml
 settings:
@@ -152,13 +152,11 @@ models:
     enabled: false
 ```
 
-This example supports text only: its configured vision target is not loaded.
-HailoRT/GenAI 5.4.0 currently prevents loading native Hailo LLM and VLM together;
-the existing startup checks and resident-model lifecycle still enforce that limit.
-Gemma/CPU plus VLM/Hailo remains the current text-and-image profile. The proxy no
-longer hardcodes Gemma, so a future runtime supporting resident Hailo LLM+VLM can
-use both target settings without rewriting Frigate-Assist routing. Availability
-and runtime compatibility must still be verified for that future deployment.
+This example supports text only because its configured vision target is not loaded.
+HailoRT/GenAI 5.4.0 prevents loading a native Hailo LLM and Hailo VLM together.
+For text-and-image operation, use a CPU text backend such as Gemma together with the
+resident Hailo VLM. Text and vision targets are configured independently, and each
+explicit target must be enabled and available.
 
 ### What Frigate's `context_size` means
 
