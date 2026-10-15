@@ -609,7 +609,9 @@ def test_http_network_auth_exemption_uses_socket_peer(peer, networks, status):
         assert response.status_code == status
         assert client.get("/v1/models").status_code == status
         assert client.get("/ui/config").json()["auth_required"] is (status == 401)
-        assert client.get("/v1/models", headers={"Authorization": "Bearer secret"}).status_code == 200
+        assert (
+            client.get("/v1/models", headers={"Authorization": "Bearer secret"}).status_code == 200
+        )
         # The MCP auth policy remains independent from normal HTTP access.
         assert client.post("/mcp/").status_code == 401
 

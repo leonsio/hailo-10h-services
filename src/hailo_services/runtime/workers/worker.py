@@ -115,7 +115,9 @@ def _metrics(args: tuple[Any, ...]) -> dict[str, Any] | None:
     return dict(value) if isinstance(value, dict) else None
 
 
-def _finish(response_queue, request_id: str, future, args: tuple[Any, ...], op: str = "", started: float = 0) -> None:
+def _finish(
+    response_queue, request_id: str, future, args: tuple[Any, ...], op: str = "", started: float = 0
+) -> None:
     global _LAST_VISION_LOG
     status = "completed"
     try:
@@ -148,7 +150,9 @@ def _finish(response_queue, request_id: str, future, args: tuple[Any, ...], op: 
             if emit:
                 _LOG.info(
                     "event=worker_request operation=%s status=%s duration_ms=%.1f",
-                    op, status, (time.perf_counter() - started) * 1000,
+                    op,
+                    status,
+                    (time.perf_counter() - started) * 1000,
                 )
 
 
@@ -245,8 +249,8 @@ def _hailo_worker(settings, request_queue, response_queue, log_queue=None) -> No
             submitted = time.perf_counter()
             future = executor.submit(invoke)
             future.add_done_callback(
-                lambda completed, rid=request_id, call_args=args, operation=op, begin=submitted: _finish(
-                    response_queue, rid, completed, call_args, operation, begin
+                lambda completed, rid=request_id, call_args=args, operation=op, begin=submitted: (
+                    _finish(response_queue, rid, completed, call_args, operation, begin)
                 )
             )
     except BaseException as exc:
@@ -596,12 +600,17 @@ class _WorkerClient:
     def telemetry_status(self) -> dict[str, Any]:
         if self.process is None or not self.process.is_alive():
             return {**empty_telemetry("stopped"), "resident_models": []}
-        return {**self._telemetry, "resident_models": list(self.metadata.get("resident_models", []))}
+        return {
+            **self._telemetry,
+            "resident_models": list(self.metadata.get("resident_models", [])),
+        }
 
     def status(self) -> dict[str, Any]:
         process = self.process
         return {
-            "status": ("ready" if self.metadata else "starting") if process is not None and process.is_alive() else "stopped",
+            "status": ("ready" if self.metadata else "starting")
+            if process is not None and process.is_alive()
+            else "stopped",
             "pid": process.pid if process is not None else self.metadata.get("pid"),
             "restarts": self.restarts,
             "users": self._users,

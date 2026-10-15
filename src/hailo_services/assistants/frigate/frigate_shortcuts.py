@@ -357,9 +357,7 @@ def _named_home_query(request, text):
     for canonical in ("haus", "ist", "im", "auf", "bitte"):
         blocked.update(word.casefold() for word in data.get("aliases", {}).get(canonical, []))
     for identifier, friendly in cameras.items():
-        blocked.update(
-            word.casefold() for word in re.findall(r"[^\W\d_]+", identifier, re.UNICODE)
-        )
+        blocked.update(word.casefold() for word in re.findall(r"[^\W\d_]+", identifier, re.UNICODE))
         blocked.update(word.casefold() for word in re.findall(r"[^\W\d_]+", friendly, re.UNICODE))
 
     names = []

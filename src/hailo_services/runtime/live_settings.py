@@ -1,8 +1,18 @@
 """Gateway-owned settings that do not require rebuilding native resources."""
 
-LIVE_FIELDS = frozenset({"request_timeout", "piper_max_input_chars", "ha_wait_messages", "vision_confidence", "vision_max_detections"})
+LIVE_FIELDS = frozenset(
+    {
+        "request_timeout",
+        "piper_max_input_chars",
+        "ha_wait_messages",
+        "vision_confidence",
+        "vision_max_detections",
+    }
+)
 
-LIVE_PATHS = frozenset({f"settings.{name}" for name in LIVE_FIELDS} | {"vision.confidence", "vision.max_detections"})
+LIVE_PATHS = frozenset(
+    {f"settings.{name}" for name in LIVE_FIELDS} | {"vision.confidence", "vision.max_detections"}
+)
 
 
 class LiveSettings:

@@ -34,7 +34,11 @@ def host_temperature():
     """
     for zone in sorted(Path("/sys/class/thermal").glob("thermal_zone*")):
         try:
-            if (zone / "type").read_text().strip() in {"cpu-thermal", "bcm2835_thermal", "soc-thermal"}:
+            if (zone / "type").read_text().strip() in {
+                "cpu-thermal",
+                "bcm2835_thermal",
+                "soc-thermal",
+            }:
                 value = int((zone / "temp").read_text()) / 1000
                 if -40 <= value <= 150:
                     return value
@@ -54,7 +58,9 @@ class RecentLogs(logging.Handler):
         """
         super().__init__(logging.DEBUG if debug else logging.INFO)
         self.entries = OrderedDict()
-        self.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(process)d] %(name)s: %(message)s"))
+        self.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s [%(process)d] %(name)s: %(message)s")
+        )
 
     def emit(self, record):
         """Capture a bounded line without recursive logging on formatting errors.
@@ -63,10 +69,13 @@ class RecentLogs(logging.Handler):
             None: Adds a log entry when applicable.
         """
         try:
-            if (record.levelno >= self.level and record.name.startswith("hailo_services")
-                    and "event=request_payload" not in record.getMessage()
-                    and "event=validated_request" not in record.getMessage()
-                    and "path=/v1/monitor" not in record.getMessage()):
+            if (
+                record.levelno >= self.level
+                and record.name.startswith("hailo_services")
+                and "event=request_payload" not in record.getMessage()
+                and "event=validated_request" not in record.getMessage()
+                and "path=/v1/monitor" not in record.getMessage()
+            ):
                 line = redact_inline_data(self.format(record))
                 with self.lock:
                     pid = record.process
@@ -86,12 +95,13 @@ class RecentLogs(logging.Handler):
         processes = [("gateway", os.getpid())]
         if workers:
             processes.extend(
-                (name, detail.get("pid")) for name, detail in workers.items()
+                (name, detail.get("pid"))
+                for name, detail in workers.items()
                 if name != "gateway" and detail.get("pid") is not None
             )
         with self.lock:
             return [
-                {"name": name, "pid": pid, "lines": list(self.entries.get(pid, ())) }
+                {"name": name, "pid": pid, "lines": list(self.entries.get(pid, ()))}
                 for name, pid in processes
             ]
 
@@ -99,7 +109,16 @@ class RecentLogs(logging.Handler):
 class Monitor:
     """Aggregate each service's last hour in bounded per-second buckets."""
 
-    SERVICES = ("VLM", "LLM", "Hailo LLM", "HA-Assist", "Frigate-Assist", "Whisper", "Piper", "YOLO")
+    SERVICES = (
+        "VLM",
+        "LLM",
+        "Hailo LLM",
+        "HA-Assist",
+        "Frigate-Assist",
+        "Whisper",
+        "Piper",
+        "YOLO",
+    )
 
     def __init__(self, settings):
         """Create independent rolling measurements for one gateway.
@@ -169,7 +188,9 @@ class Monitor:
         if log_request:
             _LOG.info(
                 "event=monitor_request service=%s status=%s duration_ms=%.1f",
-                name, "error" if failed else "completed", duration,
+                name,
+                "error" if failed else "completed",
+                duration,
             )
 
     @staticmethod
@@ -213,9 +234,15 @@ class Monitor:
                     "errors_1h": errors,
                     "active": self.active[name],
                     "last_request_at": self.last[name],
-                    "average_ms": round(sum(b[2] for b in buckets.values()) / count, 1) if count else None,
-                    "maximum_ms": round(max((b[3] for b in buckets.values()), default=0), 1) if count else None,
-                    "average_ttft_ms": round(sum(b[5] for b in buckets.values()) / ttft_count, 1) if ttft_count else None,
+                    "average_ms": round(sum(b[2] for b in buckets.values()) / count, 1)
+                    if count
+                    else None,
+                    "maximum_ms": round(max((b[3] for b in buckets.values()), default=0), 1)
+                    if count
+                    else None,
+                    "average_ttft_ms": round(sum(b[5] for b in buckets.values()) / ttft_count, 1)
+                    if ttft_count
+                    else None,
                     "ttft_samples_1h": ttft_count,
                 }
         return result
@@ -226,31 +253,59 @@ class Monitor:
         Returns:
             dict: Available resource measurements and nullable unsupported fields.
         """
-        data = {"cpu_cores": os.cpu_count(), "load_average": None, "host_memory": None,
-                "process_rss_bytes": None, "process_cpu_percent": None, "cgroup_memory_bytes": None,
-                "cgroup_memory_limit_bytes": None, "cgroup_cpu_percent": None, "processes": [], "host_temperature_c": host_temperature()}
+        data = {
+            "cpu_cores": os.cpu_count(),
+            "load_average": None,
+            "host_memory": None,
+            "process_rss_bytes": None,
+            "process_cpu_percent": None,
+            "cgroup_memory_bytes": None,
+            "cgroup_memory_limit_bytes": None,
+            "cgroup_cpu_percent": None,
+            "processes": [],
+            "host_temperature_c": host_temperature(),
+        }
         try:
             data["load_average"] = round(os.getloadavg()[0], 2)
-            data["process_rss_bytes"] = int(Path("/proc/self/statm").read_text().split()[1]) * os.sysconf("SC_PAGE_SIZE")
+            data["process_rss_bytes"] = int(
+                Path("/proc/self/statm").read_text().split()[1]
+            ) * os.sysconf("SC_PAGE_SIZE")
             mem = {}
             for line in Path("/proc/meminfo").read_text().splitlines():
                 key, _, value = line.partition(":")
                 if key in {"MemTotal", "MemAvailable"}:
                     mem[key] = int(value.strip().split()[0]) * 1024
-            data["host_memory"] = {"total_bytes": mem.get("MemTotal"), "available_bytes": mem.get("MemAvailable")}
+            data["host_memory"] = {
+                "total_bytes": mem.get("MemTotal"),
+                "available_bytes": mem.get("MemAvailable"),
+            }
             cgroup = Path("/proc/self/cgroup").read_text().splitlines()
-            group = next((row.split(":", 2)[2].lstrip("/") for row in cgroup if row.startswith("0::")), None)
+            group = next(
+                (row.split(":", 2)[2].lstrip("/") for row in cgroup if row.startswith("0::")), None
+            )
             if group is not None:
                 root = Path("/sys/fs/cgroup") / group
                 data["cgroup_memory_bytes"] = int((root / "memory.current").read_text())
                 limit = (root / "memory.max").read_text().strip()
                 data["cgroup_memory_limit_bytes"] = int(limit) if limit != "max" else None
-                cpu_line = next((line for line in (root / "cpu.stat").read_text().splitlines() if line.startswith("usage_usec ")), None)
+                cpu_line = next(
+                    (
+                        line
+                        for line in (root / "cpu.stat").read_text().splitlines()
+                        if line.startswith("usage_usec ")
+                    ),
+                    None,
+                )
                 if cpu_line:
                     elapsed, used = time.monotonic(), int(cpu_line.split()[1]) / 1_000_000
                     with self.lock:
                         if self._cgroup_cpu is not None and elapsed > self._cgroup_cpu[0]:
-                            data["cgroup_cpu_percent"] = round(100 * (used - self._cgroup_cpu[1]) / (elapsed - self._cgroup_cpu[0]), 1)
+                            data["cgroup_cpu_percent"] = round(
+                                100
+                                * (used - self._cgroup_cpu[1])
+                                / (elapsed - self._cgroup_cpu[0]),
+                                1,
+                            )
                         self._cgroup_cpu = elapsed, used
         except (OSError, ValueError, IndexError):
             pass
@@ -261,7 +316,9 @@ class Monitor:
                 if self._cpu is not None:
                     previous_elapsed, previous_cpu = self._cpu
                     if elapsed > previous_elapsed:
-                        data["process_cpu_percent"] = round(100 * (cpu - previous_cpu) / (elapsed - previous_elapsed), 1)
+                        data["process_cpu_percent"] = round(
+                            100 * (cpu - previous_cpu) / (elapsed - previous_elapsed), 1
+                        )
                 self._cpu = elapsed, cpu
         except (OSError, ValueError):
             pass
@@ -269,13 +326,19 @@ class Monitor:
         if workers:
             descriptions.extend(
                 (name, detail.get("pid"), detail.get("status", "unknown"))
-                for name, detail in workers.items() if name != "gateway"
+                for name, detail in workers.items()
+                if name != "gateway"
             )
         samples = {}
         elapsed = time.monotonic()
         for name, pid, status in descriptions:
-            row = {"name": name, "pid": pid, "status": status,
-                   "rss_bytes": None, "cpu_percent": None}
+            row = {
+                "name": name,
+                "pid": pid,
+                "status": status,
+                "rss_bytes": None,
+                "cpu_percent": None,
+            }
             if status == "ready" and isinstance(pid, int) and pid > 0:
                 try:
                     proc = "/proc/self" if pid == os.getpid() else f"/proc/{pid}"
@@ -283,12 +346,16 @@ class Monitor:
                     # stat fields after comm start with state (field 3).
                     identity = (pid, int(stat[19]))  # PID and kernel process start time.
                     used = (int(stat[11]) + int(stat[12])) / os.sysconf("SC_CLK_TCK")
-                    rss = int(Path(f"{proc}/statm").read_text().split()[1]) * os.sysconf("SC_PAGE_SIZE")
+                    rss = int(Path(f"{proc}/statm").read_text().split()[1]) * os.sysconf(
+                        "SC_PAGE_SIZE"
+                    )
                     row["rss_bytes"] = rss
                     with self.lock:
                         previous = self._process_samples.get(identity)
                     if previous and elapsed > previous[0]:
-                        row["cpu_percent"] = round(100 * (used - previous[1]) / (elapsed - previous[0]), 1)
+                        row["cpu_percent"] = round(
+                            100 * (used - previous[1]) / (elapsed - previous[0]), 1
+                        )
                     samples[identity] = (elapsed, used)
                 except (OSError, ValueError, IndexError):
                     row["status"] = "unavailable"
@@ -329,13 +396,16 @@ def instrument(runtime, vision, speech, monitor):
 
     submit = getattr(runtime, "submit", None)
     if submit is not None:
+
         def measured_submit(function, *args, **kwargs):
             """Count actual backend invocations, including assistant delegation.
 
             Returns:
                 asyncio.Future: The scheduled inference result.
             """
-            native = function == runtime.backend.chat or function == getattr(runtime.litert_backend, "chat", None)
+            native = function == runtime.backend.chat or function == getattr(
+                runtime.litert_backend, "chat", None
+            )
             if not native:
                 return submit(function, *args, **kwargs)
             request = args[0]
@@ -346,10 +416,16 @@ def instrument(runtime, vision, speech, monitor):
             except BaseException:
                 monitor.end(name, started, failed=True)
                 raise
-            future.add_done_callback(lambda result: monitor.end(
-                name, started, failed=result.cancelled() or result.exception() is not None,
-                metrics=getattr(request, "_metrics", None)))
+            future.add_done_callback(
+                lambda result: monitor.end(
+                    name,
+                    started,
+                    failed=result.cancelled() or result.exception() is not None,
+                    metrics=getattr(request, "_metrics", None),
+                )
+            )
             return future
+
         runtime.submit = measured_submit
 
     async def measured_chat(request, *args, **kwargs):
@@ -377,7 +453,11 @@ def instrument(runtime, vision, speech, monitor):
             Any: Original chunks.
         """
         # Runtime.stream delegates these requests to chat; count exactly once.
-        if submit is not None or request.model in {HA_ASSIST_MODEL, FRIGATE_ASSIST_MODEL} or has_tool_context(request):
+        if (
+            submit is not None
+            or request.model in {HA_ASSIST_MODEL, FRIGATE_ASSIST_MODEL}
+            or has_tool_context(request)
+        ):
             async for item in stream(request, *args, **kwargs):
                 yield item
             return

@@ -530,23 +530,36 @@ def create_app(
                 None: Publishes progress and errors.
             """
             nonlocal mqtt_task
-            phases = [("Hailo", runtime.start_hailo), ("Vision", vision.start),
-                      ("LLM", runtime.start_cpu), ("Piper", speech.start),
-                      ("ZMQ", frigate_zmq.start)]
+            phases = [
+                ("Hailo", runtime.start_hailo),
+                ("Vision", vision.start),
+                ("LLM", runtime.start_cpu),
+                ("Piper", speech.start),
+                ("ZMQ", frigate_zmq.start),
+            ]
             if settings.wyoming_port:
                 phases.append(("Wyoming", wyoming.start))
             for name, start in phases:
                 app.state.startup["phase"] = name
                 try:
                     await start()
-                    error = getattr(runtime, "litert_error", None) if name == "LLM" else getattr(speech, "error", None) if name == "Piper" else None
+                    error = (
+                        getattr(runtime, "litert_error", None)
+                        if name == "LLM"
+                        else getattr(speech, "error", None)
+                        if name == "Piper"
+                        else None
+                    )
                     if error:
                         app.state.startup["errors"][name] = error
                 except Exception as exc:
                     app.state.startup["errors"][name] = f"{type(exc).__name__}: {exc}"
                     _LOG.exception("event=startup_failed service=%s", name)
             if supervisor is None:
-                device_telemetry.start(getattr(runtime.backend, "device", None) or getattr(vision.backend, "device", None))
+                device_telemetry.start(
+                    getattr(runtime.backend, "device", None)
+                    or getattr(vision.backend, "device", None)
+                )
             if settings.mqtt_host:
                 mqtt_task = asyncio.create_task(mqtt.run(), name="mqtt-bridge")
             app.state.startup["phase"] = None
@@ -816,8 +829,11 @@ def create_app(
             dict: Annotated saved configuration.
         """
         effective = Settings.from_env(path=settings_store.path)
-        pending = any(getattr(settings, name) != getattr(effective, name)
-                      for name in effective.__dataclass_fields__ if name not in LIVE_FIELDS)
+        pending = any(
+            getattr(settings, name) != getattr(effective, name)
+            for name in effective.__dataclass_fields__
+            if name not in LIVE_FIELDS
+        )
         result["restart_required"] = pending
         for field in result["fields"]:
             field["runtime"] = field["path"] in LIVE_PATHS
@@ -885,23 +901,55 @@ def create_app(
         }
         wyoming_listening = bool(wyoming.server and wyoming.server.is_serving())
         zmq_enabled = bool(settings.vision_enabled and settings.vision_zmq_enabled)
-        zmq_listening = bool(frigate_zmq.socket is not None and not frigate_zmq.socket.closed
-                             and frigate_zmq.task is not None and not frigate_zmq.task.done())
-        hardware = supervisor.hailo.telemetry_status() if supervisor is not None else {
-            **device_telemetry.snapshot(),
-            "resident_models": resident_models(runtime.backend, vision.backend, settings),
+        zmq_listening = bool(
+            frigate_zmq.socket is not None
+            and not frigate_zmq.socket.closed
+            and frigate_zmq.task is not None
+            and not frigate_zmq.task.done()
+        )
+        hardware = (
+            supervisor.hailo.telemetry_status()
+            if supervisor is not None
+            else {
+                **device_telemetry.snapshot(),
+                "resident_models": resident_models(runtime.backend, vision.backend, settings),
+            }
+        )
+        loaded = {
+            role: [model["name"] for model in hardware["resident_models"] if model["role"] == role]
+            for role in ("VLM", "LLM", "Whisper", "YOLO")
         }
-        loaded = {role: [model["name"] for model in hardware["resident_models"] if model["role"] == role]
-                  for role in ("VLM", "LLM", "Whisper", "YOLO")}
         cpu_worker = status.get("workers", {}).get("llm")
         piper_worker = status.get("workers", {}).get("piper")
-        cpu_models = [status["litert_lm"]["model"]] if status["litert_lm"]["ready"] and (not cpu_worker or cpu_worker["status"] == "ready") else []
+        cpu_models = (
+            [status["litert_lm"]["model"]]
+            if status["litert_lm"]["ready"] and (not cpu_worker or cpu_worker["status"] == "ready")
+            else []
+        )
         available = set(sum(loaded.values(), []) + cpu_models)
         service_models = {
-            "VLM": loaded["VLM"], "Hailo LLM": loaded["LLM"], "Whisper": loaded["Whisper"], "YOLO": loaded["YOLO"], "LLM": cpu_models,
-            "Piper": [Path(status["piper"]["voice"]).stem] if status["piper"]["ready"] and (not piper_worker or piper_worker["status"] == "ready") else [],
-            "HA-Assist": list(dict.fromkeys(model for model in (settings.ha_assist_text_model, settings.ha_assist_vision_model) if model in available)),
-            "Frigate-Assist": list(dict.fromkeys(model for model in (settings.frigate_text_model, settings.frigate_vision_model) if model in available)),
+            "VLM": loaded["VLM"],
+            "Hailo LLM": loaded["LLM"],
+            "Whisper": loaded["Whisper"],
+            "YOLO": loaded["YOLO"],
+            "LLM": cpu_models,
+            "Piper": [Path(status["piper"]["voice"]).stem]
+            if status["piper"]["ready"] and (not piper_worker or piper_worker["status"] == "ready")
+            else [],
+            "HA-Assist": list(
+                dict.fromkeys(
+                    model
+                    for model in (settings.ha_assist_text_model, settings.ha_assist_vision_model)
+                    if model in available
+                )
+            ),
+            "Frigate-Assist": list(
+                dict.fromkeys(
+                    model
+                    for model in (settings.frigate_text_model, settings.frigate_vision_model)
+                    if model in available
+                )
+            ),
         }
         services = monitor.snapshot()
         for name, values in services.items():
@@ -918,17 +966,43 @@ def create_app(
             "hailo_device": hardware,
             "system_services": {
                 "host": {"name": socket.gethostname(), "status": "running"},
-                "http": {"enabled": True, "status": "listening", "host": settings.host, "port": settings.port,
-                         "local_address": request.scope.get("server")},
-                "wyoming": {"enabled": bool(settings.wyoming_port),
-                            "status": "listening" if wyoming_listening else "disabled" if not settings.wyoming_port else "stopped",
-                            "host": settings.wyoming_host, "port": settings.wyoming_port},
-                "mqtt": {"enabled": bool(settings.mqtt_host),
-                         "status": "connected" if mqtt.connected else "disconnected" if settings.mqtt_host else "disabled",
-                         "host": settings.mqtt_host, "port": settings.mqtt_port, "tls": settings.mqtt_tls},
-                "zmq": {"enabled": zmq_enabled,
-                        "status": "listening" if zmq_listening else "disabled" if not zmq_enabled else "stopped",
-                        "endpoint": settings.vision_zmq_endpoint},
+                "http": {
+                    "enabled": True,
+                    "status": "listening",
+                    "host": settings.host,
+                    "port": settings.port,
+                    "local_address": request.scope.get("server"),
+                },
+                "wyoming": {
+                    "enabled": bool(settings.wyoming_port),
+                    "status": "listening"
+                    if wyoming_listening
+                    else "disabled"
+                    if not settings.wyoming_port
+                    else "stopped",
+                    "host": settings.wyoming_host,
+                    "port": settings.wyoming_port,
+                },
+                "mqtt": {
+                    "enabled": bool(settings.mqtt_host),
+                    "status": "connected"
+                    if mqtt.connected
+                    else "disconnected"
+                    if settings.mqtt_host
+                    else "disabled",
+                    "host": settings.mqtt_host,
+                    "port": settings.mqtt_port,
+                    "tls": settings.mqtt_tls,
+                },
+                "zmq": {
+                    "enabled": zmq_enabled,
+                    "status": "listening"
+                    if zmq_listening
+                    else "disabled"
+                    if not zmq_enabled
+                    else "stopped",
+                    "endpoint": settings.vision_zmq_endpoint,
+                },
             },
             "logs": monitor.logs.snapshot(status.get("workers")),
         }

@@ -16,10 +16,15 @@ _LOCK = threading.RLock()
 _SECRET = {"settings.api_key", "settings.mqtt_password"}
 
 _MODEL_KINDS = {
-    "models.vlm.model": ("vlm",), "settings.vlm_hef": ("vlm",),
-    "models.whisper.model": ("whisper",), "settings.whisper_hef": ("whisper",),
-    "models.hailo_llm.model": ("llm",), "settings.hailo_llm_model": ("llm",),
-    "vision.model": ("vision",), "models.vision.model": ("vision",), "settings.vision_model": ("vision",),
+    "models.vlm.model": ("vlm",),
+    "settings.vlm_hef": ("vlm",),
+    "models.whisper.model": ("whisper",),
+    "settings.whisper_hef": ("whisper",),
+    "models.hailo_llm.model": ("llm",),
+    "settings.hailo_llm_model": ("llm",),
+    "vision.model": ("vision",),
+    "models.vision.model": ("vision",),
+    "settings.vision_model": ("vision",),
     "settings.ha_assist_text_model": ("llm", "vlm", "litert"),
     "settings.ha_assist_vision_model": ("vlm",),
     "settings.frigate_assist_text_model": ("llm", "vlm", "litert"),
@@ -33,14 +38,18 @@ def _catalogue(document):
     Returns:
         dict: Catalogue entries keyed by model ID.
     """
-    path = os.getenv("HAILO_MODEL_CATALOG", (document.get("settings") or {}).get("model_catalog", ""))
+    path = os.getenv(
+        "HAILO_MODEL_CATALOG", (document.get("settings") or {}).get("model_catalog", "")
+    )
     if not isinstance(path, str):
         raise ValueError("Modellkatalog-Pfad muss eine Zeichenfolge sein")
     try:
         entries = ModelManager(Settings(model_catalog=path)).entries
     except KeyError as exc:
         raise ValueError("Modellkatalog muss eine models-Zuordnung enthalten") from exc
-    if not isinstance(entries, dict) or any(not isinstance(name, str) or not isinstance(entry, dict) for name, entry in entries.items()):
+    if not isinstance(entries, dict) or any(
+        not isinstance(name, str) or not isinstance(entry, dict) for name, entry in entries.items()
+    ):
         raise ValueError("Ungültige Modelle im Modellkatalog")
     return entries
 
@@ -79,7 +88,9 @@ class SettingsStore:
             raw = self.path.read_bytes()
             document = yaml.safe_load(raw)
         except (OSError, yaml.YAMLError) as exc:
-            raise SettingsStoreError(f"Konfiguration kann nicht gelesen werden: {exc}", 503) from exc
+            raise SettingsStoreError(
+                f"Konfiguration kann nicht gelesen werden: {exc}", 503
+            ) from exc
         if not isinstance(document, dict):
             raise SettingsStoreError("Die YAML-Wurzel muss eine Zuordnung sein.")
         return raw, document
@@ -92,6 +103,7 @@ class SettingsStore:
             list: Fields for the browser.
         """
         fields = []
+
         def visit(node, prefix=""):
             """Traverse nested YAML maps.
 
@@ -103,9 +115,15 @@ class SettingsStore:
                 if isinstance(value, dict):
                     visit(value, path)
                 elif value is None or type(value) in (str, int, float, bool):
-                    fields.append({"path": path, "type": type(value).__name__,
-                                   "value": None if path in _SECRET else value,
-                                   "secret_set": bool(value) if path in _SECRET else False})
+                    fields.append(
+                        {
+                            "path": path,
+                            "type": type(value).__name__,
+                            "value": None if path in _SECRET else value,
+                            "secret_set": bool(value) if path in _SECRET else False,
+                        }
+                    )
+
         visit(document)
         return fields
 
@@ -127,11 +145,18 @@ class SettingsStore:
             for field in fields:
                 kinds = _MODEL_KINDS.get(field["path"])
                 if kinds:
-                    field["options"] = sorted(name for name, entry in entries.items() if entry.get("kind") in kinds)
+                    field["options"] = sorted(
+                        name for name, entry in entries.items() if entry.get("kind") in kinds
+                    )
                     field["allow_empty"] = field["path"].startswith("settings.frigate_assist_")
-            return {"version": hashlib.sha256(raw).hexdigest(), "fields": fields,
-                    "path": str(self.path), "restart_available": bool(os.getenv("INVOCATION_ID")),
-                    "restart_required": True, "catalog_error": catalog_error}
+            return {
+                "version": hashlib.sha256(raw).hexdigest(),
+                "fields": fields,
+                "path": str(self.path),
+                "restart_available": bool(os.getenv("INVOCATION_ID")),
+                "restart_required": True,
+                "catalog_error": catalog_error,
+            }
 
     def write(self, payload):
         """Validate a sparse patch and replace the YAML file.
@@ -147,7 +172,9 @@ class SettingsStore:
         with _LOCK:
             raw, document = self._load()
             if payload["version"] != hashlib.sha256(raw).hexdigest():
-                raise SettingsStoreError("Die Datei wurde inzwischen geändert. Bitte neu laden.", 409)
+                raise SettingsStoreError(
+                    "Die Datei wurde inzwischen geändert. Bitte neu laden.", 409
+                )
             known = {field["path"]: field for field in self._fields(document)}
             if set(changes) - set(known):
                 raise SettingsStoreError("Unbekannter Einstellungspfad.")
@@ -158,7 +185,15 @@ class SettingsStore:
                     continue  # Empty password fields keep the existing secret.
                 if path in _SECRET and value is None:
                     value = ""  # Explicit clear from the settings UI.
-                if original == "NoneType" and path in {"settings.frigate_assist_text_model", "settings.frigate_assist_vision_model"} and type(value) is str:
+                if (
+                    original == "NoneType"
+                    and path
+                    in {
+                        "settings.frigate_assist_text_model",
+                        "settings.frigate_assist_vision_model",
+                    }
+                    and type(value) is str
+                ):
                     value = value or None
                 elif original == "NoneType" and value == "":
                     value = None
@@ -182,7 +217,10 @@ class SettingsStore:
                         for name in path.split("."):
                             cursor = cursor[name]
                         if not cursor:
-                            if path not in {"settings.frigate_assist_text_model", "settings.frigate_assist_vision_model"}:
+                            if path not in {
+                                "settings.frigate_assist_text_model",
+                                "settings.frigate_assist_vision_model",
+                            }:
                                 raise ValueError(f"Modell darf nicht leer sein: {path}")
                             continue
                         if Path(cursor).is_absolute() or cursor.endswith(".hef"):
@@ -196,7 +234,9 @@ class SettingsStore:
             # without environment overrides masking broken YAML values.
             candidate = None
             try:
-                with tempfile.NamedTemporaryFile(dir=self.path.parent, prefix=".hailo-config-", delete=False) as stream:
+                with tempfile.NamedTemporaryFile(
+                    dir=self.path.parent, prefix=".hailo-config-", delete=False
+                ) as stream:
                     candidate = Path(stream.name)
                     stream.write(encoded)
                     stream.flush()
@@ -211,7 +251,9 @@ class SettingsStore:
                 os.chown(candidate, current.st_uid, current.st_gid)
                 # The file may have been edited externally while validation ran.
                 if hashlib.sha256(self.path.read_bytes()).hexdigest() != payload["version"]:
-                    raise SettingsStoreError("Die Datei wurde inzwischen geändert. Bitte neu laden.", 409)
+                    raise SettingsStoreError(
+                        "Die Datei wurde inzwischen geändert. Bitte neu laden.", 409
+                    )
                 os.replace(candidate, self.path)
                 candidate = None
                 fd = os.open(self.path.parent, os.O_RDONLY)
@@ -222,7 +264,9 @@ class SettingsStore:
             except (OSError, ValueError, yaml.YAMLError) as exc:
                 if isinstance(exc, SettingsStoreError):
                     raise
-                raise SettingsStoreError(f"Speichern/Validierung fehlgeschlagen: {exc}", 400) from exc
+                raise SettingsStoreError(
+                    f"Speichern/Validierung fehlgeschlagen: {exc}", 400
+                ) from exc
             finally:
                 if candidate is not None:
                     candidate.unlink(missing_ok=True)
