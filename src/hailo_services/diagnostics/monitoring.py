@@ -47,6 +47,41 @@ def host_temperature():
     return None
 
 
+def _read_cgroup_memory(root):
+    """Read cgroup-v2 memory totals and derive a reclaim-aware working set.
+
+    `memory.current` includes reclaimable file cache. Subtracting `inactive_file`
+    provides the same conservative working-set approximation commonly used by
+    container monitoring tools while keeping the raw kernel counters available.
+
+    Returns:
+        dict: Current bytes, working-set bytes, optional limit and memory.stat map.
+    """
+    current = int((root / "memory.current").read_text())
+    limit_text = (root / "memory.max").read_text().strip()
+    stats = {}
+    try:
+        for line in (root / "memory.stat").read_text().splitlines():
+            key, _, value = line.partition(" ")
+            if key and value:
+                try:
+                    stats[key] = int(value)
+                except ValueError:
+                    continue
+    except OSError:
+        pass
+    inactive_file = stats.get("inactive_file")
+    working_set = current
+    if isinstance(inactive_file, int):
+        working_set = max(0, current - inactive_file)
+    return {
+        "current_bytes": current,
+        "working_set_bytes": working_set,
+        "limit_bytes": int(limit_text) if limit_text != "max" else None,
+        "stat_bytes": stats,
+    }
+
+
 class RecentLogs(logging.Handler):
     """Keep a small, redacted copy of application logs in the gateway process."""
 
@@ -260,6 +295,8 @@ class Monitor:
             "process_rss_bytes": None,
             "process_cpu_percent": None,
             "cgroup_memory_bytes": None,
+            "cgroup_memory_working_set_bytes": None,
+            "cgroup_memory_stat_bytes": {},
             "cgroup_memory_limit_bytes": None,
             "cgroup_cpu_percent": None,
             "processes": [],
@@ -285,9 +322,11 @@ class Monitor:
             )
             if group is not None:
                 root = Path("/sys/fs/cgroup") / group
-                data["cgroup_memory_bytes"] = int((root / "memory.current").read_text())
-                limit = (root / "memory.max").read_text().strip()
-                data["cgroup_memory_limit_bytes"] = int(limit) if limit != "max" else None
+                memory_data = _read_cgroup_memory(root)
+                data["cgroup_memory_bytes"] = memory_data["current_bytes"]
+                data["cgroup_memory_working_set_bytes"] = memory_data["working_set_bytes"]
+                data["cgroup_memory_stat_bytes"] = memory_data["stat_bytes"]
+                data["cgroup_memory_limit_bytes"] = memory_data["limit_bytes"]
                 cpu_line = next(
                     (
                         line
