@@ -126,12 +126,30 @@ function render(data) {
   $("services").replaceChildren(...cards);
   if (!cards.length) { const empty = document.createElement("p"); empty.textContent = tr("monitor.no_services"); $("services").append(empty); }
   const memory = r.host_memory || {};
+  const workingSet = r.cgroup_memory_working_set_bytes ?? r.cgroup_memory_bytes;
   $("resources").replaceChildren(item(tr("monitor.host_temperature"), r.host_temperature_c == null ? tr("metrics.unavailable") : `${fmt(r.host_temperature_c)} °C`),item(tr("monitor.cpu_cores"), fmt(r.cpu_cores)), item(tr("monitor.load"), fmt(r.load_average)),
     item(tr("monitor.cpu_cgroup"), r.cgroup_cpu_percent == null ? tr("metrics.pending") : `${fmt(r.cgroup_cpu_percent)} %`),
     item(tr("monitor.cpu_gateway"), r.process_cpu_percent == null ? tr("metrics.pending") : `${fmt(r.process_cpu_percent)} %`),
-    item(tr("monitor.ram_gateway"), bytes(r.process_rss_bytes)), item(tr("monitor.ram_cgroup"), bytes(r.cgroup_memory_bytes)),
-    item(tr("monitor.cgroup_limit"), bytes(r.cgroup_memory_limit_bytes)), item(tr("monitor.ram_available"), bytes(memory.available_bytes)),
-    item(tr("monitor.ram_total"), bytes(memory.total_bytes)));
+    item(tr("monitor.ram_gateway"), bytes(r.process_rss_bytes)), item("RAM Working Set", bytes(workingSet)),
+    item(tr("monitor.ram_available"), bytes(memory.available_bytes)), item(tr("monitor.ram_total"), bytes(memory.total_bytes)));
+  const memoryDetails = $("memory-details"), memoryStats = r.cgroup_memory_stat_bytes || {};
+  memoryDetails.hidden = r.cgroup_memory_bytes == null;
+  $("memory-details-total").textContent = bytes(r.cgroup_memory_bytes);
+  const memoryRows = [
+    ["Working Set", workingSet],
+    ["memory.current", r.cgroup_memory_bytes],
+    ["inactive_file", memoryStats.inactive_file],
+    ["anon", memoryStats.anon],
+    ["file", memoryStats.file],
+    ["file_mapped", memoryStats.file_mapped],
+    ["active_file", memoryStats.active_file],
+    ["shmem", memoryStats.shmem],
+    ["kernel", memoryStats.kernel],
+    ["pagetables", memoryStats.pagetables],
+    ["slab", memoryStats.slab],
+    [tr("monitor.cgroup_limit"), r.cgroup_memory_limit_bytes],
+  ].filter(([, value]) => typeof value === "number");
+  $("memory-breakdown").replaceChildren(...memoryRows.map(([label, value]) => item(label, bytes(value))));
   $("processes").replaceChildren(...(r.processes || []).map(process => {
     const row = document.createElement("tr");
     for (const value of [process.name, process.pid ?? "—", process.cpu_percent == null ? "—" : `${fmt(process.cpu_percent)} %`,
