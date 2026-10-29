@@ -345,8 +345,17 @@ models:
     # path: /var/lib/hailo-10h-services/models/gemma-4-E2B-it.litertlm
 ```
 
-Run the installer/update script so the service virtual environment has `litert-lm`
-and the service account can read the model. Restart and check `/health`; the
+Run `sudo bash scripts/install.sh`. When Gemma is enabled (as in the supplied YAML),
+the installer automatically downloads Gemma 4 E2B from the model catalogue into
+the configured model store, installs/updates `litert-lm` in the service virtual
+environment and grants the service account read access before starting the service.
+An explicit `models.gemma.path` selects the download destination instead. Complete
+cached files are reused; downloads use a temporary file and atomic rename. Download
+errors stop installation rather than silently starting without Gemma. Existing
+configurations with Gemma disabled and no model path skip both steps.
+The catalogue uses the [officially documented LiteRT Community model](https://developers.google.com/edge/litert-lm/models/gemma-4).
+
+After installation, check `/health`; the
 `litert_lm.ready` field and `gemma-4-E2B-it` entry in `/v1/models` should be present.
 If LiteRT-LM cannot load, Hailo service startup still completes and the reason appears
 in `litert_lm.error` and the service log. A missing model leaves only the accelerator

@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
-from hailo_services.config import FRIGATE_ASSIST_MODEL, VLM_MODEL
+from hailo_services.config import FRIGATE_ASSIST_MODEL, HA_ASSIST_MODEL, VLM_MODEL
 from hailo_services.shared.i18n import SUPPORTED_LANGUAGES
 
 CatalogueText = Annotated[str, Field(min_length=1, max_length=256, pattern=r"^[^\r\n]+$")]
@@ -55,7 +55,7 @@ class HAContext(BaseModel):
 
 
 class StreamOptions(BaseModel):
-    """Validate Frigate's optional OpenAI usage-stream request."""
+    """Validate optional OpenAI usage-stream requests for virtual assistants."""
 
     model_config = ConfigDict(extra="forbid")
     include_usage: bool = False
@@ -73,7 +73,7 @@ class ChatRequest(BaseModel):
         top_p (float | None): Top p.
         seed (int): Seed.
         stream (bool): Stream. Default: False.
-        stream_options (StreamOptions | None): Usage-stream options for Frigate-Assist only.
+        stream_options (StreamOptions | None): Usage-stream options for virtual assistants.
         user (str | None): User. Default: None.
         language (str | None): Language code; None uses the configured or detected language.
         tools (list[dict[str, Any]] | None): Client-provided OpenAI function schemas.
@@ -105,7 +105,7 @@ class ChatRequest(BaseModel):
 
     @model_validator(mode="after")
     def check_stream_options(self):
-        """Keep Frigate compatibility options isolated from native chat models.
+        """Keep virtual assistant compatibility options isolated from native chat models.
 
         Returns:
             ChatRequest: Validated request.
@@ -113,8 +113,8 @@ class ChatRequest(BaseModel):
         Raises:
             ValueError: Stream options were supplied for a different model.
         """
-        if self.stream_options is not None and self.model != FRIGATE_ASSIST_MODEL:
-            raise ValueError("stream_options is supported only by Frigate-Assist")
+        if self.stream_options is not None and self.model not in {FRIGATE_ASSIST_MODEL, HA_ASSIST_MODEL}:
+            raise ValueError("stream_options is supported only by Frigate-Assist and HA-Assist")
         return self
 
     @field_validator("tools")

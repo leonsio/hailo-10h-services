@@ -680,10 +680,10 @@ rejected when loading configuration. Explicit unavailable text targets do not fa
 back. VLM text requests obey the native VLM token/context limits. Direct native models
 and `HA-Assist` retain their own preparation behavior.
 
-Only `Frigate-Assist` accepts Frigate's optional `stream_options` object:
+`Frigate-Assist` and `HA-Assist` accept the optional OpenAI `stream_options` object:
 `{"include_usage": true}`. With `stream: true`, the final usage chunk has empty
 `choices` and includes routing/preparation metrics. Tools are validated before
-streaming. The completion model name remains `Frigate-Assist`.
+streaming. The completion model name remains the requested virtual assistant name.
 
 `/health.frigate_assist` reports `experimental`, configured targets, independent
 `text_ready`/`vision_ready` flags and proxy enablement. Responses expose

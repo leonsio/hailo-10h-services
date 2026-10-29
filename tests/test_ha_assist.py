@@ -779,3 +779,46 @@ def test_close_runner_up_is_retained_even_below_acceptance_threshold():
     assert len(matches) == 1 and matches[0]["ambiguous"]
     assert {c["value"] for c in matches[0]["candidates"]} == {"ArbeitsraumA", "ArbeitsraumAB"}
     assert not slot_repairs("Licht im ArbeitsraumC an", ["ArbeitsraumA", "ArbeitsraumAB"])
+
+
+@pytest.mark.parametrize("include_usage", [False, True])
+@pytest.mark.parametrize("general_text", [False, True])
+def test_local_openai_stream_options(service, include_usage, general_text):
+    client, backend, llm = service
+    if general_text:
+        def chat(request, emit=None, cancelled=None):
+            llm.calls.append(request)
+            request._metrics.update(input_tokens=123, output_tokens=7)
+            return "Paris"
+        llm.chat = chat
+    body = payload(
+        "Was ist die Hauptstadt von Frankreich?" if general_text else "Mach das Licht im Wohnzimmer aus",
+        stream=True, parallel_tool_calls=True,
+        stream_options={"include_usage": include_usage},
+    )
+    body["messages"][-1]["content"] = [{"type": "text", "text": body["messages"][-1]["content"]}]
+    response = client.post("/v1/chat/completions", json=body)
+    assert response.status_code == 200, response.text
+    chunks = [json.loads(line[6:]) for line in response.text.splitlines()
+              if line.startswith("data: ") and "[DONE]" not in line]
+    assert all(chunk["model"] == HA_ASSIST_MODEL for chunk in chunks)
+    choices = [chunk["choices"][0] for chunk in chunks if chunk["choices"]]
+    assert choices[-1]["finish_reason"] == ("stop" if general_text else "tool_calls")
+    if general_text:
+        assert any(choice["delta"].get("content") == "Paris" for choice in choices)
+        assert len(llm.calls) == 1
+    else:
+        calls = [call for choice in choices for call in choice["delta"].get("tool_calls", [])]
+        assert calls[0]["function"]["name"] == "intent__HassTurnOff"
+        assert not llm.calls
+    if include_usage:
+        assert chunks[-1]["choices"] == []
+        assert chunks[-1]["usage"] == {
+            "prompt_tokens": 123 if general_text else 0,
+            "completion_tokens": 7 if general_text else 0,
+            "total_tokens": 130 if general_text else 0,
+        }
+    else:
+        assert all(chunk["choices"] for chunk in chunks)
+    assert response.text.endswith("data: [DONE]\n\n")
+    assert not backend.calls

@@ -59,8 +59,10 @@ chmod 0600 "${SERVICE_STATE}/config.yaml"
 # Existing ENV files remain optional overrides; new installations use YAML.
 # The small catalogue is package data; never clone/install a helper repository.
 LITERT_MODEL_PATH=$(HAILO_CONFIG=/etc/hailo-10h-services.yaml "${SERVICE_DIR}/venv/bin/python" - <<'CONFIGPY'
+import logging
 import os
-from hailo_services.config import Settings
+from hailo_services.config import LLM_MODEL, Settings
+from hailo_services.runtime.models import ModelManager
 legacy = '/etc/hailo-10h-services.env'
 if os.path.isfile(legacy):
     for line in open(legacy):
@@ -68,8 +70,11 @@ if os.path.isfile(legacy):
         if sep and key.startswith('HAILO_'):
             os.environ[key] = value.strip('"').strip("'")
 s = Settings.from_env()
-print(s.litert_model_path)
 if s.litert_enabled or s.litert_model_path:
+    # stdout carries only the path and enabled marker; progress goes to stderr.
+    logging.basicConfig(level=logging.INFO)
+    path = ModelManager(s).resolve(LLM_MODEL, "litert", s.litert_model_path or None)
+    print(path)
     print('enabled')
 CONFIGPY
 )
