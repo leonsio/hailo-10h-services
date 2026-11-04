@@ -119,11 +119,35 @@ def test_all_current_hailo_models_have_documented_54_urls():
         assert manager.url(model) == f"https://dev-public.hailo.ai/v5.4.0/blob/{model}.hef"
     with pytest.raises(ValueError, match="No known model release"):
         ModelManager(Settings(), "5.2.0").url("Qwen3-VL-2B-Instruct")
-    with pytest.raises(ValueError, match="No known model release"):
-        ModelManager(Settings(), "5.5.0").url("Whisper-Small")
+    assert ModelManager(Settings(), "5.5.0").url("Whisper-Small") == (
+        "https://dev-public.hailo.ai/v5.5.0/blob/Whisper-Small.hef"
+    )
     with pytest.raises(ValueError, match="not a whisper"):
         manager.entry("Qwen3-VL-2B-Instruct", "whisper")
 
+
+
+def test_hailo_55_catalog_covers_new_models_and_standalone_vision_encoders():
+    manager = ModelManager(Settings(), "5.5.0")
+    new_models = {
+        "Qwen3-4B-Instruct-2507": "llm",
+        "Qwen3-VL-4B-Instruct": "vlm",
+        "Gemma4-E2B-Instruct": "llm",
+        "Whisper-Medium": "whisper",
+        "Qwen2-VL-2B-vision-336x336": "vision_encoder",
+        "Qwen2-VL-7B-vision-336x336": "vision_encoder",
+        "Qwen2-VL-7B-vision-252x448": "vision_encoder",
+        "Qwen3-VL-2B-vision": "vision_encoder",
+    }
+    for model, kind in new_models.items():
+        assert manager.entry(model, kind)["filename"] == f"{model}.hef"
+        assert manager.url(model) == (
+            f"https://dev-public.hailo.ai/v5.5.0/blob/{model}.hef"
+        )
+    with pytest.raises(ValueError, match="not a vlm"):
+        manager.entry("Qwen2-VL-7B-vision-336x336", "vlm")
+    with pytest.raises(ValueError, match="No known model release"):
+        ModelManager(Settings(), "5.4.0").url("Qwen2-VL-7B-vision-336x336")
 
 def test_cached_named_models_reused_and_download_is_bounded(tmp_path, monkeypatch):
     s = replace(Settings(), model_store=str(tmp_path))
