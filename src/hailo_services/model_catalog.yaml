@@ -209,6 +209,46 @@ models:
     maximum_bytes: 8589934592
     releases:
       v5.5.0: https://dev-public.hailo.ai/v5.5.0/blob/Whisper-Medium.hef
+  # Standalone image encoders from GenAI 5.5 (not complete VLM/chat models).
+  Qwen2-VL-2B-vision-336x336:
+    kind: vision_encoder
+    filename: Qwen2-VL-2B-vision-336x336.hef
+    input_size: [336, 336]
+    fps_reference: 3
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    note: Image encoder only; requires a dedicated inference adapter, not selectable as VLM/chat.
+    releases:
+      v5.5.0: https://dev-public.hailo.ai/v5.5.0/blob/Qwen2-VL-2B-vision-336x336.hef
+  Qwen2-VL-7B-vision-336x336:
+    kind: vision_encoder
+    filename: Qwen2-VL-7B-vision-336x336.hef
+    input_size: [336, 336]
+    fps_reference: 2.8
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    note: Image encoder only; requires a dedicated inference adapter, not selectable as VLM/chat.
+    releases:
+      v5.5.0: https://dev-public.hailo.ai/v5.5.0/blob/Qwen2-VL-7B-vision-336x336.hef
+  Qwen2-VL-7B-vision-252x448:
+    kind: vision_encoder
+    filename: Qwen2-VL-7B-vision-252x448.hef
+    input_size: [252, 448]
+    fps_reference: 2.8
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    note: Image encoder only; requires a dedicated inference adapter, not selectable as VLM/chat.
+    releases:
+      v5.5.0: https://dev-public.hailo.ai/v5.5.0/blob/Qwen2-VL-7B-vision-252x448.hef
+  Qwen3-VL-2B-vision:
+    kind: vision_encoder
+    filename: Qwen3-VL-2B-vision.hef
+    fps_reference: 4.59
+    minimum_bytes: 1048576
+    maximum_bytes: 8589934592
+    note: Image encoder only; requires a dedicated inference adapter, not selectable as VLM/chat.
+    releases:
+      v5.5.0: https://dev-public.hailo.ai/v5.5.0/blob/Qwen3-VL-2B-vision.hef
   minilm-l6-ruvector:
     kind: embedding
     filename: minilm-l6-ruvector.hef
