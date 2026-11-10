@@ -327,6 +327,12 @@ The basename in `model.path` must match the selected service model, for example
 the model is unavailable; this service intentionally rejects remote HEF uploads and
 keeps model lifecycle under server configuration.
 
+## Home Assistant data generation
+
+For `ai_task.generate_data`, use a direct chat model such as `gemma-4-E2B-it`.
+The general Chat API supports validated JSON objects and JSON Schema output.
+See [setup, API example and limitations](doc/structured-output.md).
+
 ## Home Assistant virtual model
 
 Select **`HA-Assist`** in an OpenAI-compatible Home Assistant conversation agent.

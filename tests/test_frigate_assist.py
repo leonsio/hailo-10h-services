@@ -921,9 +921,9 @@ def test_stream_text_usage(service):
     }
 
 
-def test_stream_options_only_for_proxy():
-    with pytest.raises(ValidationError, match="only by Frigate-Assist"):
-        ChatRequest(**payload(model=VLM_MODEL, stream_options={"include_usage": True}))
+def test_stream_options_for_all_models():
+    request = ChatRequest(**payload(model=VLM_MODEL, stream_options={"include_usage": True}))
+    assert request.stream_options.include_usage
     with pytest.raises(ValidationError):
         ChatRequest(**payload(stream_options={"unknown": True}))
 

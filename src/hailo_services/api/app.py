@@ -60,6 +60,7 @@ from hailo_services.shared.errors import BusyError, LiteRTInferenceError
 from hailo_services.shared.i18n import SUPPORTED_LANGUAGES, catalogue, wait_sentence
 from hailo_services.shared.input_budget import InputBudgetError
 from hailo_services.shared.media import audio_file, audio_metadata, decode_base64
+from hailo_services.shared.structured_output import prepare_structured_request, validate_output
 from hailo_services.shared.tool_calling import has_tool_context
 from hailo_services.speech.speech_piper import installed_voices
 from hailo_services.speech.speech_runtime import SpeechRuntime
@@ -1155,7 +1156,7 @@ def create_app(
             LiteRTInferenceError: Native CPU generation fails.
             asyncio.TimeoutError: Inference exceeds the configured request deadline.
         """
-        request = runtime.default_chat_request(request)
+        request = prepare_structured_request(runtime.default_chat_request(request))
         identifier, created = "chatcmpl-" + uuid.uuid4().hex, int(time.time())
         request_id = http_request.scope.get("state", {}).get("request_id", "-")
         request._request_id = request_id
@@ -1183,7 +1184,12 @@ def create_app(
                 request.model_dump_json(exclude_none=False),
             )
         if not request.stream:
-            result = completion(await runtime.chat(request), identifier, created, request.model)
+            result = completion(
+                validate_output(request, await runtime.chat(request)),
+                identifier,
+                created,
+                request.model,
+            )
             result["metrics"] = response_metrics(request._metrics, http_request.scope["state"])
             counts = request._metrics
             if "input_tokens" in counts and "output_tokens" in counts:
@@ -1239,8 +1245,10 @@ def create_app(
 
             try:
                 yield event({"role": "assistant", "content": ""})
-                if request.model in {HA_ASSIST_MODEL, FRIGATE_ASSIST_MODEL} or has_tool_context(
-                    request
+                if (
+                    (request.response_format and request.response_format.type != "text")
+                    or request.model in {HA_ASSIST_MODEL, FRIGATE_ASSIST_MODEL}
+                    or has_tool_context(request)
                 ):
                     # Buffer native tool output so invalid/incomplete calls are never streamed
                     # as actions or spoken as text by the voice assistant.
@@ -1284,6 +1292,7 @@ def create_app(
                             await asyncio.gather(notification, inference, return_exceptions=True)
                     else:
                         result = await runtime.chat(request)
+                    result = validate_output(request, result)
                     if isinstance(result, dict):
                         if result.get("content"):
                             yield event({"content": result["content"]})
@@ -1350,6 +1359,12 @@ def create_app(
                                 "type": "invalid_request_error"
                                 if isinstance(exc, InputBudgetError)
                                 else "inference_error",
+                                **(
+                                    exc.detail
+                                    if isinstance(exc, HTTPException)
+                                    and isinstance(exc.detail, dict)
+                                    else {}
+                                ),
                                 **(
                                     {
                                         "code": "input_token_limit_exceeded",

@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
-from hailo_services.config import FRIGATE_ASSIST_MODEL, HA_ASSIST_MODEL, VLM_MODEL
+from hailo_services.config import VLM_MODEL
 from hailo_services.shared.i18n import SUPPORTED_LANGUAGES
 
 CatalogueText = Annotated[str, Field(min_length=1, max_length=256, pattern=r"^[^\r\n]+$")]
@@ -55,10 +55,61 @@ class HAContext(BaseModel):
 
 
 class StreamOptions(BaseModel):
-    """Validate optional OpenAI usage-stream requests for virtual assistants."""
+    """Validate optional OpenAI usage-stream requests."""
 
     model_config = ConfigDict(extra="forbid")
     include_usage: bool = False
+
+
+class JSONSchemaFormat(BaseModel):
+    """Describe the named JSON Schema requested by an OpenAI client."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")
+    description: str | None = None
+    schema_: dict[str, Any] = Field(alias="schema")
+    strict: bool = False
+
+    @field_validator("schema_")
+    @classmethod
+    def check_schema(cls, value):
+        """Validate schemas locally without allowing remote reference resolution.
+
+        Args:
+            value (dict): Client-provided JSON Schema.
+
+        Returns:
+            dict: Validated schema.
+
+        Raises:
+            ValueError: The schema is invalid or contains external references.
+        """
+        from hailo_services.shared.structured_output import schema_validator
+
+        schema_validator(value)
+        return value
+
+
+class ResponseFormat(BaseModel):
+    """Select ordinary text, a JSON object, or schema-validated JSON output."""
+
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["text", "json_object", "json_schema"]
+    json_schema: JSONSchemaFormat | None = None
+
+    @model_validator(mode="after")
+    def check_format(self):
+        """Require a schema exactly when the selected format needs one.
+
+        Returns:
+            ResponseFormat: Validated format.
+
+        Raises:
+            ValueError: The schema and format type disagree.
+        """
+        if (self.type == "json_schema") != (self.json_schema is not None):
+            raise ValueError("json_schema must be supplied only for type=json_schema")
+        return self
 
 
 class ChatRequest(BaseModel):
@@ -73,7 +124,7 @@ class ChatRequest(BaseModel):
         top_p (float | None): Top p.
         seed (int): Seed.
         stream (bool): Stream. Default: False.
-        stream_options (StreamOptions | None): Usage-stream options for virtual assistants.
+        stream_options (StreamOptions | None): Usage-stream options for all chat models.
         user (str | None): User. Default: None.
         language (str | None): Language code; None uses the configured or detected language.
         tools (list[dict[str, Any]] | None): Client-provided OpenAI function schemas.
@@ -102,20 +153,7 @@ class ChatRequest(BaseModel):
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool = True
     ha_context: HAContext | None = None
-
-    @model_validator(mode="after")
-    def check_stream_options(self):
-        """Keep virtual assistant compatibility options isolated from native chat models.
-
-        Returns:
-            ChatRequest: Validated request.
-
-        Raises:
-            ValueError: Stream options were supplied for a different model.
-        """
-        if self.stream_options is not None and self.model not in {FRIGATE_ASSIST_MODEL, HA_ASSIST_MODEL}:
-            raise ValueError("stream_options is supported only by Frigate-Assist and HA-Assist")
-        return self
+    response_format: ResponseFormat | None = None
 
     @field_validator("tools")
     @classmethod
